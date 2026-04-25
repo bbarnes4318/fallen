@@ -107,7 +107,7 @@ export default function Home() {
       const { gallery_upload_url, probe_upload_url, gallery_gs_uri, probe_gs_uri } = await urlRes.json();
       
       // 2. Direct Client Upload to GCS
-      await Promise.all([
+      const [galleryUploadRes, probeUploadRes] = await Promise.all([
         fetch(gallery_upload_url, {
           method: 'PUT',
           body: galleryFile,
@@ -119,6 +119,9 @@ export default function Home() {
           headers: { 'Content-Type': probeFile.type }
         })
       ]);
+      if (!galleryUploadRes.ok || !probeUploadRes.ok) {
+        throw new Error('Image upload to secure storage failed.');
+      }
       
       // gallery_gs_uri and probe_gs_uri are passed directly to the verify call
       
