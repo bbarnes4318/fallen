@@ -381,6 +381,15 @@ class UploadUrlsResponse(BaseModel):
 def generate_upload_urls(req: UploadUrlsRequest, _: dict = Depends(verify_jwt)):
     bucket_name = "hoppwhistle-facial-raw-images-bucket"
     try:
+        import google.auth
+        import google.auth.transport.requests
+
+        credentials, project = google.auth.default()
+        
+        # Refresh credentials to get a valid token for IAM signBlob
+        auth_request = google.auth.transport.requests.Request()
+        credentials.refresh(auth_request)
+
         storage_client = storage.Client()
         bucket = storage_client.bucket(bucket_name)
         
@@ -394,13 +403,17 @@ def generate_upload_urls(req: UploadUrlsRequest, _: dict = Depends(verify_jwt)):
             version="v4",
             expiration=datetime.timedelta(minutes=15),
             method="PUT",
-            content_type=req.gallery_content_type
+            content_type=req.gallery_content_type,
+            service_account_email=credentials.service_account_email,
+            access_token=credentials.token
         )
         probe_url = probe_blob.generate_signed_url(
             version="v4",
             expiration=datetime.timedelta(minutes=15),
             method="PUT",
-            content_type=req.probe_content_type
+            content_type=req.probe_content_type,
+            service_account_email=credentials.service_account_email,
+            access_token=credentials.token
         )
         
         return UploadUrlsResponse(
