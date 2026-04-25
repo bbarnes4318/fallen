@@ -379,7 +379,7 @@ class UploadUrlsResponse(BaseModel):
 
 @app.post("/generate-upload-urls", response_model=UploadUrlsResponse)
 def generate_upload_urls(req: UploadUrlsRequest, _: dict = Depends(verify_jwt)):
-    bucket_name = "hoppwhistle-facial-raw-images-bucket"
+    bucket_name = os.getenv("BUCKET_NAME", "hoppwhistle-facial-raw-images-bucket")
     try:
         import google.auth
         import google.auth.transport.requests
@@ -423,14 +423,8 @@ def generate_upload_urls(req: UploadUrlsRequest, _: dict = Depends(verify_jwt)):
             probe_gs_uri=f"gs://{bucket_name}/{probe_blob_name}"
         )
     except Exception as e:
-        # Fallback for local testing
         print(f"GCS Error: {e}")
-        return UploadUrlsResponse(
-            gallery_upload_url="http://localhost:8000/mock",
-            probe_upload_url="http://localhost:8000/mock",
-            gallery_gs_uri="gs://mock/mock",
-            probe_gs_uri="gs://mock/mock"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to generate upload URLs: {str(e)}")
 
 @app.post("/verify/fuse", response_model=VerificationResponse)
 def verify_pipeline(request: VerificationRequest, _: dict = Depends(verify_jwt)):
