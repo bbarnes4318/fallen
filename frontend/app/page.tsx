@@ -129,7 +129,7 @@ export default function Home() {
       setStep('calculating');
       
       // 3. The Verification Call
-      const verifyRes = await fetch(`${API_URL}/verify/fuse`, {
+      const verifyRes = await fetch(`${getApiUrl()}/verify/fuse`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
