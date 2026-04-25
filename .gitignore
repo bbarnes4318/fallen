@@ -1,0 +1,22 @@
+# Secrets & credentials
+.env*
+*.json
+!package.json
+!tsconfig.json
+
+# Infrastructure
+infra/*.tfstate*
+infra/.terraform/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
+Thumbs.db
