@@ -9,64 +9,100 @@ env:
   PROJECT_ID: hoppwhistle
   REGION: us-east4
   REPO_NAME: facial-app-repo
-  BACKEND_SERVICE: facial-backend
-  FRONTEND_SERVICE: facial-frontend
-  WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.WIF_PROVIDER }}
-  SERVICE_ACCOUNT: ${{ secrets.SA_EMAIL }}
+  BACKEND_IMAGE: us-east4-docker.pkg.dev/hoppwhistle/facial-app-repo/facial-backend
+  FRONTEND_IMAGE: us-east4-docker.pkg.dev/hoppwhistle/facial-app-repo/facial-frontend
 
 jobs:
-  build-and-deploy:
+  # ── Build Backend & Frontend in parallel ──
+  build-backend:
     runs-on: ubuntu-latest
-
     permissions:
       contents: 'read'
-      id-token: 'write' # Required for Workload Identity Federation
-
+      id-token: 'write'
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud
+      - uses: google-github-actions/auth@v2
         id: auth
-        uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ env.SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.SA_EMAIL }}
           token_format: 'access_token'
 
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Configure Docker Authentication
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGION }}-docker.pkg.dev
+          registry: us-east4-docker.pkg.dev
           username: oauth2accesstoken
           password: ${{ steps.auth.outputs.access_token }}
 
-      - name: Build Backend Image
-        run: |
-          docker build -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.BACKEND_SERVICE }}:${{ github.sha }} ./backend
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+            ${{ env.BACKEND_IMAGE }}:latest
+          cache-from: type=registry,ref=${{ env.BACKEND_IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.BACKEND_IMAGE }}:buildcache,mode=max
 
-      - name: Push Backend Image
-        run: |
-          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.BACKEND_SERVICE }}:${{ github.sha }}
+  build-frontend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Build Frontend Image
-        run: |
-          docker build -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.FRONTEND_SERVICE }}:${{ github.sha }} ./frontend
+      - uses: google-github-actions/auth@v2
+        id: auth
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.SA_EMAIL }}
+          token_format: 'access_token'
 
-      - name: Push Frontend Image
-        run: |
-          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.FRONTEND_SERVICE }}:${{ github.sha }}
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: us-east4-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+            ${{ env.FRONTEND_IMAGE }}:latest
+          cache-from: type=registry,ref=${{ env.FRONTEND_IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.FRONTEND_IMAGE }}:buildcache,mode=max
+
+  # ── Deploy both after builds finish ──
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [build-backend, build-frontend]
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    steps:
+      - uses: google-github-actions/auth@v2
+        id: auth
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
 
       - name: Deploy Backend to Cloud Run
         id: deploy-backend
         uses: google-github-actions/deploy-cloudrun@v2
         with:
-          service: ${{ env.BACKEND_SERVICE }}
-          region: ${{ env.REGION }}
-          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.BACKEND_SERVICE }}:${{ github.sha }}
+          service: facial-backend
+          region: us-east4
+          image: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
           flags: '--service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com --memory=4Gi --cpu=2 --timeout=300 --allow-unauthenticated'
           env_vars: |
             KMS_KEY_NAME=${{ secrets.KMS_KEY_NAME }}
@@ -80,9 +116,9 @@ jobs:
         id: deploy-frontend
         uses: google-github-actions/deploy-cloudrun@v2
         with:
-          service: ${{ env.FRONTEND_SERVICE }}
-          region: ${{ env.REGION }}
-          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.FRONTEND_SERVICE }}:${{ github.sha }}
+          service: facial-frontend
+          region: us-east4
+          image: ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
           flags: '--service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com --memory=1Gi --allow-unauthenticated'
           env_vars: |
             NEXT_PUBLIC_API_URL=${{ steps.deploy-backend.outputs.url }}
