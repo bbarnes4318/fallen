@@ -1,9 +1,14 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import SymmetryMerge from '@/components/SymmetryMerge';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+function getApiUrl(): string {
+  if (typeof window !== 'undefined' && window.location.hostname.includes('facial-frontend')) {
+    return window.location.origin.replace('facial-frontend', 'facial-backend');
+  }
+  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+}
 
 export default function Home() {
   const [galleryFile, setGalleryFile] = useState<File | null>(null);
@@ -14,9 +19,18 @@ export default function Home() {
   const [step, setStep] = useState<'idle' | 'uploading' | 'frontalizing' | 'calculating' | 'complete' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
 
-  const [results, setResults] = useState<any>(null);
-  const [galleryUrl, setGalleryUrl] = useState('');
-  const [probeUrl, setProbeUrl] = useState('');
+  interface VerificationResult {
+    structural_score: number;
+    soft_biometrics_score: number;
+    micro_topology_score: number;
+    fused_identity_score: number;
+    veto_triggered: boolean;
+    conclusion: string;
+    gallery_heatmap_b64: string;
+    probe_heatmap_b64: string;
+  }
+
+  const [results, setResults] = useState<VerificationResult | null>(null);
   const [isXrayMode, setIsXrayMode] = useState(false);
 
   const [token, setToken] = useState<string | null>(null);
@@ -25,14 +39,17 @@ export default function Home() {
 
   useEffect(() => {
     const savedToken = localStorage.getItem('operator_token');
-    if (savedToken) setToken(savedToken);
+    if (savedToken) {
+      const restore = () => setToken(savedToken);
+      queueMicrotask(restore);
+    }
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
     try {
-      const res = await fetch(`${API_URL}/login`, {
+      const res = await fetch(`${getApiUrl()}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password })
@@ -41,8 +58,8 @@ export default function Home() {
       const data = await res.json();
       setToken(data.access_token);
       localStorage.setItem('operator_token', data.access_token);
-    } catch (err: any) {
-      setLoginError(err.message || 'Login failed');
+    } catch (err: unknown) {
+      setLoginError(err instanceof Error ? err.message : 'Login failed');
     }
   };
 
@@ -71,7 +88,7 @@ export default function Home() {
       setStep('uploading');
       
       // 1. Get Pre-Signed URLs from FastAPI (Pass Content-Types dynamically)
-      const urlRes = await fetch(`${API_URL}/generate-upload-urls`, {
+      const urlRes = await fetch(`${getApiUrl()}/generate-upload-urls`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -103,8 +120,7 @@ export default function Home() {
         })
       ]);
       
-      setGalleryUrl(gallery_gs_uri);
-      setProbeUrl(probe_gs_uri);
+      // gallery_gs_uri and probe_gs_uri are passed directly to the verify call
       
       // UX Pacing
       setStep('frontalizing');
@@ -135,8 +151,8 @@ export default function Home() {
       setResults(data);
       setStep('complete');
       
-    } catch (err: any) {
-      setErrorMsg(err.message || 'An unknown error occurred');
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'An unknown error occurred');
       setStep('error');
     }
   };
