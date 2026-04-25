@@ -3,6 +3,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import SymmetryMerge from '@/components/SymmetryMerge';
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
 export default function Home() {
   const [galleryFile, setGalleryFile] = useState<File | null>(null);
   const [probeFile, setProbeFile] = useState<File | null>(null);
@@ -30,7 +32,7 @@ export default function Home() {
     e.preventDefault();
     setLoginError('');
     try {
-      const res = await fetch('http://localhost:8000/login', {
+      const res = await fetch(`${API_URL}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password })
@@ -69,7 +71,7 @@ export default function Home() {
       setStep('uploading');
       
       // 1. Get Pre-Signed URLs from FastAPI (Pass Content-Types dynamically)
-      const urlRes = await fetch('http://localhost:8000/generate-upload-urls', {
+      const urlRes = await fetch(`${API_URL}/generate-upload-urls`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -111,7 +113,7 @@ export default function Home() {
       setStep('calculating');
       
       // 3. The Verification Call
-      const verifyRes = await fetch('http://localhost:8000/verify/fuse', {
+      const verifyRes = await fetch(`${API_URL}/verify/fuse`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
