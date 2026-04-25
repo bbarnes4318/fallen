@@ -99,11 +99,14 @@ export default function Home() {
           probe_content_type: probeFile.type
         })
       });
-      if (urlRes.status === 401 || urlRes.status === 403) {
+      if (urlRes.status === 401) {
         handleLogout();
         return;
       }
-      if (!urlRes.ok) throw new Error("Failed to secure upload channels.");
+      if (!urlRes.ok) {
+        const errBody = await urlRes.json().catch(() => null);
+        throw new Error(errBody?.detail || 'Failed to secure upload channels.');
+      }
       const { gallery_upload_url, probe_upload_url, gallery_gs_uri, probe_gs_uri } = await urlRes.json();
       
       // 2. Direct Client Upload to GCS
@@ -144,11 +147,14 @@ export default function Home() {
         })
       });
       
-      if (verifyRes.status === 401 || verifyRes.status === 403) {
+      if (verifyRes.status === 401) {
         handleLogout();
         return;
       }
-      if (!verifyRes.ok) throw new Error("Verification pipeline failed.");
+      if (!verifyRes.ok) {
+        const errBody = await verifyRes.json().catch(() => null);
+        throw new Error(errBody?.detail || 'Verification pipeline failed.');
+      }
       const data = await verifyRes.json();
       
       setResults(data);

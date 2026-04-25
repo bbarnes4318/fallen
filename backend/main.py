@@ -108,7 +108,7 @@ def detect_liveness(image: np.ndarray) -> float:
 # KMS ENVELOPE ENCRYPTION (BIOMETRIC VAULT)
 # ---------------------------------------------------------
 # The Key Encryption Key (KEK) managed by GCP KMS
-KMS_KEY_NAME = os.getenv("KMS_KEY_NAME", "projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek")
+KMS_KEY_NAME = os.getenv("KMS_KEY_NAME") or "projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek"
 
 def encrypt_embedding(embedding: np.ndarray) -> bytes:
     """
