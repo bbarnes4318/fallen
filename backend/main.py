@@ -379,7 +379,7 @@ class UploadUrlsResponse(BaseModel):
 
 @app.post("/generate-upload-urls", response_model=UploadUrlsResponse)
 def generate_upload_urls(req: UploadUrlsRequest, _: dict = Depends(verify_jwt)):
-    bucket_name = os.getenv("BUCKET_NAME", "hoppwhistle-facial-raw-images-bucket")
+    bucket_name = os.getenv("BUCKET_NAME") or "hoppwhistle-facial-raw-images-bucket"
     try:
         import google.auth
         import google.auth.transport.requests
