@@ -1,0 +1,13 @@
+Dockerfile
+.dockerignore
+__pycache__
+*.pyc
+*.pyo
+.venv
+venv
+.env*
+*.json
+!requirements.txt
+.git
+.gitignore
+models/

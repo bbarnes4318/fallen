@@ -67,15 +67,27 @@ export default function Home() {
     setToken(null);
     localStorage.removeItem('operator_token');
     setStep('idle');
+    setGalleryFile(null);
+    setProbeFile(null);
+    if (galleryPreview) URL.revokeObjectURL(galleryPreview);
+    if (probePreview) URL.revokeObjectURL(probePreview);
+    setGalleryPreview('');
+    setProbePreview('');
+    setResults(null);
+    setIsXrayMode(false);
+    setErrorMsg('');
+    setLoginError('');
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'gallery' | 'probe') => {
     const file = e.target.files?.[0];
     if (file) {
       if (type === 'gallery') {
+        if (galleryPreview) URL.revokeObjectURL(galleryPreview);
         setGalleryFile(file);
         setGalleryPreview(URL.createObjectURL(file));
       } else {
+        if (probePreview) URL.revokeObjectURL(probePreview);
         setProbeFile(file);
         setProbePreview(URL.createObjectURL(file));
       }
@@ -369,6 +381,8 @@ export default function Home() {
                   setStep('idle');
                   setGalleryFile(null);
                   setProbeFile(null);
+                  if (galleryPreview) URL.revokeObjectURL(galleryPreview);
+                  if (probePreview) URL.revokeObjectURL(probePreview);
                   setGalleryPreview('');
                   setProbePreview('');
                   setIsXrayMode(false);
