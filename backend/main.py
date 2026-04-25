@@ -6,6 +6,7 @@ import datetime
 import base64
 import struct
 import os
+import uuid
 import jwt
 from google.cloud import storage
 from google.cloud import kms
