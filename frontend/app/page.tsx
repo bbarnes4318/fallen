@@ -26,6 +26,21 @@ export default function Home() {
   const [mode, setMode] = useState<'vault' | 'compare'>('vault');
   const [bypassCode, setBypassCode] = useState('');
 
+  interface AuditLog {
+    raw_cosine_score: number;
+    statistical_certainty: string;
+    false_acceptance_rate: string;
+    nodes_mapped: number;
+    matched_user_id?: string;
+    person_name?: string;
+    source?: string;
+    creator?: string;
+    license_short_name?: string;
+    license_url?: string;
+    file_page_url?: string;
+    wikidata_id?: string;
+  }
+
   interface VerificationResult {
     structural_score: number;
     soft_biometrics_score: number;
@@ -40,6 +55,7 @@ export default function Home() {
     scar_delta_b64: string;
     gallery_wireframe_b64: string;
     probe_wireframe_b64: string;
+    audit_log?: AuditLog;
   }
 
   const [results, setResults] = useState<VerificationResult | null>(null);
