@@ -1,12 +1,13 @@
 """
 ===============================================================
   WIKIMEDIA AUTONOMOUS BIOMETRIC CRAWLER
-  Sovereign Identity Acquisition Daemon
+  Sovereign Identity Acquisition Daemon — v2 (Multi-Threaded)
 ===============================================================
   Queries Wikidata SPARQL for high-profile entities, pulls images
   via Wikimedia Commons API, runs facial extraction + KMS encryption,
   and vaults encrypted vectors with full legal attribution metadata.
 
+  v2: 5-thread pipeline with random SPARQL offset for dataset diversity.
   Designed to run as a Cloud Run Job using the backend Docker image.
 ===============================================================
 """
@@ -15,10 +16,13 @@ import sys
 import os
 import time
 import re
+import random
 import urllib.parse
 import requests
 import cv2
 import numpy as np
+import concurrent.futures
+import threading
 from datetime import datetime
 
 # -- Path setup: /app in Docker (backend code), or local repo --
@@ -32,14 +36,14 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, "backend"))  # Local dev
 sys.path.insert(0, PROJECT_ROOT)
 
 from models import SessionLocal, IdentityProfile, init_db
-from main import align_face_crop, extract_landmark_embedding, encrypt_embedding, apply_clahe
+from main import align_face_crop, extract_arcface_embedding, encrypt_embedding, apply_clahe
 
 # -- Constants --
 WIKIDATA_SPARQL_ENDPOINT = "https://query.wikidata.org/sparql"
 COMMONS_API_ENDPOINT = "https://commons.wikimedia.org/w/api.php"
 USER_AGENT = "SovereignBiometricCrawler/1.0 (https://hoppwhistle.com; mailto:admin@hoppwhistle.com)"
 MIN_FACE_SIZE = 60
-REQUEST_DELAY = 1.0
+MAX_WORKERS = 5  # Tuned to stay under Wikimedia 429 thresholds
 
 # -- Terminal formatting --
 GOLD = "\033[38;2;212;175;55m"
@@ -48,6 +52,9 @@ GREEN = "\033[92m"
 DIM = "\033[90m"
 RESET = "\033[0m"
 BOLD = "\033[1m"
+
+# Thread-safe print lock
+_print_lock = threading.Lock()
 
 
 def log(msg: str, level: str = "INFO"):
@@ -60,36 +67,38 @@ def log(msg: str, level: str = "INFO"):
         "HEAD": f"{DIM}[{timestamp}]{RESET} {GOLD}{BOLD}#{RESET}",
     }
     prefix = prefix_map.get(level, f"[{timestamp}]")
-    print(f"{prefix} {msg}")
+    with _print_lock:
+        print(f"{prefix} {msg}")
 
 
 # -------------------------------------------------------------
-# WIKIDATA SPARQL FETCHER
+# WIKIDATA SPARQL FETCHER (DYNAMIC OFFSET)
 # -------------------------------------------------------------
-
-SPARQL_QUERY = """
-SELECT ?person ?personLabel ?occupationLabel ?image WHERE {
-  ?person wdt:P31 wd:Q5;
-          wdt:P18 ?image;
-          wdt:P106 ?occupation.
-  VALUES ?occupation { wd:Q33999 wd:Q177220 wd:Q639669 wd:Q2066131 wd:Q3665646 wd:Q937857 }
-  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
-} LIMIT 1000
-"""
-
 
 def fetch_wikidata_targets() -> list[dict]:
     """
     Queries Wikidata SPARQL endpoint for high-profile entities
     (actors, singers, musicians, athletes) with P18 image property.
+    Uses a random offset so every run fetches a different batch.
     """
-    log("Querying Wikidata SPARQL for high-profile entities...", "HEAD")
+    offset = random.randint(0, 100000)
+    sparql_query = f"""
+    SELECT ?person ?personLabel ?occupationLabel ?image WHERE {{
+      ?person wdt:P31 wd:Q5;
+              wdt:P18 ?image;
+              wdt:P106 ?occupation.
+      VALUES ?occupation {{ wd:Q33999 wd:Q177220 wd:Q639669 wd:Q2066131 wd:Q3665646 wd:Q937857 }}
+      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en". }}
+    }} LIMIT 1000 OFFSET {offset}
+    """
+
+    log(f"Querying Wikidata SPARQL (OFFSET={offset}) for high-profile entities...", "HEAD")
 
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "application/sparql-results+json",
     }
-    params = {"query": SPARQL_QUERY, "format": "json"}
+    params = {"query": sparql_query, "format": "json"}
 
     for attempt in range(3):
         try:
@@ -221,79 +230,111 @@ def fetch_image_metadata(filename: str) -> dict | None:
 
 
 # -------------------------------------------------------------
-# BIOMETRIC PIPELINE & VAULT INSERTION
+# THREAD-SAFE BIOMETRIC WORKER
 # -------------------------------------------------------------
 
-def process_and_vault_target(target: dict, metadata: dict, session) -> bool:
+def _process_single_target(target: dict, existing_ids: set) -> dict:
     """
-    Runs the biometric pipeline on downloaded image bytes:
-    1. Decode -> CLAHE -> Align -> Extract -> Encrypt
-    2. Insert IdentityProfile with attribution metadata
+    Worker function: runs in a thread pool.
+    Each worker gets its own SQLAlchemy session for thread safety.
+    Returns a result dict with status and profile data.
     """
-    img_array = np.frombuffer(metadata["image_bytes"], dtype=np.uint8)
-    image = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-    if image is None:
-        log(f"  Failed to decode image for {target['person_name']}", "ERR")
-        return False
-
-    clahe_img = apply_clahe(image)
-    aligned, landmarks = align_face_crop(clahe_img)
-
-    if landmarks is None:
-        log(f"  No face detected: {target['person_name']}", "SKIP")
-        return False
-
-    h, w = aligned.shape[:2]
-    if h < MIN_FACE_SIZE or w < MIN_FACE_SIZE:
-        log(f"  Face too small ({w}x{h}): {target['person_name']}", "SKIP")
-        return False
-
-    gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
-    blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
-    if blur_score < 50.0:
-        log(f"  Image too blurry (score={blur_score:.1f}): {target['person_name']}", "SKIP")
-        return False
-
-    embedding = extract_landmark_embedding(landmarks)
-    encrypted_blob = encrypt_embedding(embedding)
-
     user_id = f"wiki_{target['wikidata_id']}"
 
-    existing = session.query(IdentityProfile).filter_by(user_id=user_id).first()
-    if existing:
-        log(f"  Already in vault: {target['person_name']} ({user_id})", "SKIP")
-        return False
+    # Skip if already vaulted (checked against pre-cached set)
+    if user_id in existing_ids:
+        log(f"  Already in vault, skipping: {target['person_name']}", "SKIP")
+        return {"status": "skip", "reason": "duplicate"}
 
-    profile = IdentityProfile(
-        user_id=user_id,
-        encrypted_facial_embedding=encrypted_blob,
-        image_url=metadata["image_url"],
-        thumbnail_url=metadata["thumbnail_url"],
-        file_page_url=metadata["file_page_url"],
-        creator=metadata["creator"],
-        license_short_name=metadata["license_short_name"],
-        license_url=metadata["license_url"],
-        credit=metadata["credit"],
-        attribution_required=metadata["attribution_required"],
-        source=metadata["source"],
-        person_name=target["person_name"],
-        wikidata_id=target["wikidata_id"],
-    )
-    session.add(profile)
-    session.commit()
+    try:
+        # 1. Fetch metadata + image from Wikimedia Commons
+        metadata = fetch_image_metadata(target["image_filename"])
+        if not metadata:
+            log(f"  No image metadata available: {target['person_name']}", "SKIP")
+            return {"status": "skip", "reason": "no_metadata"}
 
-    log(f"  {GREEN}VAULTED{RESET}: {target['person_name']} -> {user_id} ({metadata['license_short_name'] or 'N/A'})", "OK")
-    return True
+        # 2. Decode image
+        img_array = np.frombuffer(metadata["image_bytes"], dtype=np.uint8)
+        image = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        if image is None:
+            log(f"  Failed to decode image: {target['person_name']}", "ERR")
+            return {"status": "error", "reason": "decode_failed"}
+
+        # 3. CLAHE → Align → Quality checks
+        clahe_img = apply_clahe(image)
+        aligned, landmarks = align_face_crop(clahe_img)
+
+        if landmarks is None:
+            log(f"  No face detected: {target['person_name']}", "SKIP")
+            return {"status": "skip", "reason": "no_face"}
+
+        h, w = aligned.shape[:2]
+        if h < MIN_FACE_SIZE or w < MIN_FACE_SIZE:
+            log(f"  Face too small ({w}x{h}): {target['person_name']}", "SKIP")
+            return {"status": "skip", "reason": "too_small"}
+
+        gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
+        blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+        if blur_score < 50.0:
+            log(f"  Image too blurry (score={blur_score:.1f}): {target['person_name']}", "SKIP")
+            return {"status": "skip", "reason": "blurry"}
+
+        # 4. ArcFace 512-D embedding + KMS encryption
+        embedding = extract_arcface_embedding(aligned)
+        encrypted_blob = encrypt_embedding(embedding)
+
+        # 5. Vault insertion (thread-local session)
+        session = SessionLocal()
+        try:
+            # Double-check in DB (race condition guard)
+            existing = session.query(IdentityProfile).filter_by(user_id=user_id).first()
+            if existing:
+                log(f"  Already in vault (DB check): {target['person_name']}", "SKIP")
+                return {"status": "skip", "reason": "duplicate_db"}
+
+            profile = IdentityProfile(
+                user_id=user_id,
+                encrypted_facial_embedding=encrypted_blob,
+                image_url=metadata["image_url"],
+                thumbnail_url=metadata["thumbnail_url"],
+                file_page_url=metadata["file_page_url"],
+                creator=metadata["creator"],
+                license_short_name=metadata["license_short_name"],
+                license_url=metadata["license_url"],
+                credit=metadata["credit"],
+                attribution_required=metadata["attribution_required"],
+                source=metadata["source"],
+                person_name=target["person_name"],
+                wikidata_id=target["wikidata_id"],
+            )
+            session.add(profile)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+        log(f"  {GREEN}VAULTED{RESET}: {target['person_name']} -> {user_id} ({metadata['license_short_name'] or 'N/A'})", "OK")
+        return {"status": "ok"}
+
+    except requests.exceptions.RequestException as e:
+        log(f"  Network error for {target['person_name']}: {str(e)[:100]}", "ERR")
+        return {"status": "error", "reason": f"network: {e}"}
+    except Exception as e:
+        log(f"  Pipeline error for {target['person_name']}: {str(e)[:100]}", "ERR")
+        return {"status": "error", "reason": f"pipeline: {e}"}
 
 
 # -------------------------------------------------------------
-# MAIN EXECUTION LOOP
+# MAIN EXECUTION — MULTI-THREADED
 # -------------------------------------------------------------
 
 def run_crawler():
     print(f"\n{'=' * 60}")
-    print(f"  SOVEREIGN IDENTITY ACQUISITION DAEMON")
+    print(f"  SOVEREIGN IDENTITY ACQUISITION DAEMON  v2")
     print(f"  Wikimedia Commons -> Biometric Vault Pipeline")
+    print(f"  Workers: {MAX_WORKERS} | ArcFace 512-D | KMS Encrypted")
     print(f"{'=' * 60}\n")
 
     log("Initializing database schema...", "HEAD")
@@ -306,55 +347,46 @@ def run_crawler():
         return
 
     total = len(targets)
+
+    # Pre-cache existing user_ids to avoid per-thread DB roundtrips
+    log("Caching existing vault indexes...", "HEAD")
+    session = SessionLocal()
+    try:
+        existing_ids = {row[0] for row in session.query(IdentityProfile.user_id).all()}
+    finally:
+        session.close()
+    log(f"Vault contains {len(existing_ids)} existing profiles", "OK")
+
+    log(f"Beginning multi-threaded ingestion of {total} targets ({MAX_WORKERS} workers)...\n", "HEAD")
+
     vaulted = 0
     skipped = 0
     errors = 0
+    t_start = time.time()
 
-    log(f"Beginning ingestion of {total} targets...\n", "HEAD")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        future_to_target = {
+            executor.submit(_process_single_target, target, existing_ids): target
+            for target in targets
+        }
 
-    session = SessionLocal()
-    try:
-        for i, target in enumerate(targets):
-            progress = f"[{i + 1}/{total}]"
-            log(f"{progress} Processing: {BOLD}{target['person_name']}{RESET} ({target['wikidata_id']}) - {target['occupation']}", "INFO")
+        for i, future in enumerate(concurrent.futures.as_completed(future_to_target)):
+            result = future.result()
 
-            try:
-                user_id = f"wiki_{target['wikidata_id']}"
-                existing = session.query(IdentityProfile).filter_by(user_id=user_id).first()
-                if existing:
-                    log(f"  Already in vault, skipping", "SKIP")
-                    skipped += 1
-                    continue
-
-                metadata = fetch_image_metadata(target["image_filename"])
-                if not metadata:
-                    log(f"  No image metadata available", "SKIP")
-                    skipped += 1
-                    time.sleep(REQUEST_DELAY)
-                    continue
-
-                success = process_and_vault_target(target, metadata, session)
-                if success:
-                    vaulted += 1
-                else:
-                    skipped += 1
-
-            except requests.exceptions.RequestException as e:
-                log(f"  Network error: {str(e)[:100]}", "ERR")
+            if result["status"] == "ok":
+                vaulted += 1
+            elif result["status"] == "skip":
+                skipped += 1
+            else:
                 errors += 1
-            except Exception as e:
-                log(f"  Pipeline error: {str(e)[:100]}", "ERR")
-                errors += 1
-                session.rollback()
 
-            time.sleep(REQUEST_DELAY)
+            processed = i + 1
+            if processed % 50 == 0:
+                elapsed = time.time() - t_start
+                rate = processed / elapsed if elapsed > 0 else 0
+                log(f"Progress: {processed}/{total} | Vaulted: {vaulted} | Skipped: {skipped} | Errors: {errors} | {rate:.1f} targets/s", "INFO")
 
-            if (i + 1) % 50 == 0:
-                print(f"\n{DIM}-- Progress: {i + 1}/{total} | Vaulted: {vaulted} | Skipped: {skipped} | Errors: {errors} --{RESET}\n")
-
-    finally:
-        session.close()
-
+    elapsed = time.time() - t_start
     print(f"\n{'=' * 60}")
     print(f"  CRAWL COMPLETE")
     print(f"{'=' * 60}")
@@ -362,6 +394,8 @@ def run_crawler():
     print(f"  {GREEN}Vaulted:        {vaulted}{RESET}")
     print(f"  {DIM}Skipped:        {skipped}{RESET}")
     print(f"  {RED}Errors:         {errors}{RESET}")
+    print(f"  Time:           {elapsed:.1f}s")
+    print(f"  Throughput:     {total / elapsed:.1f} targets/s")
     print(f"{'=' * 60}\n")
 
 
