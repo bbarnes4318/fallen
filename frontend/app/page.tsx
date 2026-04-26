@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import SymmetryMerge from '@/components/SymmetryMerge';
 import jsPDF from 'jspdf';
@@ -19,7 +19,7 @@ export default function Home() {
   const [probeFile, setProbeFile] = useState<File | null>(null);
   const [probePreview, setProbePreview] = useState<string>('');
 
-  const [step, setStep] = useState<'idle' | 'uploading' | 'frontalizing' | 'calculating' | 'complete' | 'error'>('idle');
+  const [step, setStep] = useState<'idle' | 'uploading' | 'frontalizing' | 'calculating' | 'paywall' | 'complete' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
 
   interface VerificationResult {
@@ -47,11 +47,46 @@ export default function Home() {
   const [loginError, setLoginError] = useState('');
   const [viewMode, setViewMode] = useState<'acquisition' | 'graph'>('acquisition');
 
+  // Restore saved token
   useEffect(() => {
     const savedToken = localStorage.getItem('operator_token');
     if (savedToken) {
       const restore = () => setToken(savedToken);
       queueMicrotask(restore);
+    }
+  }, []);
+
+  // Post-payment handoff: check for ?success=true in URL
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('success') === 'true') {
+      const cached = sessionStorage.getItem('cachedVaultResult');
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached) as VerificationResult;
+          setResults(parsed);
+          setStep('complete');
+          sessionStorage.removeItem('cachedVaultResult');
+        } catch {
+          console.error('Failed to parse cached vault result');
+        }
+      }
+      // Clean up URL params
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (params.get('canceled') === 'true') {
+      // Payment was canceled — restore paywall state if cached data exists
+      const cached = sessionStorage.getItem('cachedVaultResult');
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached) as VerificationResult;
+          setResults(parsed);
+          setStep('paywall');
+        } catch {
+          console.error('Failed to parse cached vault result');
+        }
+      }
+      window.history.replaceState({}, '', window.location.pathname);
     }
   }, []);
 
@@ -164,8 +199,10 @@ export default function Home() {
       }
       const data = await verifyRes.json();
       
+      // Cache the results and redirect to paywall instead of showing results directly
+      sessionStorage.setItem('cachedVaultResult', JSON.stringify(data));
       setResults(data);
-      setStep('complete');
+      setStep('paywall');
       
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : 'An unknown error occurred');
@@ -439,6 +476,92 @@ export default function Home() {
               <p className="font-bold text-sm mb-1">SYSTEM ERROR</p>
               <p className="text-xs">{errorMsg}</p>
               <button onClick={() => setStep('idle')} className="mt-3 px-4 py-1.5 text-xs bg-red-900/50 hover:bg-red-900/80 rounded border border-red-700">RESET</button>
+            </div>
+          </div>
+        )}
+
+        {/* ════ PAYWALL: TARGET ACQUIRED ════ */}
+        {step === 'paywall' && results && (
+          <div className="h-full flex flex-col items-center justify-center">
+            <div className="w-full max-w-md text-center">
+              {/* Scanline animation */}
+              <div className="relative mb-8">
+                <div className="w-20 h-20 mx-auto rounded-full border-2 border-[#D4AF37] flex items-center justify-center relative overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-b from-[#D4AF37]/20 via-transparent to-transparent animate-pulse"></div>
+                  <svg className="w-8 h-8 text-[#D4AF37]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                </div>
+              </div>
+
+              {/* Header */}
+              <h2 className="text-2xl font-bold tracking-[0.3em] text-white mb-2">
+                TARGET <span className="text-[#D4AF37]">ACQUIRED</span>
+              </h2>
+              <p className="text-sm tracking-[0.2em] text-gray-400 mb-1">
+                IDENTITY LOCKED
+              </p>
+              <div className="w-16 h-[1px] bg-[#D4AF37]/40 mx-auto my-4"></div>
+
+              {/* Score preview (blurred tease) */}
+              <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg p-4 mb-6 relative overflow-hidden">
+                <div className="absolute inset-0 backdrop-blur-sm bg-[#0A0A0B]/60 z-10 flex items-center justify-center">
+                  <span className="text-[10px] tracking-[0.3em] text-[#D4AF37]/80 font-bold">ENCRYPTED</span>
+                </div>
+                <div className="grid grid-cols-3 gap-3 opacity-30 select-none">
+                  <div>
+                    <div className="text-[9px] text-gray-500 tracking-wider">STRUCTURAL</div>
+                    <div className="text-lg text-white font-bold">██.█%</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] text-gray-500 tracking-wider">SOFT BIO</div>
+                    <div className="text-lg text-white font-bold">██.█%</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] text-gray-500 tracking-wider">MICRO-TOPO</div>
+                    <div className="text-lg text-white font-bold">██.█%</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* CTA */}
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${getApiUrl()}/checkout/create-session`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                    });
+                    if (!res.ok) throw new Error('Checkout session creation failed');
+                    const data = await res.json();
+                    window.location.href = data.checkout_url;
+                  } catch (err) {
+                    console.error('Stripe redirect failed:', err);
+                    setErrorMsg('Payment system unavailable. Please try again.');
+                    setStep('error');
+                  }
+                }}
+                className="w-full py-3.5 bg-[#D4AF37] text-black font-bold text-sm tracking-[0.25em] hover:bg-[#b5952f] transition-all shadow-[0_0_30px_rgba(212,175,55,0.3)] hover:shadow-[0_0_40px_rgba(212,175,55,0.5)] border-2 border-[#D4AF37] rounded-sm"
+              >
+                DECRYPT DOSSIER — $4.99
+              </button>
+
+              <p className="text-[10px] text-gray-600 mt-3 tracking-wider">
+                ONE-TIME PAYMENT · INSTANT ACCESS · SECURE CHECKOUT
+              </p>
+
+              {/* Cancel link */}
+              <button
+                onClick={() => {
+                  sessionStorage.removeItem('cachedVaultResult');
+                  setStep('idle');
+                  setResults(null);
+                  setProbeFile(null);
+                  if (probePreview) URL.revokeObjectURL(probePreview);
+                  setProbePreview('');
+                }}
+                className="mt-4 text-[10px] text-gray-500 hover:text-gray-300 transition-colors tracking-widest"
+              >
+                CANCEL AND RESET
+              </button>
             </div>
           </div>
         )}

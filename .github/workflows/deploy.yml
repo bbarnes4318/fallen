@@ -112,6 +112,7 @@ jobs:
             DB_PASS=Fv966468!Sec5677
             DB_NAME=facial_db
             CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance
+            STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
 
       - name: Deploy Wikimedia Crawler Job
         run: |

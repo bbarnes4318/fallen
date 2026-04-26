@@ -22,6 +22,9 @@ from skimage.feature import local_binary_pattern
 import mediapipe as mp
 import onnxruntime as ort
 from models import SessionLocal, IdentityProfile, init_db
+import stripe
+
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 
 app = FastAPI(title="Biometric Facial Verification Pipeline")
 
@@ -1050,3 +1053,46 @@ def vault_network(_: dict = Depends(verify_jwt)):
     finally:
         session.close()
 
+
+# ---------------------------------------------------------
+# STRIPE CHECKOUT (FLAT-FEE PAYWALL)
+# ---------------------------------------------------------
+
+class CheckoutRequest(BaseModel):
+    success_url: Optional[str] = None
+    cancel_url: Optional[str] = None
+
+@app.post("/checkout/create-session")
+def create_checkout_session(req: CheckoutRequest = None):
+    """
+    Creates a Stripe Checkout Session for a one-time $4.99 payment
+    to unlock the biometric dossier results.
+    """
+    if not stripe.api_key:
+        raise HTTPException(status_code=500, detail="Stripe is not configured.")
+
+    frontend_origin = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    success = req.success_url if req and req.success_url else f"{frontend_origin}/?session_id={{CHECKOUT_SESSION_ID}}&success=true"
+    cancel = req.cancel_url if req and req.cancel_url else f"{frontend_origin}/?canceled=true"
+
+    try:
+        session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            line_items=[{
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {
+                        "name": "Biometric Dossier Decryption",
+                        "description": "One-time unlock of identity verification results",
+                    },
+                    "unit_amount": 499,  # $4.99 in cents
+                },
+                "quantity": 1,
+            }],
+            mode="payment",
+            success_url=success,
+            cancel_url=cancel,
+        )
+        return {"checkout_url": session.url, "session_id": session.id}
+    except stripe.StripeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
