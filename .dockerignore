@@ -1,0 +1,16 @@
+# Root .dockerignore for Dockerfile.backend (root context)
+frontend/node_modules
+frontend/.next
+frontend/out
+.git
+*.exe
+*.task
+*.json
+!backend/**/*.json
+target_profiles
+infra
+.env*
+cloud-sql-proxy*
+face_landmarker.task
+hoppwhistle-*.json
+deploy_infra.ps1

@@ -1,88 +1,47 @@
 """
-═══════════════════════════════════════════════════════════════════
+===============================================================
   WIKIMEDIA AUTONOMOUS BIOMETRIC CRAWLER
   Sovereign Identity Acquisition Daemon
-═══════════════════════════════════════════════════════════════════
+===============================================================
   Queries Wikidata SPARQL for high-profile entities, pulls images
   via Wikimedia Commons API, runs facial extraction + KMS encryption,
   and vaults encrypted vectors with full legal attribution metadata.
-═══════════════════════════════════════════════════════════════════
+
+  Designed to run as a Cloud Run Job using the backend Docker image.
+===============================================================
 """
 
 import sys
 import os
 import time
 import re
-import struct
 import urllib.parse
 import requests
 import cv2
 import numpy as np
 from datetime import datetime
 
-# ── Path setup: allow imports from backend/ ──
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+# -- Path setup: /app in Docker (backend code), or local repo --
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+
+# In Docker: WORKDIR=/app contains backend code directly
+# Locally: backend/ is a subdirectory of the project root
+sys.path.insert(0, "/app")                             # Docker container
+sys.path.insert(0, os.path.join(PROJECT_ROOT, "backend"))  # Local dev
 sys.path.insert(0, PROJECT_ROOT)
-sys.path.insert(0, os.path.join(PROJECT_ROOT, "backend"))
 
-from backend.models import SessionLocal, IdentityProfile, init_db
+from models import SessionLocal, IdentityProfile, init_db
+from main import align_face_crop, extract_landmark_embedding, encrypt_embedding, apply_clahe
 
-# ── Conditional imports for encryption ──
-try:
-    from google.cloud import kms
-    from cryptography.fernet import Fernet
-    HAS_KMS = True
-except ImportError:
-    HAS_KMS = False
-
-# ── MediaPipe Face Mesh (Tasks API for 0.10.30+) ──
-try:
-    import mediapipe as mp
-    if hasattr(mp, 'solutions'):
-        # Legacy API (< 0.10.30)
-        mp_face_mesh = mp.solutions.face_mesh
-        face_mesh = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True)
-        USE_LEGACY_MP = True
-    else:
-        # New Tasks API (0.10.30+)
-        from mediapipe.tasks import python as mp_python
-        from mediapipe.tasks.python import vision
-        
-        # Download face landmarker model if not present
-        MODEL_PATH = os.path.join(PROJECT_ROOT, "face_landmarker.task")
-        if not os.path.exists(MODEL_PATH):
-            print("[SETUP] Downloading MediaPipe Face Landmarker model...")
-            model_url = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
-            resp = requests.get(model_url, timeout=60)
-            with open(MODEL_PATH, "wb") as f:
-                f.write(resp.content)
-            print("[SETUP] Model downloaded successfully.")
-        
-        base_options = mp_python.BaseOptions(model_asset_path=MODEL_PATH)
-        options = vision.FaceLandmarkerOptions(
-            base_options=base_options,
-            output_face_blendshapes=False,
-            output_facial_transformation_matrixes=False,
-            num_faces=1,
-        )
-        face_landmarker = vision.FaceLandmarker.create_from_options(options)
-        USE_LEGACY_MP = False
-        face_mesh = None
-except Exception as e:
-    print(f"[WARN] MediaPipe init failed: {e}")
-    face_mesh = None
-    face_landmarker = None
-    USE_LEGACY_MP = False
-
-# ── Constants ──
+# -- Constants --
 WIKIDATA_SPARQL_ENDPOINT = "https://query.wikidata.org/sparql"
 COMMONS_API_ENDPOINT = "https://commons.wikimedia.org/w/api.php"
 USER_AGENT = "SovereignBiometricCrawler/1.0 (https://hoppwhistle.com; mailto:admin@hoppwhistle.com)"
-KMS_KEY_NAME = os.getenv("KMS_KEY_NAME") or "projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek"
 MIN_FACE_SIZE = 60
 REQUEST_DELAY = 1.0
 
-# ── Terminal formatting ──
+# -- Terminal formatting --
 GOLD = "\033[38;2;212;175;55m"
 RED = "\033[91m"
 GREEN = "\033[92m"
@@ -104,162 +63,9 @@ def log(msg: str, level: str = "INFO"):
     print(f"{prefix} {msg}")
 
 
-# ─────────────────────────────────────────────────────────────
-# BIOMETRIC PIPELINE (Self-contained, no main.py dependency)
-# ─────────────────────────────────────────────────────────────
-
-def align_face_crop_local(image: np.ndarray, target_size: int = 256):
-    """
-    Detects face landmarks and returns an aligned crop + landmarks.
-    Works with both legacy and Tasks MediaPipe APIs.
-    Returns (aligned_crop, landmarks) or (image, None) on failure.
-    """
-    if USE_LEGACY_MP and face_mesh is not None:
-        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        result = face_mesh.process(rgb)
-        if not result.multi_face_landmarks:
-            return image, None
-        
-        landmarks = result.multi_face_landmarks[0]
-        h, w = image.shape[:2]
-        
-        # Extract eye centers for alignment
-        left_eye_indices = [33, 133, 160, 144, 153, 158]
-        right_eye_indices = [362, 263, 387, 373, 380, 385]
-        
-        left_eye = np.mean([(landmarks.landmark[i].x * w, landmarks.landmark[i].y * h) for i in left_eye_indices], axis=0)
-        right_eye = np.mean([(landmarks.landmark[i].x * w, landmarks.landmark[i].y * h) for i in right_eye_indices], axis=0)
-        
-        # Compute rotation angle
-        dx = right_eye[0] - left_eye[0]
-        dy = right_eye[1] - left_eye[1]
-        angle = np.degrees(np.arctan2(dy, dx))
-        
-        # Rotate image
-        center = ((left_eye[0] + right_eye[0]) / 2, (left_eye[1] + right_eye[1]) / 2)
-        M = cv2.getRotationMatrix2D(center, angle, 1.0)
-        aligned = cv2.warpAffine(image, M, (w, h))
-        
-        # Crop face region
-        all_x = [landmarks.landmark[i].x * w for i in range(468)]
-        all_y = [landmarks.landmark[i].y * h for i in range(468)]
-        x_min, x_max = int(min(all_x)), int(max(all_x))
-        y_min, y_max = int(min(all_y)), int(max(all_y))
-        
-        padding = int((x_max - x_min) * 0.15)
-        x_min = max(0, x_min - padding)
-        y_min = max(0, y_min - padding)
-        x_max = min(w, x_max + padding)
-        y_max = min(h, y_max + padding)
-        
-        crop = aligned[y_min:y_max, x_min:x_max]
-        if crop.size == 0:
-            return image, None
-        
-        crop = cv2.resize(crop, (target_size, target_size))
-        return crop, landmarks
-    
-    elif not USE_LEGACY_MP and face_landmarker is not None:
-        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-        result = face_landmarker.detect(mp_image)
-        
-        if not result.face_landmarks or len(result.face_landmarks) == 0:
-            return image, None
-        
-        landmarks_list = result.face_landmarks[0]
-        h, w = image.shape[:2]
-        
-        # Extract eye centers
-        left_eye_indices = [33, 133, 160, 144, 153, 158]
-        right_eye_indices = [362, 263, 387, 373, 380, 385]
-        
-        left_eye = np.mean([(landmarks_list[i].x * w, landmarks_list[i].y * h) for i in left_eye_indices], axis=0)
-        right_eye = np.mean([(landmarks_list[i].x * w, landmarks_list[i].y * h) for i in right_eye_indices], axis=0)
-        
-        dx = right_eye[0] - left_eye[0]
-        dy = right_eye[1] - left_eye[1]
-        angle = np.degrees(np.arctan2(dy, dx))
-        
-        center = ((left_eye[0] + right_eye[0]) / 2, (left_eye[1] + right_eye[1]) / 2)
-        M = cv2.getRotationMatrix2D(center, angle, 1.0)
-        aligned = cv2.warpAffine(image, M, (w, h))
-        
-        all_x = [lm.x * w for lm in landmarks_list]
-        all_y = [lm.y * h for lm in landmarks_list]
-        x_min, x_max = int(min(all_x)), int(max(all_x))
-        y_min, y_max = int(min(all_y)), int(max(all_y))
-        
-        padding = int((x_max - x_min) * 0.15)
-        x_min = max(0, x_min - padding)
-        y_min = max(0, y_min - padding)
-        x_max = min(w, x_max + padding)
-        y_max = min(h, y_max + padding)
-        
-        crop = aligned[y_min:y_max, x_min:x_max]
-        if crop.size == 0:
-            return image, None
-        
-        crop = cv2.resize(crop, (target_size, target_size))
-        return crop, landmarks_list
-    
-    return image, None
-
-
-def extract_landmark_embedding_local(landmarks) -> np.ndarray:
-    """
-    Extracts a geometric embedding from facial landmarks.
-    Compatible with both legacy and Tasks API landmark formats.
-    """
-    coords = []
-    if USE_LEGACY_MP:
-        # Legacy: landmarks.landmark[i].x/y/z
-        for lm in landmarks.landmark:
-            coords.extend([lm.x, lm.y, lm.z])
-    else:
-        # Tasks API: landmarks is a list of NormalizedLandmark
-        for lm in landmarks:
-            coords.extend([lm.x, lm.y, lm.z])
-    
-    return np.array(coords, dtype=np.float64)
-
-
-def encrypt_embedding_local(embedding: np.ndarray) -> bytes:
-    """
-    KMS Envelope Encryption with fallback for local development.
-    """
-    if not HAS_KMS:
-        return b"MOCK_ENCRYPTED_PACKET"
-    
-    try:
-        dek = Fernet.generate_key()
-        cipher = Fernet(dek)
-        payload_bytes = embedding.tobytes()
-        encrypted_payload = cipher.encrypt(payload_bytes)
-        
-        client = kms.KeyManagementServiceClient()
-        encrypt_response = client.encrypt(request={'name': KMS_KEY_NAME, 'plaintext': dek})
-        encrypted_dek = encrypt_response.ciphertext
-        
-        dek_len = struct.pack(">I", len(encrypted_dek))
-        return dek_len + encrypted_dek + encrypted_payload
-    except Exception as e:
-        print(f"  KMS Encryption warning/fallback: {e}")
-        return b"MOCK_ENCRYPTED_PACKET"
-
-
-def apply_clahe_local(image: np.ndarray) -> np.ndarray:
-    """CLAHE histogram equalization for contrast normalization."""
-    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    cl = clahe.apply(l)
-    return cv2.cvtColor(cv2.merge([cl, a, b]), cv2.COLOR_LAB2BGR)
-
-
-# ─────────────────────────────────────────────────────────────
-# TASK 2: WIKIDATA SPARQL FETCHER
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
+# WIKIDATA SPARQL FETCHER
+# -------------------------------------------------------------
 
 SPARQL_QUERY = """
 SELECT ?person ?personLabel ?occupationLabel ?image WHERE {
@@ -331,9 +137,9 @@ def fetch_wikidata_targets() -> list[dict]:
     return targets
 
 
-# ─────────────────────────────────────────────────────────────
-# TASK 3: WIKIMEDIA COMMONS API INTEGRATION
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
+# WIKIMEDIA COMMONS API INTEGRATION
+# -------------------------------------------------------------
 
 def fetch_image_metadata(filename: str) -> dict | None:
     """
@@ -414,14 +220,14 @@ def fetch_image_metadata(filename: str) -> dict | None:
     }
 
 
-# ─────────────────────────────────────────────────────────────
-# TASK 4: BIOMETRIC PIPELINE & VAULT INSERTION
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
+# BIOMETRIC PIPELINE & VAULT INSERTION
+# -------------------------------------------------------------
 
 def process_and_vault_target(target: dict, metadata: dict, session) -> bool:
     """
     Runs the biometric pipeline on downloaded image bytes:
-    1. Decode → CLAHE → Align → Extract → Encrypt
+    1. Decode -> CLAHE -> Align -> Extract -> Encrypt
     2. Insert IdentityProfile with attribution metadata
     """
     img_array = np.frombuffer(metadata["image_bytes"], dtype=np.uint8)
@@ -430,9 +236,9 @@ def process_and_vault_target(target: dict, metadata: dict, session) -> bool:
         log(f"  Failed to decode image for {target['person_name']}", "ERR")
         return False
 
-    clahe_img = apply_clahe_local(image)
-    aligned, landmarks = align_face_crop_local(clahe_img)
-    
+    clahe_img = apply_clahe(image)
+    aligned, landmarks = align_face_crop(clahe_img)
+
     if landmarks is None:
         log(f"  No face detected: {target['person_name']}", "SKIP")
         return False
@@ -448,8 +254,8 @@ def process_and_vault_target(target: dict, metadata: dict, session) -> bool:
         log(f"  Image too blurry (score={blur_score:.1f}): {target['person_name']}", "SKIP")
         return False
 
-    embedding = extract_landmark_embedding_local(landmarks)
-    encrypted_blob = encrypt_embedding_local(embedding)
+    embedding = extract_landmark_embedding(landmarks)
+    encrypted_blob = encrypt_embedding(embedding)
 
     user_id = f"wiki_{target['wikidata_id']}"
 
@@ -480,15 +286,15 @@ def process_and_vault_target(target: dict, metadata: dict, session) -> bool:
     return True
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # MAIN EXECUTION LOOP
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 def run_crawler():
-    print(f"\n{GOLD}{'=' * 60}{RESET}")
-    print(f"{GOLD}  SOVEREIGN IDENTITY ACQUISITION DAEMON{RESET}")
-    print(f"{GOLD}  Wikimedia Commons -> Biometric Vault Pipeline{RESET}")
-    print(f"{GOLD}{'=' * 60}{RESET}\n")
+    print(f"\n{'=' * 60}")
+    print(f"  SOVEREIGN IDENTITY ACQUISITION DAEMON")
+    print(f"  Wikimedia Commons -> Biometric Vault Pipeline")
+    print(f"{'=' * 60}\n")
 
     log("Initializing database schema...", "HEAD")
     init_db()
@@ -549,14 +355,14 @@ def run_crawler():
     finally:
         session.close()
 
-    print(f"\n{GOLD}{'=' * 60}{RESET}")
-    print(f"{GOLD}  CRAWL COMPLETE{RESET}")
-    print(f"{GOLD}{'=' * 60}{RESET}")
+    print(f"\n{'=' * 60}")
+    print(f"  CRAWL COMPLETE")
+    print(f"{'=' * 60}")
     print(f"  Total Targets:  {total}")
     print(f"  {GREEN}Vaulted:        {vaulted}{RESET}")
     print(f"  {DIM}Skipped:        {skipped}{RESET}")
     print(f"  {RED}Errors:         {errors}{RESET}")
-    print(f"{GOLD}{'=' * 60}{RESET}\n")
+    print(f"{'=' * 60}\n")
 
 
 if __name__ == "__main__":
