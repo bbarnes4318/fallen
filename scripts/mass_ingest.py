@@ -9,8 +9,7 @@
 import os
 import sys
 import time
-import tarfile
-import urllib.request
+import zipfile
 import hashlib
 from pathlib import Path
 from datetime import datetime
@@ -37,8 +36,11 @@ if os.getenv("K_SERVICE") or os.getenv("CLOUD_RUN_JOB"):
     DATASETS_DIR = "/tmp/datasets"
 else:
     DATASETS_DIR = os.path.join(PROJECT_ROOT, "datasets")
-LFW_DIR = os.path.join(DATASETS_DIR, "lfw")
-LFW_URL = "https://ndownloader.figshare.com/files/5976018"
+
+# Dataset is staged on our own GCS bucket — zero egress cost, always available
+GCS_BUCKET = "hoppwhistle-facial-uploads"
+GCS_BLOB_PATH = "datasets/lfw_color.zip"
+LFW_DIR = os.path.join(DATASETS_DIR, "lfwcrop_color", "faces")
 BATCH_SIZE = 100  # Number of profiles to commit to DB at once
 MAX_WORKERS = 4   # Number of concurrent ArcFace/KMS threads
 
@@ -53,29 +55,26 @@ class _C:
 def _ts(): return datetime.now().strftime("%H:%M:%S")
 
 def download_and_extract_lfw():
-    """Fetches the 13k+ Labeled Faces in the Wild dataset if missing."""
-    import requests as req
+    """Downloads LFW color dataset from our GCS bucket and extracts it."""
+    from google.cloud import storage as gcs_storage
     if not os.path.exists(DATASETS_DIR):
         os.makedirs(DATASETS_DIR)
 
-    archive_path = os.path.join(DATASETS_DIR, "lfw.tgz")
-    
+    archive_path = os.path.join(DATASETS_DIR, "lfw_color.zip")
+
     if not os.path.exists(LFW_DIR):
         if not os.path.exists(archive_path):
-            print(f"  {_C.DIM}[{_ts()}]{_C.RESET} {_C.GOLD}DOWNLOADING LFW DATASET (170MB)...{_C.RESET}")
-            resp = req.get(LFW_URL, stream=True, timeout=120)
-            resp.raise_for_status()
-            downloaded = 0
-            with open(archive_path, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=1024 * 1024):
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    print(f"\r  Downloaded {downloaded / (1024*1024):.0f} MB", end="", flush=True)
-            print(f"\n  {_C.DIM}[{_ts()}]{_C.RESET} {_C.GREEN}DOWNLOAD COMPLETE ({downloaded / (1024*1024):.0f} MB).{_C.RESET}")
-        
+            print(f"  {_C.DIM}[{_ts()}]{_C.RESET} {_C.GOLD}DOWNLOADING LFW DATASET FROM GCS...{_C.RESET}")
+            client = gcs_storage.Client()
+            bucket = client.bucket(GCS_BUCKET)
+            blob = bucket.blob(GCS_BLOB_PATH)
+            blob.download_to_filename(archive_path)
+            size_mb = os.path.getsize(archive_path) / (1024 * 1024)
+            print(f"  {_C.DIM}[{_ts()}]{_C.RESET} {_C.GREEN}DOWNLOAD COMPLETE ({size_mb:.0f} MB).{_C.RESET}")
+
         print(f"  {_C.DIM}[{_ts()}]{_C.RESET} {_C.GOLD}EXTRACTING ARCHIVE...{_C.RESET}")
-        with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(path=DATASETS_DIR)
+        with zipfile.ZipFile(archive_path, "r") as zf:
+            zf.extractall(path=DATASETS_DIR)
         print(f"  {_C.DIM}[{_ts()}]{_C.RESET} {_C.GREEN}EXTRACTION COMPLETE.{_C.RESET}")
     else:
         print(f"  {_C.DIM}[{_ts()}]{_C.RESET} {_C.CYAN}LFW DATASET FOUND. SKIPPING DOWNLOAD.{_C.RESET}")
@@ -90,8 +89,9 @@ def process_single_image(filepath: str):
     try:
         user_id = generate_user_id(filepath)
         
-        # Extract name from LFW folder structure (e.g., lfw/George_W_Bush/George_W_Bush_0001.jpg)
-        person_name = Path(filepath).parent.name.replace("_", " ")
+        # Extract name from filename (e.g., George_W_Bush_0001.ppm -> George W Bush)
+        stem = Path(filepath).stem  # George_W_Bush_0001
+        person_name = "_".join(stem.split("_")[:-1]).replace("_", " ")
 
         image = cv2.imread(filepath)
         if image is None: return {"status": "error", "file": filepath, "msg": "Read failed"}
@@ -127,7 +127,7 @@ def main():
     image_paths = []
     for root, _, files in os.walk(LFW_DIR):
         for file in files:
-            if file.lower().endswith(".jpg"):
+            if file.lower().endswith((".jpg", ".ppm", ".png")):
                 image_paths.append(os.path.join(root, file))
 
     total_images = len(image_paths)
