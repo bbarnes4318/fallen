@@ -10,8 +10,15 @@ interface SymmetryMergeProps {
 export default function SymmetryMerge({ galleryImageSrc, probeImageSrc }: SymmetryMergeProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  
+  // State
   const [sliderPos, setSliderPos] = useState(50);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [mode, setMode] = useState<'split' | 'pan'>('split');
+  
   const [isDragging, setIsDragging] = useState(false);
+  const lastMousePos = useRef({ x: 0, y: 0 });
   const [loadedSources, setLoadedSources] = useState({ gallery: '', probe: '' });
   
   const galleryImgRef = useRef<HTMLImageElement | null>(null);
@@ -19,7 +26,7 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc }: Symmet
 
   const imagesLoaded = loadedSources.gallery === galleryImageSrc && loadedSources.probe === probeImageSrc;
 
-  // Load Images
+  // 1. Load Images
   useEffect(() => {
     let cancelled = false;
     let loadedCount = 0;
@@ -30,6 +37,8 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc }: Symmet
       loadedCount++;
       if (loadedCount === 2 && !cancelled) {
         setLoadedSources({ gallery: targetGallery, probe: targetProbe });
+        setZoom(1); // Reset view on new images
+        setPan({ x: 0, y: 0 });
       }
     };
 
@@ -48,7 +57,7 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc }: Symmet
     return () => { cancelled = true; };
   }, [galleryImageSrc, probeImageSrc]);
 
-  // Draw Canvas — fits parent container height
+  // 2. Draw Canvas (Hardware Accelerated)
   useEffect(() => {
     if (!imagesLoaded || !canvasRef.current || !galleryImgRef.current || !probeImgRef.current || !containerRef.current) return;
     
@@ -56,123 +65,152 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc }: Symmet
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const width = galleryImgRef.current.width;
-    const height = galleryImgRef.current.height;
-    
-    // Scale to fit the container (both width and height constrained)
     const containerWidth = containerRef.current.clientWidth;
     const containerHeight = containerRef.current.clientHeight;
-    const scale = Math.min(containerWidth / width, containerHeight / height, 1);
+
+    // Set canvas to physical screen pixels
+    canvas.width = containerWidth;
+    canvas.height = containerHeight;
+
+    const imgWidth = galleryImgRef.current.width;
+    const imgHeight = galleryImgRef.current.height;
     
-    const scaledWidth = width * scale;
-    const scaledHeight = height * scale;
+    // Base scale to fit container natively
+    const baseScale = Math.min(containerWidth / imgWidth, containerHeight / imgHeight, 1);
+    const currentScale = baseScale * zoom;
 
-    canvas.width = scaledWidth;
-    canvas.height = scaledHeight;
+    // Calculate drawing center
+    const drawWidth = imgWidth * currentScale;
+    const drawHeight = imgHeight * currentScale;
+    const offsetX = (containerWidth - drawWidth) / 2 + pan.x;
+    const offsetY = (containerHeight - drawHeight) / 2 + pan.y;
 
-    const splitX = (sliderPos / 100) * scaledWidth;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Save state & apply transformations
+    ctx.save();
+    ctx.translate(offsetX, offsetY);
+    ctx.scale(currentScale, currentScale);
 
-    ctx.clearRect(0, 0, scaledWidth, scaledHeight);
+    const splitX = (sliderPos / 100) * imgWidth;
 
-    // Draw Left Half (Gallery)
+    // Draw Gallery (Left)
     if (splitX > 0) {
-      ctx.drawImage(
-        galleryImgRef.current,
-        0, 0, (sliderPos / 100) * width, height,
-        0, 0, splitX, scaledHeight
-      );
+      ctx.drawImage(galleryImgRef.current, 0, 0, splitX, imgHeight, 0, 0, splitX, imgHeight);
     }
 
-    // Draw Right Half (Probe)
-    if (splitX < scaledWidth) {
-      ctx.drawImage(
-        probeImgRef.current,
-        (sliderPos / 100) * width, 0, width - ((sliderPos / 100) * width), height,
-        splitX, 0, scaledWidth - splitX, scaledHeight
-      );
+    // Draw Probe (Right)
+    if (splitX < imgWidth) {
+      ctx.drawImage(probeImgRef.current, splitX, 0, imgWidth - splitX, imgHeight, splitX, 0, imgWidth - splitX, imgHeight);
     }
 
     // Draw Gold Guideline
     ctx.beginPath();
     ctx.moveTo(splitX, 0);
-    ctx.lineTo(splitX, scaledHeight);
+    ctx.lineTo(splitX, imgHeight);
     ctx.strokeStyle = '#D4AF37';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2 / currentScale; // Keep line width constant despite zoom
+    ctx.shadowBlur = 10 / currentScale;
+    ctx.shadowColor = 'rgba(212, 175, 55, 0.8)';
     ctx.stroke();
-    ctx.shadowBlur = 10;
-    ctx.shadowColor = 'rgba(212, 175, 55, 0.5)';
-    ctx.stroke();
-    ctx.shadowBlur = 0;
+    
+    ctx.restore();
+  }, [sliderPos, imagesLoaded, zoom, pan]);
 
-  }, [sliderPos, imagesLoaded]);
-
-  const handleMove = (clientX: number) => {
-    if (!containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
-    setSliderPos((x / rect.width) * 100);
+  // 3. Interaction Handlers
+  const handlePointerDown = (clientX: number, clientY: number) => {
+    setIsDragging(true);
+    lastMousePos.current = { x: clientX, y: clientY };
   };
 
-  const onMouseMove = (e: React.MouseEvent) => {
-    if (isDragging) handleMove(e.clientX);
+  const handlePointerMove = (clientX: number, clientY: number) => {
+    if (!isDragging || !containerRef.current) return;
+    
+    if (mode === 'split') {
+      const rect = containerRef.current.getBoundingClientRect();
+      const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
+      setSliderPos((x / rect.width) * 100);
+    } else if (mode === 'pan') {
+      const dx = clientX - lastMousePos.current.x;
+      const dy = clientY - lastMousePos.current.y;
+      setPan(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+      lastMousePos.current = { x: clientX, y: clientY };
+    }
   };
 
-  const onTouchMove = (e: React.TouchEvent) => {
-    if (isDragging) handleMove(e.touches[0].clientX);
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const zoomSensitivity = 0.05;
+    const delta = e.deltaY < 0 ? 1 + zoomSensitivity : 1 - zoomSensitivity;
+    setZoom(prev => Math.min(Math.max(prev * delta, 1), 8)); // Clamp zoom between 1x and 8x
   };
 
   return (
-    <div className="flex flex-col h-full w-full min-h-0">
-      {/* Header row */}
-      <div className="flex justify-between items-center px-1 pb-1.5 shrink-0">
+    <div className="flex flex-col h-full w-full min-h-0 relative">
+      {/* ── Toolbar ── */}
+      <div className="flex justify-between items-center px-1 pb-1.5 shrink-0 select-none">
         <div>
-          <h2 className="text-sm font-bold text-gray-100 font-mono tracking-wider leading-tight">SYMMETRY MERGE</h2>
-          <p className="text-[10px] text-gray-500 font-mono">Structural alignment</p>
+          <h2 className="text-sm font-bold text-gray-100 font-mono tracking-wider leading-tight">FORENSIC INSPECTOR</h2>
+          <p className="text-[10px] text-gray-500 font-mono">Zoom & align</p>
         </div>
-        <div className="text-[#D4AF37] font-mono text-[10px] px-2 py-0.5 bg-[#1a1a1a] rounded border border-[#D4AF37]/30">
-          {Math.round(sliderPos)}%
+
+        {/* Zoom & Mode Controls */}
+        <div className="flex gap-2">
+          <div className="flex border border-[#333] rounded bg-[#111] overflow-hidden text-[10px] font-mono">
+            <button 
+              onClick={() => setMode('split')} 
+              className={`px-3 py-1 transition-colors ${mode === 'split' ? 'bg-[#D4AF37] text-black font-bold' : 'text-gray-400 hover:text-white'}`}
+            >
+              SPLIT
+            </button>
+            <button 
+              onClick={() => setMode('pan')} 
+              className={`px-3 py-1 transition-colors border-l border-[#333] ${mode === 'pan' ? 'bg-[#D4AF37] text-black font-bold' : 'text-gray-400 hover:text-white'}`}
+            >
+              PAN
+            </button>
+          </div>
+
+          <div className="flex border border-[#333] rounded bg-[#111] overflow-hidden text-gray-400">
+            <button onClick={() => setZoom(z => Math.max(1, z - 0.2))} className="px-2 hover:bg-[#222] hover:text-white transition-colors">-</button>
+            <div className="px-2 py-1 text-[10px] border-x border-[#333] font-mono min-w-[45px] text-center">
+              {Math.round(zoom * 100)}%
+            </div>
+            <button onClick={() => setZoom(z => Math.min(8, z + 0.2))} className="px-2 hover:bg-[#222] hover:text-white transition-colors">+</button>
+            <button onClick={() => { setZoom(1); setPan({x:0, y:0}); }} className="px-2 py-1 text-[10px] border-l border-[#333] hover:bg-[#222] hover:text-[#D4AF37] transition-colors">
+              RESET
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Canvas area — fills remaining height */}
+      {/* ── Canvas Viewport ── */}
       <div 
         ref={containerRef}
-        className="relative flex-1 min-h-0 overflow-hidden rounded border border-[#333] cursor-col-resize flex items-center justify-center bg-[#080808]"
-        onMouseDown={() => setIsDragging(true)}
+        className={`relative flex-1 min-h-0 overflow-hidden rounded border border-[#333] bg-[#050505] ${mode === 'split' ? 'cursor-col-resize' : 'cursor-move'}`}
+        onMouseDown={(e) => handlePointerDown(e.clientX, e.clientY)}
         onMouseUp={() => setIsDragging(false)}
         onMouseLeave={() => setIsDragging(false)}
-        onMouseMove={onMouseMove}
-        onTouchStart={() => setIsDragging(true)}
+        onMouseMove={(e) => handlePointerMove(e.clientX, e.clientY)}
+        onWheel={handleWheel}
+        // Touch support
+        onTouchStart={(e) => handlePointerDown(e.touches[0].clientX, e.touches[0].clientY)}
         onTouchEnd={() => setIsDragging(false)}
-        onTouchMove={onTouchMove}
+        onTouchMove={(e) => handlePointerMove(e.touches[0].clientX, e.touches[0].clientY)}
       >
         {!imagesLoaded ? (
-          <div className="flex items-center justify-center w-full h-full bg-[#111] animate-pulse text-[#D4AF37] font-mono text-xs">
-            LOADING…
+          <div className="flex items-center justify-center w-full h-full bg-[#0a0a0a] animate-pulse text-[#D4AF37] font-mono text-xs tracking-widest">
+            LOADING BIO-DATA...
           </div>
         ) : (
-          <>
-            <canvas ref={canvasRef} className="block max-w-full max-h-full pointer-events-none" />
-            
-            {/* Slider Handle */}
-            <div 
-              className="absolute top-0 bottom-0 w-1 pointer-events-none"
-              style={{ left: `${sliderPos}%`, transform: 'translateX(-50%)' }}
-            >
-              <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-6 h-6 rounded-full bg-[#0a0a0a] border-2 border-[#D4AF37] shadow-[0_0_10px_rgba(212,175,55,0.4)] flex items-center justify-center">
-                <div className="flex space-x-0.5">
-                  <div className="w-0.5 h-2 bg-[#D4AF37]"></div>
-                  <div className="w-0.5 h-2 bg-[#D4AF37]"></div>
-                </div>
-              </div>
-            </div>
-          </>
+          <canvas ref={canvasRef} className="block w-full h-full" />
         )}
       </div>
 
-      {/* Footer labels */}
+      {/* ── Footer ── */}
       <div className="flex w-full justify-between pt-1 text-[9px] font-mono text-gray-600 tracking-widest shrink-0">
         <span>GALLERY (A)</span>
+        {mode === 'pan' && <span className="text-[#D4AF37]">DRAG TO PAN IMAGE</span>}
         <span>PROBE (B)</span>
       </div>
     </div>
