@@ -13,14 +13,20 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc }: Symmet
   const [sliderPos, setSliderPos] = useState(50);
   const [isDragging, setIsDragging] = useState(false);
   const [imagesLoaded, setImagesLoaded] = useState(false);
+  const prevSourcesRef = useRef({ gallery: '', probe: '' });
   
   const galleryImgRef = useRef<HTMLImageElement | null>(null);
   const probeImgRef = useRef<HTMLImageElement | null>(null);
 
+  // Reset loaded state when sources change (outside the effect, in render)
+  if (prevSourcesRef.current.gallery !== galleryImageSrc || prevSourcesRef.current.probe !== probeImageSrc) {
+    prevSourcesRef.current = { gallery: galleryImageSrc, probe: probeImageSrc };
+    if (imagesLoaded) setImagesLoaded(false);
+  }
+
   // Load Images
   useEffect(() => {
     let loadedCount = 0;
-    setImagesLoaded(false);
     const onLoad = () => {
       loadedCount++;
       if (loadedCount === 2) {

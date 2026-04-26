@@ -252,6 +252,7 @@ export default function Home() {
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                 />
                 {galleryPreview ? (
+                  /* eslint-disable-next-line @next/next/no-img-element */
                   <img src={galleryPreview} alt="Gallery" className="max-h-[140px] object-contain rounded" />
                 ) : (
                   <>
@@ -271,6 +272,7 @@ export default function Home() {
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                 />
                 {probePreview ? (
+                  /* eslint-disable-next-line @next/next/no-img-element */
                   <img src={probePreview} alt="Probe" className="max-h-[140px] object-contain rounded" />
                 ) : (
                   <>
