@@ -23,8 +23,14 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from backend.main import align_face_crop, extract_arcface_embedding, encrypt_embedding
-from backend.models import engine, SessionLocal, IdentityProfile, Base
+# Import paths differ: in the Docker container, backend code lives flat at /app/
+# Locally from the project root, it's under backend/
+try:
+    from main import align_face_crop, extract_arcface_embedding, encrypt_embedding
+    from models import engine, SessionLocal, IdentityProfile, Base
+except ModuleNotFoundError:
+    from backend.main import align_face_crop, extract_arcface_embedding, encrypt_embedding
+    from backend.models import engine, SessionLocal, IdentityProfile, Base
 
 # Config — Cloud Run can only write to /tmp (in-memory tmpfs)
 if os.getenv("K_SERVICE") or os.getenv("CLOUD_RUN_JOB"):
