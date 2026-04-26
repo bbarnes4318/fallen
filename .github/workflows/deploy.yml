@@ -105,12 +105,12 @@ jobs:
           image: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
           flags: '--service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com --memory=4Gi --cpu=2 --timeout=300 --concurrency=10 --allow-unauthenticated --add-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance'
           env_vars: |
-            KMS_KEY_NAME=${{ secrets.KMS_KEY_NAME }}
-            BUCKET_NAME=${{ secrets.GCS_BUCKET_NAME }}
-            DB_USER=${{ secrets.DB_USER }}
-            DB_PASS=${{ secrets.DB_PASS }}
-            DB_NAME=${{ secrets.DB_NAME }}
-            CLOUD_SQL_CONNECTION_NAME=${{ secrets.CLOUD_SQL_CONNECTION_NAME }}
+            KMS_KEY_NAME=projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek
+            BUCKET_NAME=hoppwhistle-facial-uploads
+            DB_USER=facial_app
+            DB_PASS=Fv966468!Sec5677
+            DB_NAME=facial_db
+            CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance
 
       - name: Deploy Frontend to Cloud Run
         id: deploy-frontend
