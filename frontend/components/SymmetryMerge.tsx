@@ -12,25 +12,24 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc }: Symmet
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [sliderPos, setSliderPos] = useState(50);
   const [isDragging, setIsDragging] = useState(false);
-  const [imagesLoaded, setImagesLoaded] = useState(false);
-  const prevSourcesRef = useRef({ gallery: '', probe: '' });
+  const [loadedSources, setLoadedSources] = useState({ gallery: '', probe: '' });
   
   const galleryImgRef = useRef<HTMLImageElement | null>(null);
   const probeImgRef = useRef<HTMLImageElement | null>(null);
 
-  // Reset loaded state when sources change (outside the effect, in render)
-  if (prevSourcesRef.current.gallery !== galleryImageSrc || prevSourcesRef.current.probe !== probeImageSrc) {
-    prevSourcesRef.current = { gallery: galleryImageSrc, probe: probeImageSrc };
-    if (imagesLoaded) setImagesLoaded(false);
-  }
+  const imagesLoaded = loadedSources.gallery === galleryImageSrc && loadedSources.probe === probeImageSrc;
 
   // Load Images
   useEffect(() => {
+    let cancelled = false;
     let loadedCount = 0;
+    const targetGallery = galleryImageSrc;
+    const targetProbe = probeImageSrc;
+
     const onLoad = () => {
       loadedCount++;
-      if (loadedCount === 2) {
-        setImagesLoaded(true);
+      if (loadedCount === 2 && !cancelled) {
+        setLoadedSources({ gallery: targetGallery, probe: targetProbe });
       }
     };
 
@@ -45,6 +44,8 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc }: Symmet
     pImg.src = probeImageSrc;
     pImg.onload = onLoad;
     probeImgRef.current = pImg;
+
+    return () => { cancelled = true; };
   }, [galleryImageSrc, probeImageSrc]);
 
   // Draw Canvas — fits parent container height
