@@ -104,7 +104,7 @@ jobs:
           service: facial-backend
           region: us-east4
           image: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
-          flags: '--service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com --memory=4Gi --cpu=2 --timeout=300 --concurrency=10 --allow-unauthenticated --add-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance'
+          flags: '--service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com --memory=8Gi --cpu=4 --timeout=300 --concurrency=10 --allow-unauthenticated --add-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance'
           env_vars: |
             KMS_KEY_NAME=projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek
             BUCKET_NAME=hoppwhistle-facial-uploads
