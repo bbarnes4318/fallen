@@ -75,7 +75,9 @@ def download_and_extract_lfw():
         print(f"  {_C.DIM}[{_ts()}]{_C.RESET} {_C.GOLD}EXTRACTING ARCHIVE...{_C.RESET}")
         with zipfile.ZipFile(archive_path, "r") as zf:
             zf.extractall(path=DATASETS_DIR)
-        print(f"  {_C.DIM}[{_ts()}]{_C.RESET} {_C.GREEN}EXTRACTION COMPLETE.{_C.RESET}")
+        # Free tmpfs RAM — on Cloud Run /tmp is memory-backed
+        os.remove(archive_path)
+        print(f"  {_C.DIM}[{_ts()}]{_C.RESET} {_C.GREEN}EXTRACTION COMPLETE. Archive purged from tmpfs.{_C.RESET}")
     else:
         print(f"  {_C.DIM}[{_ts()}]{_C.RESET} {_C.CYAN}LFW DATASET FOUND. SKIPPING DOWNLOAD.{_C.RESET}")
 

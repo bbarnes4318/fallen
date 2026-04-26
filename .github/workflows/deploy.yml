@@ -155,8 +155,8 @@ jobs:
             --command="python" \
             --args="scripts/mass_ingest.py" \
             --service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com \
-            --memory=8Gi \
-            --cpu=4 \
+            --memory=16Gi \
+            --cpu=8 \
             --task-timeout=3600 \
             --max-retries=1 \
             --set-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance \
