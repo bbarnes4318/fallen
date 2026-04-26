@@ -16,9 +16,12 @@ import jwt
 from google.cloud import storage
 from google.cloud import kms
 from cryptography.fernet import Fernet
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from pydantic import BaseModel
 from typing import Optional
 from skimage.feature import local_binary_pattern
@@ -30,7 +33,10 @@ from deepface import DeepFace
 
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="Biometric Facial Verification Pipeline")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Preload ArcFace model at module init to avoid per-request cold start
 try:
@@ -45,7 +51,14 @@ def on_startup():
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "https://scargods.com",
+        "https://www.scargods.com",
+        "https://facial-frontend-vkd6b6ijxa-uk.a.run.app",
+        "https://facial-verify-api-196207148120.us-central1.run.app",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -890,10 +903,11 @@ def generate_upload_urls(req: UploadUrlsRequest, _: dict = Depends(verify_jwt)):
         raise HTTPException(status_code=500, detail=f"Failed to generate upload URLs: {str(e)}")
 
 @app.post("/verify/fuse", response_model=VerificationResponse)
-def verify_pipeline(request: VerificationRequest, _: dict = Depends(verify_jwt)):
+@limiter.limit("5/minute")
+def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = Depends(verify_jwt)):
     # 1. Fetch images from GCS
-    gallery_img = fetch_image_from_url(request.gallery_url)
-    probe_img = fetch_image_from_url(request.probe_url)
+    gallery_img = fetch_image_from_url(payload.gallery_url)
+    probe_img = fetch_image_from_url(payload.probe_url)
     
     # 1.5 Presentation Attack Detection (Liveness Firewall)
     liveness_score = detect_liveness(probe_img)
@@ -1033,7 +1047,8 @@ def _resolve_target_image(user_id: str) -> str | None:
 
 
 @app.post("/vault/search", response_model=VerificationResponse)
-def vault_search(request: VaultSearchRequest, _: dict = Depends(verify_jwt)):
+@limiter.limit("5/minute")
+def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depends(verify_jwt)):
     """
     Phase 2: 1:N Target Acquisition.
     Compares an uploaded probe image against every encrypted IdentityProfile
@@ -1041,7 +1056,7 @@ def vault_search(request: VaultSearchRequest, _: dict = Depends(verify_jwt)):
     forensic visualization (heatmaps, scar delta, wireframe HUD).
     """
     # 1. Fetch & validate probe
-    probe_img = fetch_image_from_url(request.probe_url)
+    probe_img = fetch_image_from_url(payload.probe_url)
 
     # 2. Liveness firewall
     liveness = detect_liveness(probe_img)
