@@ -38,7 +38,10 @@ from backend.models import engine, SessionLocal, IdentityProfile, Base
 # ---------------------------------------------------------------------------
 # CONFIGURATION
 # ---------------------------------------------------------------------------
-TARGET_DIR = os.path.join(PROJECT_ROOT, "target_profiles")
+# Check backend/target_profiles first (Docker context), fall back to project root
+_backend_targets = os.path.join(PROJECT_ROOT, "backend", "target_profiles")
+_root_targets = os.path.join(PROJECT_ROOT, "target_profiles")
+TARGET_DIR = _backend_targets if os.path.isdir(_backend_targets) else _root_targets
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
 
 # ---------------------------------------------------------------------------
