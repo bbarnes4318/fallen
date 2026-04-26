@@ -18,9 +18,13 @@ function getApiUrl(): string {
 export default function Home() {
   const [probeFile, setProbeFile] = useState<File | null>(null);
   const [probePreview, setProbePreview] = useState<string>('');
+  const [galleryFile, setGalleryFile] = useState<File | null>(null);
+  const [galleryPreview, setGalleryPreview] = useState<string>('');
 
   const [step, setStep] = useState<'idle' | 'uploading' | 'frontalizing' | 'calculating' | 'paywall' | 'complete' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
+  const [mode, setMode] = useState<'vault' | 'compare'>('vault');
+  const [bypassCode, setBypassCode] = useState('');
 
   interface VerificationResult {
     structural_score: number;
@@ -61,29 +65,27 @@ export default function Home() {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     if (params.get('success') === 'true') {
-      const cached = sessionStorage.getItem('cachedVaultResult');
+      const cached = sessionStorage.getItem('cachedResult');
       if (cached) {
         try {
           const parsed = JSON.parse(cached) as VerificationResult;
           setResults(parsed);
           setStep('complete');
-          sessionStorage.removeItem('cachedVaultResult');
+          sessionStorage.removeItem('cachedResult');
         } catch {
-          console.error('Failed to parse cached vault result');
+          console.error('Failed to parse cached result');
         }
       }
-      // Clean up URL params
       window.history.replaceState({}, '', window.location.pathname);
     } else if (params.get('canceled') === 'true') {
-      // Payment was canceled — restore paywall state if cached data exists
-      const cached = sessionStorage.getItem('cachedVaultResult');
+      const cached = sessionStorage.getItem('cachedResult');
       if (cached) {
         try {
           const parsed = JSON.parse(cached) as VerificationResult;
           setResults(parsed);
           setStep('paywall');
         } catch {
-          console.error('Failed to parse cached vault result');
+          console.error('Failed to parse cached result');
         }
       }
       window.history.replaceState({}, '', window.location.pathname);
@@ -115,10 +117,23 @@ export default function Home() {
     setProbeFile(null);
     if (probePreview) URL.revokeObjectURL(probePreview);
     setProbePreview('');
+    setGalleryFile(null);
+    if (galleryPreview) URL.revokeObjectURL(galleryPreview);
+    setGalleryPreview('');
     setResults(null);
     setIsXrayMode(false);
     setErrorMsg('');
     setLoginError('');
+    setBypassCode('');
+  };
+
+  const handleGalleryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (galleryPreview) URL.revokeObjectURL(galleryPreview);
+      setGalleryFile(file);
+      setGalleryPreview(URL.createObjectURL(file));
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -132,75 +147,70 @@ export default function Home() {
 
   const startSequence = async () => {
     if (!probeFile) return;
-    const uploadContentType = probeFile.type || 'image/jpeg';
+    if (mode === 'compare' && !galleryFile) return;
+    const probeContentType = probeFile.type || 'image/jpeg';
+    const galleryContentType = galleryFile?.type || 'image/jpeg';
     try {
       setStep('uploading');
       
-      // 1. Get Pre-Signed URLs from FastAPI (Pass Content-Types dynamically)
+      // 1. Get Pre-Signed URLs
+      const urlBody: Record<string, string> = { probe_content_type: probeContentType };
+      if (mode === 'compare' && galleryFile) {
+        urlBody.gallery_content_type = galleryContentType;
+      }
       const urlRes = await fetch(`${getApiUrl()}/generate-upload-urls`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          probe_content_type: uploadContentType
-        })
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(urlBody)
       });
-      if (urlRes.status === 401) {
-        handleLogout();
-        return;
-      }
+      if (urlRes.status === 401) { handleLogout(); return; }
       if (!urlRes.ok) {
         const errBody = await urlRes.json().catch(() => null);
         throw new Error(errBody?.detail || 'Failed to secure upload channels.');
       }
-      const { probe_upload_url, probe_gs_uri } = await urlRes.json();
+      const urlData = await urlRes.json();
       
-      // 2. Direct Client Upload to GCS
-      const probeUploadRes = await fetch(probe_upload_url, {
-        method: 'PUT',
-        body: probeFile,
-        headers: { 'Content-Type': uploadContentType },
-        mode: 'cors'
+      // 2. Upload probe to GCS
+      const probeUp = await fetch(urlData.probe_upload_url, {
+        method: 'PUT', body: probeFile,
+        headers: { 'Content-Type': probeContentType }, mode: 'cors'
       });
-      if (!probeUploadRes.ok) {
-        const errText = await probeUploadRes.text().catch(() => '');
-        throw new Error(`Image upload failed (${probeUploadRes.status}): ${errText.slice(0, 200)}`);
+      if (!probeUp.ok) throw new Error(`Probe upload failed (${probeUp.status})`);
+      
+      // 2b. Upload gallery if compare mode
+      if (mode === 'compare' && galleryFile && urlData.gallery_upload_url) {
+        const galUp = await fetch(urlData.gallery_upload_url, {
+          method: 'PUT', body: galleryFile,
+          headers: { 'Content-Type': galleryContentType }, mode: 'cors'
+        });
+        if (!galUp.ok) throw new Error(`Gallery upload failed (${galUp.status})`);
       }
       
-      // probe_gs_uri is passed directly to the verify call
-      
-      // UX Pacing
       setStep('frontalizing');
       await new Promise(resolve => setTimeout(resolve, 1500));
-      
       setStep('calculating');
       
-      // 3. The Verification Call
-      const verifyRes = await fetch(`${getApiUrl()}/vault/search`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          probe_url: probe_gs_uri
-        })
-      });
-      
-      if (verifyRes.status === 401) {
-        handleLogout();
-        return;
+      // 3. API call based on mode
+      const apiUrl = mode === 'vault' ? '/vault/search' : '/verify/fuse';
+      const apiBody: Record<string, string> = { probe_url: urlData.probe_gs_uri };
+      if (mode === 'compare') {
+        apiBody.gallery_url = urlData.gallery_gs_uri;
       }
+      
+      const verifyRes = await fetch(`${getApiUrl()}${apiUrl}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(apiBody)
+      });
+      if (verifyRes.status === 401) { handleLogout(); return; }
       if (!verifyRes.ok) {
         const errBody = await verifyRes.json().catch(() => null);
         throw new Error(errBody?.detail || 'Verification pipeline failed.');
       }
       const data = await verifyRes.json();
       
-      // Cache the results and redirect to paywall instead of showing results directly
-      sessionStorage.setItem('cachedVaultResult', JSON.stringify(data));
+      // Cache and go to paywall
+      sessionStorage.setItem('cachedResult', JSON.stringify(data));
       setResults(data);
       setStep('paywall');
       
@@ -416,43 +426,84 @@ export default function Home() {
 
         {/* ════ IDLE: Upload Panel ════ */}
         {step === 'idle' && (
-          <div className="h-full flex flex-col items-center justify-center gap-6 w-full">
-            <div className="w-full max-w-xl">
-              {/* Single Target Upload Dropzone */}
-              <div className="border border-dashed border-[#D4AF37]/50 rounded-lg p-8 flex flex-col items-center justify-center bg-[#0d0d0e] hover:border-[#D4AF37] hover:bg-[#111] transition-all relative min-h-[300px]">
-                <input 
-                  type="file" accept="image/*" 
-                  onChange={handleFileChange}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                />
-                
-                {/* Crosshair aesthetic elements */}
-                <div className="absolute top-4 left-4 w-4 h-4 border-t border-l border-[#D4AF37]/50"></div>
-                <div className="absolute top-4 right-4 w-4 h-4 border-t border-r border-[#D4AF37]/50"></div>
-                <div className="absolute bottom-4 left-4 w-4 h-4 border-b border-l border-[#D4AF37]/50"></div>
-                <div className="absolute bottom-4 right-4 w-4 h-4 border-b border-r border-[#D4AF37]/50"></div>
-
-                {probePreview ? (
-                  /* eslint-disable-next-line @next/next/no-img-element */
-                  <img src={probePreview} alt="Target" className="max-h-[220px] object-contain rounded shadow-[0_0_20px_rgba(212,175,55,0.15)] z-0 relative" />
-                ) : (
-                  <div className="flex flex-col items-center text-[#D4AF37]/80">
-                    <div className="w-16 h-16 rounded-full border-2 border-dotted border-[#D4AF37] flex items-center justify-center mb-4 relative animate-[spin_15s_linear_infinite]">
-                      <svg className="w-6 h-6 animate-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 4v16m8-8H4"></path></svg>
-                    </div>
-                    <span className="text-[#D4AF37] font-bold text-lg tracking-[0.2em] mb-1">ACQUIRE UNKNOWN TARGET</span>
-                    <span className="text-gray-500 text-xs tracking-widest">DRAG AND DROP OR CLICK TO UPLOAD</span>
-                  </div>
-                )}
-              </div>
+          <div className="h-full flex flex-col items-center justify-center gap-5 w-full">
+            {/* ── Mode Toggle ── */}
+            <div className="flex border border-[#1f1f1f] rounded overflow-hidden">
+              <button onClick={() => setMode('vault')} className={`px-5 py-2 text-[10px] tracking-[0.2em] font-bold transition-all ${mode === 'vault' ? 'bg-[#D4AF37]/15 text-[#D4AF37] border-r border-[#D4AF37]/30' : 'bg-[#0d0d0e] text-gray-600 hover:text-gray-400 border-r border-[#1f1f1f]'}`}>VAULT SWEEP (1:N)</button>
+              <button onClick={() => setMode('compare')} className={`px-5 py-2 text-[10px] tracking-[0.2em] font-bold transition-all ${mode === 'compare' ? 'bg-[#D4AF37]/15 text-[#D4AF37]' : 'bg-[#0d0d0e] text-gray-600 hover:text-gray-400'}`}>MANUAL VERIFICATION (1:1)</button>
             </div>
+
+            {mode === 'vault' ? (
+              /* ── Vault: Single Dropzone ── */
+              <div className="w-full max-w-xl">
+                <div className="border border-dashed border-[#D4AF37]/50 rounded-lg p-8 flex flex-col items-center justify-center bg-[#0d0d0e] hover:border-[#D4AF37] hover:bg-[#111] transition-all relative min-h-[280px]">
+                  <input type="file" accept="image/*" onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+                  <div className="absolute top-4 left-4 w-4 h-4 border-t border-l border-[#D4AF37]/50"></div>
+                  <div className="absolute top-4 right-4 w-4 h-4 border-t border-r border-[#D4AF37]/50"></div>
+                  <div className="absolute bottom-4 left-4 w-4 h-4 border-b border-l border-[#D4AF37]/50"></div>
+                  <div className="absolute bottom-4 right-4 w-4 h-4 border-b border-r border-[#D4AF37]/50"></div>
+                  {probePreview ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={probePreview} alt="Target" className="max-h-[200px] object-contain rounded shadow-[0_0_20px_rgba(212,175,55,0.15)] z-0 relative" />
+                  ) : (
+                    <div className="flex flex-col items-center text-[#D4AF37]/80">
+                      <div className="w-14 h-14 rounded-full border-2 border-dotted border-[#D4AF37] flex items-center justify-center mb-3 animate-[spin_15s_linear_infinite]">
+                        <svg className="w-5 h-5 animate-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 4v16m8-8H4"></path></svg>
+                      </div>
+                      <span className="text-[#D4AF37] font-bold text-base tracking-[0.2em] mb-1">ACQUIRE UNKNOWN TARGET</span>
+                      <span className="text-gray-500 text-[10px] tracking-widest">DRAG AND DROP OR CLICK TO UPLOAD</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              /* ── Compare: Dual Dropzones ── */
+              <div className="w-full max-w-3xl grid grid-cols-2 gap-4">
+                {/* Probe */}
+                <div className="border border-dashed border-[#D4AF37]/50 rounded-lg p-6 flex flex-col items-center justify-center bg-[#0d0d0e] hover:border-[#D4AF37] hover:bg-[#111] transition-all relative min-h-[250px]">
+                  <input type="file" accept="image/*" onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+                  <div className="absolute top-3 left-3 w-3 h-3 border-t border-l border-[#D4AF37]/50"></div>
+                  <div className="absolute top-3 right-3 w-3 h-3 border-t border-r border-[#D4AF37]/50"></div>
+                  <div className="absolute bottom-3 left-3 w-3 h-3 border-b border-l border-[#D4AF37]/50"></div>
+                  <div className="absolute bottom-3 right-3 w-3 h-3 border-b border-r border-[#D4AF37]/50"></div>
+                  {probePreview ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={probePreview} alt="Probe" className="max-h-[160px] object-contain rounded shadow-[0_0_15px_rgba(212,175,55,0.1)] z-0 relative" />
+                  ) : (
+                    <div className="flex flex-col items-center text-[#D4AF37]/80">
+                      <svg className="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 4v16m8-8H4"></path></svg>
+                      <span className="text-[#D4AF37] font-bold text-sm tracking-[0.15em]">UPLOAD TARGET</span>
+                      <span className="text-gray-600 text-[9px] tracking-widest mt-1">PROBE IMAGE</span>
+                    </div>
+                  )}
+                </div>
+                {/* Gallery */}
+                <div className="border border-dashed border-gray-700/50 rounded-lg p-6 flex flex-col items-center justify-center bg-[#0d0d0e] hover:border-gray-500 hover:bg-[#111] transition-all relative min-h-[250px]">
+                  <input type="file" accept="image/*" onChange={handleGalleryChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+                  <div className="absolute top-3 left-3 w-3 h-3 border-t border-l border-gray-700/50"></div>
+                  <div className="absolute top-3 right-3 w-3 h-3 border-t border-r border-gray-700/50"></div>
+                  <div className="absolute bottom-3 left-3 w-3 h-3 border-b border-l border-gray-700/50"></div>
+                  <div className="absolute bottom-3 right-3 w-3 h-3 border-b border-r border-gray-700/50"></div>
+                  {galleryPreview ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={galleryPreview} alt="Gallery" className="max-h-[160px] object-contain rounded shadow-[0_0_15px_rgba(255,255,255,0.05)] z-0 relative" />
+                  ) : (
+                    <div className="flex flex-col items-center text-gray-500">
+                      <svg className="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 4v16m8-8H4"></path></svg>
+                      <span className="font-bold text-sm tracking-[0.15em]">UPLOAD KNOWN ALIAS</span>
+                      <span className="text-gray-600 text-[9px] tracking-widest mt-1">GALLERY IMAGE</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             <button 
               onClick={startSequence}
-              disabled={!probeFile}
-              className={`px-8 py-3 text-sm font-bold tracking-widest rounded-sm border transition-all ${probeFile ? 'bg-[#D4AF37] text-black border-[#D4AF37] hover:bg-[#b5952f] shadow-[0_0_20px_rgba(212,175,55,0.3)]' : 'bg-[#111] text-gray-500 border-[#333] cursor-not-allowed'}`}
+              disabled={mode === 'vault' ? !probeFile : (!probeFile || !galleryFile)}
+              className={`px-8 py-3 text-sm font-bold tracking-widest rounded-sm border transition-all ${(mode === 'vault' ? probeFile : probeFile && galleryFile) ? 'bg-[#D4AF37] text-black border-[#D4AF37] hover:bg-[#b5952f] shadow-[0_0_20px_rgba(212,175,55,0.3)]' : 'bg-[#111] text-gray-500 border-[#333] cursor-not-allowed'}`}
             >
-              INITIATE VAULT SWEEP
+              {mode === 'vault' ? 'INITIATE VAULT SWEEP' : 'RUN VERIFICATION'}
             </button>
           </div>
         )}
@@ -480,85 +531,86 @@ export default function Home() {
           </div>
         )}
 
-        {/* ════ PAYWALL: TARGET ACQUIRED ════ */}
+        {/* ════ PAYWALL: ANALYSIS COMPLETE ════ */}
         {step === 'paywall' && results && (
           <div className="h-full flex flex-col items-center justify-center">
             <div className="w-full max-w-md text-center">
-              {/* Scanline animation */}
-              <div className="relative mb-8">
-                <div className="w-20 h-20 mx-auto rounded-full border-2 border-[#D4AF37] flex items-center justify-center relative overflow-hidden">
+              {/* Lock icon */}
+              <div className="relative mb-6">
+                <div className="w-16 h-16 mx-auto rounded-full border-2 border-[#D4AF37] flex items-center justify-center relative overflow-hidden">
                   <div className="absolute inset-0 bg-gradient-to-b from-[#D4AF37]/20 via-transparent to-transparent animate-pulse"></div>
-                  <svg className="w-8 h-8 text-[#D4AF37]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                  <svg className="w-7 h-7 text-[#D4AF37]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
                 </div>
               </div>
 
-              {/* Header */}
-              <h2 className="text-2xl font-bold tracking-[0.3em] text-white mb-2">
-                TARGET <span className="text-[#D4AF37]">ACQUIRED</span>
-              </h2>
-              <p className="text-sm tracking-[0.2em] text-gray-400 mb-1">
-                IDENTITY LOCKED
-              </p>
-              <div className="w-16 h-[1px] bg-[#D4AF37]/40 mx-auto my-4"></div>
+              <h2 className="text-xl font-bold tracking-[0.3em] text-white mb-1">ANALYSIS <span className="text-[#D4AF37]">COMPLETE</span></h2>
+              <p className="text-sm tracking-[0.2em] text-gray-400 mb-1">IDENTITY LOCKED</p>
+              <div className="w-12 h-[1px] bg-[#D4AF37]/40 mx-auto my-3"></div>
 
-              {/* Score preview (blurred tease) */}
-              <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg p-4 mb-6 relative overflow-hidden">
+              {/* Blurred score tease */}
+              <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg p-3 mb-5 relative overflow-hidden">
                 <div className="absolute inset-0 backdrop-blur-sm bg-[#0A0A0B]/60 z-10 flex items-center justify-center">
                   <span className="text-[10px] tracking-[0.3em] text-[#D4AF37]/80 font-bold">ENCRYPTED</span>
                 </div>
                 <div className="grid grid-cols-3 gap-3 opacity-30 select-none">
-                  <div>
-                    <div className="text-[9px] text-gray-500 tracking-wider">STRUCTURAL</div>
-                    <div className="text-lg text-white font-bold">██.█%</div>
-                  </div>
-                  <div>
-                    <div className="text-[9px] text-gray-500 tracking-wider">SOFT BIO</div>
-                    <div className="text-lg text-white font-bold">██.█%</div>
-                  </div>
-                  <div>
-                    <div className="text-[9px] text-gray-500 tracking-wider">MICRO-TOPO</div>
-                    <div className="text-lg text-white font-bold">██.█%</div>
-                  </div>
+                  <div><div className="text-[9px] text-gray-500 tracking-wider">STRUCTURAL</div><div className="text-lg text-white font-bold">██.█%</div></div>
+                  <div><div className="text-[9px] text-gray-500 tracking-wider">SOFT BIO</div><div className="text-lg text-white font-bold">██.█%</div></div>
+                  <div><div className="text-[9px] text-gray-500 tracking-wider">MICRO-TOPO</div><div className="text-lg text-white font-bold">██.█%</div></div>
                 </div>
               </div>
 
-              {/* CTA */}
+              {/* Stripe CTA */}
               <button
                 onClick={async () => {
                   try {
-                    const res = await fetch(`${getApiUrl()}/checkout/create-session`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                    });
+                    const res = await fetch(`${getApiUrl()}/checkout/create-session`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
                     if (!res.ok) throw new Error('Checkout session creation failed');
                     const data = await res.json();
                     window.location.href = data.checkout_url;
                   } catch (err) {
                     console.error('Stripe redirect failed:', err);
-                    setErrorMsg('Payment system unavailable. Please try again.');
+                    setErrorMsg('Payment system unavailable.');
                     setStep('error');
                   }
                 }}
-                className="w-full py-3.5 bg-[#D4AF37] text-black font-bold text-sm tracking-[0.25em] hover:bg-[#b5952f] transition-all shadow-[0_0_30px_rgba(212,175,55,0.3)] hover:shadow-[0_0_40px_rgba(212,175,55,0.5)] border-2 border-[#D4AF37] rounded-sm"
+                className="w-full py-3 bg-[#D4AF37] text-black font-bold text-sm tracking-[0.25em] hover:bg-[#b5952f] transition-all shadow-[0_0_30px_rgba(212,175,55,0.3)] border-2 border-[#D4AF37] rounded-sm"
               >
                 DECRYPT DOSSIER — $4.99
               </button>
+              <p className="text-[10px] text-gray-600 mt-2 tracking-wider">ONE-TIME PAYMENT · INSTANT ACCESS · SECURE CHECKOUT</p>
 
-              <p className="text-[10px] text-gray-600 mt-3 tracking-wider">
-                ONE-TIME PAYMENT · INSTANT ACCESS · SECURE CHECKOUT
-              </p>
+              {/* ── Operator Bypass ── */}
+              <div className="mt-5 pt-4 border-t border-[#1a1a1a]">
+                <input
+                  type="text"
+                  value={bypassCode}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setBypassCode(e.target.value)}
+                  placeholder="OPERATOR CLEARANCE CODE"
+                  className="w-full bg-[#0d0d0e] border border-[#222] text-gray-400 p-2 text-center text-[10px] tracking-[0.2em] focus:outline-none focus:border-[#333] transition-colors mb-2"
+                />
+                <button
+                  onClick={() => {
+                    if (bypassCode === 'SCARGODS_ADMIN') {
+                      const cached = sessionStorage.getItem('cachedResult');
+                      if (cached) {
+                        const parsed = JSON.parse(cached) as VerificationResult;
+                        setResults(parsed);
+                        sessionStorage.removeItem('cachedResult');
+                      }
+                      setBypassCode('');
+                      setStep('complete');
+                    }
+                  }}
+                  className="w-full py-1.5 text-[10px] tracking-[0.2em] text-gray-500 hover:text-gray-300 border border-[#222] hover:border-[#444] bg-transparent transition-all rounded-sm"
+                >
+                  AUTHORIZE OVERRIDE
+                </button>
+              </div>
 
-              {/* Cancel link */}
+              {/* Cancel */}
               <button
-                onClick={() => {
-                  sessionStorage.removeItem('cachedVaultResult');
-                  setStep('idle');
-                  setResults(null);
-                  setProbeFile(null);
-                  if (probePreview) URL.revokeObjectURL(probePreview);
-                  setProbePreview('');
-                }}
-                className="mt-4 text-[10px] text-gray-500 hover:text-gray-300 transition-colors tracking-widest"
+                onClick={() => { sessionStorage.removeItem('cachedResult'); setStep('idle'); setResults(null); setProbeFile(null); if (probePreview) URL.revokeObjectURL(probePreview); setProbePreview(''); setGalleryFile(null); if (galleryPreview) URL.revokeObjectURL(galleryPreview); setGalleryPreview(''); setBypassCode(''); }}
+                className="mt-3 text-[10px] text-gray-500 hover:text-gray-300 transition-colors tracking-widest"
               >
                 CANCEL AND RESET
               </button>
