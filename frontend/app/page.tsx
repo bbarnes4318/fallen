@@ -93,6 +93,7 @@ export default function Home() {
 
   const startSequence = async () => {
     if (!probeFile) return;
+    const uploadContentType = probeFile.type || 'image/jpeg';
     try {
       setStep('uploading');
       
@@ -104,7 +105,7 @@ export default function Home() {
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          probe_content_type: probeFile.type
+          probe_content_type: uploadContentType
         })
       });
       if (urlRes.status === 401) {
@@ -121,10 +122,12 @@ export default function Home() {
       const probeUploadRes = await fetch(probe_upload_url, {
         method: 'PUT',
         body: probeFile,
-        headers: { 'Content-Type': probeFile.type }
+        headers: { 'Content-Type': uploadContentType },
+        mode: 'cors'
       });
       if (!probeUploadRes.ok) {
-        throw new Error('Image upload to secure storage failed.');
+        const errText = await probeUploadRes.text().catch(() => '');
+        throw new Error(`Image upload failed (${probeUploadRes.status}): ${errText.slice(0, 200)}`);
       }
       
       // probe_gs_uri is passed directly to the verify call
