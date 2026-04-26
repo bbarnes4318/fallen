@@ -1,9 +1,12 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import dynamic from 'next/dynamic';
 import SymmetryMerge from '@/components/SymmetryMerge';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+
+const IdentityGraph = dynamic(() => import('@/components/IdentityGraph'), { ssr: false });
 
 function getApiUrl(): string {
   if (typeof window !== 'undefined' && window.location.hostname.includes('facial-frontend')) {
@@ -42,6 +45,7 @@ export default function Home() {
   const [token, setToken] = useState<string | null>(null);
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [viewMode, setViewMode] = useState<'acquisition' | 'graph'>('acquisition');
 
   useEffect(() => {
     const savedToken = localStorage.getItem('operator_token');
@@ -332,15 +336,45 @@ export default function Home() {
           </h1>
           <p className="text-gray-600 text-[10px] mt-0.5">Level 3 Topology & 3DMM Frontalization Pipeline</p>
         </div>
-        <button 
-          onClick={handleLogout}
-          className="text-[10px] text-gray-500 hover:text-red-400 transition-colors border border-transparent hover:border-red-900/50 px-2.5 py-1 rounded"
-        >
-          END SESSION
-        </button>
+        <div className="flex items-center gap-3">
+          {/* ── View Mode Toggle ── */}
+          <div className="flex border border-[#1f1f1f] rounded overflow-hidden">
+            <button
+              onClick={() => setViewMode('acquisition')}
+              className={`px-3 py-1 text-[10px] tracking-widest font-bold transition-all ${
+                viewMode === 'acquisition'
+                  ? 'bg-[#D4AF37]/15 text-[#D4AF37] border-r border-[#D4AF37]/30'
+                  : 'bg-[#0d0d0e] text-gray-600 hover:text-gray-400 border-r border-[#1f1f1f]'
+              }`}
+            >
+              ACQUISITION
+            </button>
+            <button
+              onClick={() => setViewMode('graph')}
+              className={`px-3 py-1 text-[10px] tracking-widest font-bold transition-all ${
+                viewMode === 'graph'
+                  ? 'bg-[#D4AF37]/15 text-[#D4AF37]'
+                  : 'bg-[#0d0d0e] text-gray-600 hover:text-gray-400'
+              }`}
+            >
+              GRAPH
+            </button>
+          </div>
+          <button 
+            onClick={handleLogout}
+            className="text-[10px] text-gray-500 hover:text-red-400 transition-colors border border-transparent hover:border-red-900/50 px-2.5 py-1 rounded"
+          >
+            END SESSION
+          </button>
+        </div>
       </header>
 
       {/* ── Body ── */}
+      {viewMode === 'graph' ? (
+        <div className="flex-1 min-h-0">
+          <IdentityGraph />
+        </div>
+      ) : (
       <div className="flex-1 min-h-0 p-4">
 
         {/* ════ IDLE: Upload Panel ════ */}
@@ -517,6 +551,7 @@ export default function Home() {
         )}
 
       </div>
+      )}
     </main>
   );
 }

@@ -976,3 +976,77 @@ def vault_search(request: VaultSearchRequest, _: dict = Depends(verify_jwt)):
         gallery_wireframe_b64=gallery_wireframe_b64,
         probe_wireframe_b64=probe_wireframe_b64,
     )
+
+
+# ---------------------------------------------------------
+# VAULT NETWORK TOPOLOGY (SOVEREIGN IDENTITY GRAPH)
+# ---------------------------------------------------------
+
+@app.get("/vault/network")
+def vault_network(_: dict = Depends(verify_jwt)):
+    """
+    Phase 3: Sovereign Identity Graph.
+    Decrypts every facial embedding in the vault and computes
+    the NxN structural cosine similarity matrix. Returns a graph
+    topology of nodes and links (only links with match > 75%).
+    """
+    session = SessionLocal()
+    try:
+        profiles = session.query(IdentityProfile).all()
+
+        if not profiles:
+            return {"nodes": [], "links": []}
+
+        # Decrypt all embeddings in-memory
+        decrypted = []
+        for profile in profiles:
+            try:
+                vec = decrypt_embedding(profile.encrypted_facial_embedding)
+                decrypted.append({
+                    "user_id": profile.user_id,
+                    "embedding": vec
+                })
+            except Exception:
+                continue  # Skip corrupted records
+
+        # Build nodes
+        nodes = [
+            {"id": d["user_id"], "name": d["user_id"], "group": 1}
+            for d in decrypted
+        ]
+
+        # Compute NxN cosine similarity (upper triangle only — no dupes)
+        links = []
+        for i in range(len(decrypted)):
+            for j in range(i + 1, len(decrypted)):
+                vec_a = decrypted[i]["embedding"]
+                vec_b = decrypted[j]["embedding"]
+
+                # Skip dimension mismatch
+                if vec_a.shape[0] != vec_b.shape[0]:
+                    continue
+
+                score = calculate_cosine_similarity(vec_a, vec_b) * 100
+
+                if score > 75.0:
+                    links.append({
+                        "source": decrypted[i]["user_id"],
+                        "target": decrypted[j]["user_id"],
+                        "value": round(score, 1)
+                    })
+
+        # Mark high-connectivity nodes as group 2 (anomalies)
+        connection_counts: dict[str, int] = {}
+        for link in links:
+            connection_counts[link["source"]] = connection_counts.get(link["source"], 0) + 1
+            connection_counts[link["target"]] = connection_counts.get(link["target"], 0) + 1
+
+        avg_connections = (sum(connection_counts.values()) / len(connection_counts)) if connection_counts else 0
+        for node in nodes:
+            if connection_counts.get(node["id"], 0) > avg_connections * 1.5:
+                node["group"] = 2
+
+        return {"nodes": nodes, "links": links}
+    finally:
+        session.close()
+
