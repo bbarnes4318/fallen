@@ -4,6 +4,7 @@ FROM python:3.10-slim
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    TF_USE_LEGACY_KERAS=1 \
     PORT=8080
 
 # Set the working directory

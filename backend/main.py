@@ -1,3 +1,6 @@
+import os
+os.environ["TF_USE_LEGACY_KERAS"] = "1"  # Force Keras 2 — required for DeepFace/ArcFace
+
 import cv2
 import numpy as np
 import urllib.request
@@ -7,7 +10,6 @@ import base64
 import struct
 import hashlib
 import time
-import os
 from pathlib import Path
 import uuid
 import jwt
