@@ -200,6 +200,8 @@ class VerificationResponse(BaseModel):
     veto_triggered: bool
     gallery_heatmap_b64: str
     probe_heatmap_b64: str
+    gallery_aligned_b64: str
+    probe_aligned_b64: str
 
 # ---------------------------------------------------------
 # CORE PREPROCESSING LOGIC
@@ -306,6 +308,169 @@ def frontalize_face(image: np.ndarray) -> np.ndarray:
     frontalized = cv2.warpAffine(image, M, (w, h))
     
     return frontalized
+
+# ---------------------------------------------------------
+# FACE ALIGNMENT & REAL BIOMETRIC EXTRACTION
+# ---------------------------------------------------------
+
+def align_face_crop(image: np.ndarray, target_size: int = 256):
+    """
+    Detects a face, aligns it by rotating to make the eye-line horizontal,
+    crops tightly around the face with padding, and resizes to a canonical
+    target_size × target_size image. Re-detects landmarks on the final crop
+    for accurate downstream embedding extraction.
+    Returns (aligned_crop, landmarks) or (resized_original, None) if no face.
+    """
+    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    results = face_mesh.process(rgb)
+
+    if not results.multi_face_landmarks:
+        resized = cv2.resize(image, (target_size, target_size))
+        return resized, None
+
+    landmarks = results.multi_face_landmarks[0].landmark
+    h, w = image.shape[:2]
+
+    # Eye center positions for alignment
+    left_eye_indices = [33, 133, 160, 159, 158, 144, 145, 153]
+    right_eye_indices = [263, 362, 387, 386, 385, 373, 374, 380]
+
+    left_eye_center = np.mean(
+        [(landmarks[i].x * w, landmarks[i].y * h) for i in left_eye_indices], axis=0
+    )
+    right_eye_center = np.mean(
+        [(landmarks[i].x * w, landmarks[i].y * h) for i in right_eye_indices], axis=0
+    )
+
+    # Rotation angle to make eyes horizontal
+    dy = right_eye_center[1] - left_eye_center[1]
+    dx = right_eye_center[0] - left_eye_center[0]
+    angle = np.degrees(np.arctan2(dy, dx))
+
+    eye_midpoint = (
+        (left_eye_center[0] + right_eye_center[0]) / 2,
+        (left_eye_center[1] + right_eye_center[1]) / 2,
+    )
+    M = cv2.getRotationMatrix2D(eye_midpoint, angle, 1.0)
+    rotated = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC)
+
+    # Re-detect landmarks on the rotated image for an accurate bounding box
+    rgb_rot = cv2.cvtColor(rotated, cv2.COLOR_BGR2RGB)
+    results_rot = face_mesh.process(rgb_rot)
+    lm = results_rot.multi_face_landmarks[0].landmark if results_rot.multi_face_landmarks else landmarks
+
+    # Face bounding box from all landmarks
+    xs = [l.x * w for l in lm]
+    ys = [l.y * h for l in lm]
+    x_min, x_max = min(xs), max(xs)
+    y_min, y_max = min(ys), max(ys)
+
+    # Add 25% padding
+    face_w = x_max - x_min
+    face_h = y_max - y_min
+    pad_x = face_w * 0.25
+    pad_y = face_h * 0.25
+    x_min = max(0, int(x_min - pad_x))
+    x_max = min(w, int(x_max + pad_x))
+    y_min = max(0, int(y_min - pad_y))
+    y_max = min(h, int(y_max + pad_y))
+
+    # Make it square (use the larger dimension)
+    crop_w = x_max - x_min
+    crop_h = y_max - y_min
+    if crop_w > crop_h:
+        diff = crop_w - crop_h
+        y_min = max(0, y_min - diff // 2)
+        y_max = min(h, y_max + (diff - diff // 2))
+    elif crop_h > crop_w:
+        diff = crop_h - crop_w
+        x_min = max(0, x_min - diff // 2)
+        x_max = min(w, x_max + (diff - diff // 2))
+
+    cropped = rotated[y_min:y_max, x_min:x_max]
+    if cropped.size == 0:
+        cropped = rotated
+
+    aligned = cv2.resize(cropped, (target_size, target_size))
+
+    # Final landmark detection on the aligned canonical crop
+    rgb_aligned = cv2.cvtColor(aligned, cv2.COLOR_BGR2RGB)
+    results_aligned = face_mesh.process(rgb_aligned)
+
+    final_landmarks = None
+    if results_aligned.multi_face_landmarks:
+        final_landmarks = results_aligned.multi_face_landmarks[0].landmark
+
+    return aligned, final_landmarks
+
+
+def extract_landmark_embedding(landmarks) -> np.ndarray:
+    """
+    Builds a 1404-D geometric embedding from MediaPipe's 468 face landmarks.
+    MATH: Centered on nose tip (translation invariance), normalized by
+    inter-ocular distance (scale invariance).
+    """
+    coords = np.array([(l.x, l.y, l.z) for l in landmarks])  # (468, 3)
+
+    # Center on nose tip (landmark 1) for translation invariance
+    nose_tip = coords[1].copy()
+    coords = coords - nose_tip
+
+    # Normalize by inter-ocular distance for scale invariance
+    left_eye = coords[33]
+    right_eye = coords[263]
+    iod = np.linalg.norm(right_eye - left_eye)
+    if iod > 1e-6:
+        coords = coords / iod
+
+    return coords.flatten()  # 1404-D vector
+
+
+def extract_geometric_ratios(landmarks) -> np.ndarray:
+    """
+    Computes scale-invariant facial geometric ratios for Tier 2 soft biometric comparison.
+    Each ratio captures a unique structural characteristic of the face (nose length,
+    mouth width, jawline symmetry, etc.) relative to the inter-ocular distance.
+    """
+    coords = np.array([(l.x, l.y) for l in landmarks])
+
+    left_eye = coords[33]
+    right_eye = coords[263]
+    iod = np.linalg.norm(right_eye - left_eye)
+
+    if iod < 1e-6:
+        return np.zeros(12)
+
+    nose_tip = coords[1]
+    nose_bridge = coords[6]
+    chin = coords[152]
+    left_mouth = coords[61]
+    right_mouth = coords[291]
+    forehead_top = coords[10]
+    left_jaw = coords[234]
+    right_jaw = coords[454]
+    left_eyebrow = coords[70]
+    right_eyebrow = coords[300]
+
+    jaw_to_chin_r = np.linalg.norm(right_jaw - chin)
+
+    ratios = np.array([
+        np.linalg.norm(nose_tip - chin) / iod,                # Nose-to-chin / IOD
+        np.linalg.norm(nose_bridge - nose_tip) / iod,          # Nose length / IOD
+        np.linalg.norm(left_mouth - right_mouth) / iod,        # Mouth width / IOD
+        np.linalg.norm(forehead_top - chin) / iod,             # Face height / IOD
+        np.linalg.norm(left_jaw - right_jaw) / iod,            # Jaw width / IOD
+        np.linalg.norm(left_eyebrow - left_eye) / iod,         # Left brow height / IOD
+        np.linalg.norm(right_eyebrow - right_eye) / iod,       # Right brow height / IOD
+        np.linalg.norm(nose_tip - left_eye) / iod,             # Nose-to-left-eye / IOD
+        np.linalg.norm(nose_tip - right_eye) / iod,            # Nose-to-right-eye / IOD
+        np.linalg.norm(chin - left_mouth) / iod,               # Chin-to-left-mouth / IOD
+        np.linalg.norm(chin - right_mouth) / iod,              # Chin-to-right-mouth / IOD
+        np.linalg.norm(left_jaw - chin) / jaw_to_chin_r if jaw_to_chin_r > 1e-6 else 1.0,  # Jaw symmetry
+    ])
+
+    return ratios
+
 
 # ---------------------------------------------------------
 # VERIFICATION LOGIC (MATH FUSION)
@@ -428,7 +593,7 @@ def generate_upload_urls(req: UploadUrlsRequest, _: dict = Depends(verify_jwt)):
 
 @app.post("/verify/fuse", response_model=VerificationResponse)
 def verify_pipeline(request: VerificationRequest, _: dict = Depends(verify_jwt)):
-    # 1. Fetch
+    # 1. Fetch images from GCS
     gallery_img = fetch_image_from_url(request.gallery_url)
     probe_img = fetch_image_from_url(request.probe_url)
     
@@ -441,53 +606,58 @@ def verify_pipeline(request: VerificationRequest, _: dict = Depends(verify_jwt))
     gallery_clahe = apply_clahe(gallery_img)
     probe_clahe = apply_clahe(probe_img)
     
-    # 3. 3DMM Frontalization (Yaw/Pitch/Roll correction)
-    gallery_front = frontalize_face(gallery_clahe)
-    probe_front = frontalize_face(probe_clahe)
+    # 3. Face Alignment & Crop to canonical 256×256
+    gallery_aligned, gallery_landmarks = align_face_crop(gallery_clahe)
+    probe_aligned, probe_landmarks = align_face_crop(probe_clahe)
     
-    # --- MOCK EXTRACTION (In production, use Dlib/InsightFace CNN here) ---
-    # Generate deterministic mock 512-D embeddings based on image hashes for demonstration
-    np.random.seed(int(np.sum(gallery_front)) % 10000)
-    embed_gallery = np.random.rand(512)
-    np.random.seed(int(np.sum(probe_front)) % 10000)
-    embed_probe = np.random.rand(512)
-    # ----------------------------------------------------------------------
+    if gallery_landmarks is None or probe_landmarks is None:
+        raise HTTPException(
+            status_code=400,
+            detail="FACE_NOT_DETECTED: Could not detect a face in one or both images. Please upload clear, front-facing photographs."
+        )
     
-    # TIER 1: Structural Base (Cosine Similarity)
+    # 4. TIER 1: Structural (1404-D Landmark Geometric Embedding)
+    embed_gallery = extract_landmark_embedding(gallery_landmarks)
+    embed_probe = extract_landmark_embedding(probe_landmarks)
     structural_sim = calculate_cosine_similarity(embed_gallery, embed_probe)
-    tier1_score = structural_sim * 100 # Normalize to 0-100
+    tier1_score = structural_sim * 100
     
-    # TIER 2: Soft Biometrics (Mock mapping coordinates of scars/moles)
-    # In production: run a secondary object detection model over the face mesh to find anomalies.
-    tier2_score = 99.5 
+    # 5. TIER 2: Soft Biometrics (Geometric Ratio Comparison)
+    ratios_gallery = extract_geometric_ratios(gallery_landmarks)
+    ratios_probe = extract_geometric_ratios(probe_landmarks)
+    tier2_score = calculate_cosine_similarity(ratios_gallery, ratios_probe) * 100
     
-    # TIER 3: Micro-Topology (LBP Histogram Intersection)
-    lbp_gal = extract_lbp_histogram(gallery_front)
-    lbp_pro = extract_lbp_histogram(probe_front)
-    # MATH: Histogram Intersection = sum(min(H1_i, H2_i))
+    # 6. TIER 3: Micro-Topology (LBP on aligned 256×256 crops)
+    lbp_gal = extract_lbp_histogram(gallery_aligned)
+    lbp_pro = extract_lbp_histogram(probe_aligned)
     lbp_intersection = np.sum(np.minimum(lbp_gal, lbp_pro))
     tier3_score = lbp_intersection * 100
     
-    # TIER 4: Veto Protocol (ACE-V Biological Discrepancy)
-    veto_triggered = False # e.g. if len(gallery_scars) != len(probe_scars)
+    # 7. Veto Protocol (ACE-V Biological Discrepancy)
+    veto_triggered = False
     
-    # FUSED SCORE CALCULATION (Weighted Matrix)
-    # 40% Structural + 35% Soft Biometrics + 25% Micro-Topology
-    fused_score = (tier1_score * 0.40) + (tier2_score * 0.35) + (tier3_score * 0.25)
+    # FUSED SCORE: 50% Structural + 25% Soft Biometrics + 25% Micro-Topology
+    fused_score = (tier1_score * 0.50) + (tier2_score * 0.25) + (tier3_score * 0.25)
     
     if veto_triggered:
         fused_score = 0.0
         conclusion = "Exclusion: Biological Discrepancy (ACE-V Veto)"
-    elif fused_score > 98.0:
+    elif fused_score > 90.0:
         conclusion = "Strongest Support for Common Source"
-    elif fused_score > 85.0:
+    elif fused_score > 75.0:
         conclusion = "Support for Common Source"
     else:
         conclusion = "Exclusion: Insufficient Fused Similarity"
 
-    # XAI Heatmap Generation
-    gallery_heatmap = generate_xai_heatmap(gallery_front)
-    probe_heatmap = generate_xai_heatmap(probe_front)
+    # XAI Heatmaps on aligned crops
+    gallery_heatmap = generate_xai_heatmap(gallery_aligned)
+    probe_heatmap = generate_xai_heatmap(probe_aligned)
+    
+    # Encode aligned crops as base64 for frontend SymmetryMerge
+    _, gal_buf = cv2.imencode('.png', gallery_aligned)
+    gallery_aligned_b64 = f"data:image/png;base64,{base64.b64encode(gal_buf).decode('utf-8')}"
+    _, pro_buf = cv2.imencode('.png', probe_aligned)
+    probe_aligned_b64 = f"data:image/png;base64,{base64.b64encode(pro_buf).decode('utf-8')}"
 
     return VerificationResponse(
         structural_score=round(tier1_score, 2),
@@ -497,5 +667,7 @@ def verify_pipeline(request: VerificationRequest, _: dict = Depends(verify_jwt))
         conclusion=conclusion,
         veto_triggered=veto_triggered,
         gallery_heatmap_b64=gallery_heatmap,
-        probe_heatmap_b64=probe_heatmap
+        probe_heatmap_b64=probe_heatmap,
+        gallery_aligned_b64=gallery_aligned_b64,
+        probe_aligned_b64=probe_aligned_b64
     )

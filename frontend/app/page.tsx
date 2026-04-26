@@ -28,6 +28,8 @@ export default function Home() {
     conclusion: string;
     gallery_heatmap_b64: string;
     probe_heatmap_b64: string;
+    gallery_aligned_b64: string;
+    probe_aligned_b64: string;
   }
 
   const [results, setResults] = useState<VerificationResult | null>(null);
@@ -328,10 +330,10 @@ export default function Home() {
               </button>
             </div>
 
-            {/* The Canvas Symmetry Merge using local Object URLs for instant rendering or XAI Heatmaps */}
+            {/* The Canvas Symmetry Merge using aligned 256×256 crops from the backend */}
             <SymmetryMerge 
-              galleryImageSrc={isXrayMode ? results.gallery_heatmap_b64 : galleryPreview} 
-              probeImageSrc={isXrayMode ? results.probe_heatmap_b64 : probePreview} 
+              galleryImageSrc={isXrayMode ? results.gallery_heatmap_b64 : results.gallery_aligned_b64} 
+              probeImageSrc={isXrayMode ? results.probe_heatmap_b64 : results.probe_aligned_b64} 
             />
 
             {/* The Scoring Dashboard */}
