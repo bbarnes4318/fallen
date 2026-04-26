@@ -17,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Optional
 from skimage.feature import local_binary_pattern
 import mediapipe as mp
 import onnxruntime as ort
@@ -650,13 +651,13 @@ def generate_wireframe_hud(image: np.ndarray, landmarks) -> str:
     return f"data:image/png;base64,{b64_str}"
 
 class UploadUrlsRequest(BaseModel):
-    gallery_content_type: str
+    gallery_content_type: Optional[str] = None
     probe_content_type: str
 
 class UploadUrlsResponse(BaseModel):
-    gallery_upload_url: str
+    gallery_upload_url: Optional[str] = None
     probe_upload_url: str
-    gallery_gs_uri: str
+    gallery_gs_uri: Optional[str] = None
     probe_gs_uri: str
 
 @app.post("/generate-upload-urls", response_model=UploadUrlsResponse)
@@ -675,20 +676,9 @@ def generate_upload_urls(req: UploadUrlsRequest, _: dict = Depends(verify_jwt)):
         storage_client = storage.Client()
         bucket = storage_client.bucket(bucket_name)
         
-        gallery_blob_name = f"gallery_{uuid.uuid4().hex}.jpg"
         probe_blob_name = f"probe_{uuid.uuid4().hex}.jpg"
-        
-        gallery_blob = bucket.blob(gallery_blob_name)
         probe_blob = bucket.blob(probe_blob_name)
         
-        gallery_url = gallery_blob.generate_signed_url(
-            version="v4",
-            expiration=datetime.timedelta(minutes=15),
-            method="PUT",
-            content_type=req.gallery_content_type,
-            service_account_email=credentials.service_account_email,
-            access_token=credentials.token
-        )
         probe_url = probe_blob.generate_signed_url(
             version="v4",
             expiration=datetime.timedelta(minutes=15),
@@ -698,10 +688,26 @@ def generate_upload_urls(req: UploadUrlsRequest, _: dict = Depends(verify_jwt)):
             access_token=credentials.token
         )
         
+        gallery_url = None
+        gallery_gs_uri = None
+        
+        if req.gallery_content_type:
+            gallery_blob_name = f"gallery_{uuid.uuid4().hex}.jpg"
+            gallery_blob = bucket.blob(gallery_blob_name)
+            gallery_url = gallery_blob.generate_signed_url(
+                version="v4",
+                expiration=datetime.timedelta(minutes=15),
+                method="PUT",
+                content_type=req.gallery_content_type,
+                service_account_email=credentials.service_account_email,
+                access_token=credentials.token
+            )
+            gallery_gs_uri = f"gs://{bucket_name}/{gallery_blob_name}"
+        
         return UploadUrlsResponse(
             gallery_upload_url=gallery_url,
             probe_upload_url=probe_url,
-            gallery_gs_uri=f"gs://{bucket_name}/{gallery_blob_name}",
+            gallery_gs_uri=gallery_gs_uri,
             probe_gs_uri=f"gs://{bucket_name}/{probe_blob_name}"
         )
     except Exception as e:

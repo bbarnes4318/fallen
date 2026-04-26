@@ -13,9 +13,7 @@ function getApiUrl(): string {
 }
 
 export default function Home() {
-  const [galleryFile, setGalleryFile] = useState<File | null>(null);
   const [probeFile, setProbeFile] = useState<File | null>(null);
-  const [galleryPreview, setGalleryPreview] = useState<string>('');
   const [probePreview, setProbePreview] = useState<string>('');
 
   const [step, setStep] = useState<'idle' | 'uploading' | 'frontalizing' | 'calculating' | 'complete' | 'error'>('idle');
@@ -75,11 +73,8 @@ export default function Home() {
     setToken(null);
     localStorage.removeItem('operator_token');
     setStep('idle');
-    setGalleryFile(null);
     setProbeFile(null);
-    if (galleryPreview) URL.revokeObjectURL(galleryPreview);
     if (probePreview) URL.revokeObjectURL(probePreview);
-    setGalleryPreview('');
     setProbePreview('');
     setResults(null);
     setIsXrayMode(false);
@@ -87,23 +82,17 @@ export default function Home() {
     setLoginError('');
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'gallery' | 'probe') => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (type === 'gallery') {
-        if (galleryPreview) URL.revokeObjectURL(galleryPreview);
-        setGalleryFile(file);
-        setGalleryPreview(URL.createObjectURL(file));
-      } else {
-        if (probePreview) URL.revokeObjectURL(probePreview);
-        setProbeFile(file);
-        setProbePreview(URL.createObjectURL(file));
-      }
+      if (probePreview) URL.revokeObjectURL(probePreview);
+      setProbeFile(file);
+      setProbePreview(URL.createObjectURL(file));
     }
   };
 
   const startSequence = async () => {
-    if (!galleryFile || !probeFile) return;
+    if (!probeFile) return;
     try {
       setStep('uploading');
       
@@ -115,7 +104,6 @@ export default function Home() {
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          gallery_content_type: galleryFile.type,
           probe_content_type: probeFile.type
         })
       });
@@ -127,26 +115,19 @@ export default function Home() {
         const errBody = await urlRes.json().catch(() => null);
         throw new Error(errBody?.detail || 'Failed to secure upload channels.');
       }
-      const { gallery_upload_url, probe_upload_url, gallery_gs_uri, probe_gs_uri } = await urlRes.json();
+      const { probe_upload_url, probe_gs_uri } = await urlRes.json();
       
       // 2. Direct Client Upload to GCS
-      const [galleryUploadRes, probeUploadRes] = await Promise.all([
-        fetch(gallery_upload_url, {
-          method: 'PUT',
-          body: galleryFile,
-          headers: { 'Content-Type': galleryFile.type }
-        }),
-        fetch(probe_upload_url, {
-          method: 'PUT',
-          body: probeFile,
-          headers: { 'Content-Type': probeFile.type }
-        })
-      ]);
-      if (!galleryUploadRes.ok || !probeUploadRes.ok) {
+      const probeUploadRes = await fetch(probe_upload_url, {
+        method: 'PUT',
+        body: probeFile,
+        headers: { 'Content-Type': probeFile.type }
+      });
+      if (!probeUploadRes.ok) {
         throw new Error('Image upload to secure storage failed.');
       }
       
-      // gallery_gs_uri and probe_gs_uri are passed directly to the verify call
+      // probe_gs_uri is passed directly to the verify call
       
       // UX Pacing
       setStep('frontalizing');
@@ -155,14 +136,13 @@ export default function Home() {
       setStep('calculating');
       
       // 3. The Verification Call
-      const verifyRes = await fetch(`${getApiUrl()}/verify/fuse`, {
+      const verifyRes = await fetch(`${getApiUrl()}/vault/search`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          gallery_url: gallery_gs_uri,
           probe_url: probe_gs_uri
         })
       });
@@ -362,55 +342,43 @@ export default function Home() {
 
         {/* ════ IDLE: Upload Panel ════ */}
         {step === 'idle' && (
-          <div className="h-full flex flex-col items-center justify-center gap-6">
-            <div className="grid grid-cols-2 gap-5 w-full max-w-2xl">
-              {/* Gallery Upload */}
-              <div className="border border-dashed border-[#333] rounded-lg p-5 flex flex-col items-center justify-center bg-[#0d0d0e] hover:border-[#D4AF37] transition-colors relative min-h-[180px]">
+          <div className="h-full flex flex-col items-center justify-center gap-6 w-full">
+            <div className="w-full max-w-xl">
+              {/* Single Target Upload Dropzone */}
+              <div className="border border-dashed border-[#D4AF37]/50 rounded-lg p-8 flex flex-col items-center justify-center bg-[#0d0d0e] hover:border-[#D4AF37] hover:bg-[#111] transition-all relative min-h-[300px]">
                 <input 
                   type="file" accept="image/*" 
-                  onChange={(e) => handleFileChange(e, 'gallery')}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  onChange={handleFileChange}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                 />
-                {galleryPreview ? (
-                  /* eslint-disable-next-line @next/next/no-img-element */
-                  <img src={galleryPreview} alt="Gallery" className="max-h-[140px] object-contain rounded" />
-                ) : (
-                  <>
-                    <div className="w-9 h-9 rounded-full bg-[#111] border border-[#333] flex items-center justify-center mb-3 text-[#D4AF37]">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
-                    </div>
-                    <span className="text-gray-400 text-xs">GALLERY (REFERENCE)</span>
-                  </>
-                )}
-              </div>
+                
+                {/* Crosshair aesthetic elements */}
+                <div className="absolute top-4 left-4 w-4 h-4 border-t border-l border-[#D4AF37]/50"></div>
+                <div className="absolute top-4 right-4 w-4 h-4 border-t border-r border-[#D4AF37]/50"></div>
+                <div className="absolute bottom-4 left-4 w-4 h-4 border-b border-l border-[#D4AF37]/50"></div>
+                <div className="absolute bottom-4 right-4 w-4 h-4 border-b border-r border-[#D4AF37]/50"></div>
 
-              {/* Probe Upload */}
-              <div className="border border-dashed border-[#333] rounded-lg p-5 flex flex-col items-center justify-center bg-[#0d0d0e] hover:border-[#D4AF37] transition-colors relative min-h-[180px]">
-                <input 
-                  type="file" accept="image/*" 
-                  onChange={(e) => handleFileChange(e, 'probe')}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                />
                 {probePreview ? (
                   /* eslint-disable-next-line @next/next/no-img-element */
-                  <img src={probePreview} alt="Probe" className="max-h-[140px] object-contain rounded" />
+                  <img src={probePreview} alt="Target" className="max-h-[220px] object-contain rounded shadow-[0_0_20px_rgba(212,175,55,0.15)] z-0 relative" />
                 ) : (
-                  <>
-                    <div className="w-9 h-9 rounded-full bg-[#111] border border-[#333] flex items-center justify-center mb-3 text-[#D4AF37]">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
+                  <div className="flex flex-col items-center text-[#D4AF37]/80">
+                    <div className="w-16 h-16 rounded-full border-2 border-dotted border-[#D4AF37] flex items-center justify-center mb-4 relative animate-[spin_15s_linear_infinite]">
+                      <svg className="w-6 h-6 animate-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 4v16m8-8H4"></path></svg>
                     </div>
-                    <span className="text-gray-400 text-xs">PROBE (TARGET)</span>
-                  </>
+                    <span className="text-[#D4AF37] font-bold text-lg tracking-[0.2em] mb-1">ACQUIRE UNKNOWN TARGET</span>
+                    <span className="text-gray-500 text-xs tracking-widest">DRAG AND DROP OR CLICK TO UPLOAD</span>
+                  </div>
                 )}
               </div>
             </div>
 
             <button 
               onClick={startSequence}
-              disabled={!galleryFile || !probeFile}
-              className={`px-6 py-2 text-xs font-bold tracking-widest rounded-sm border ${galleryFile && probeFile ? 'bg-[#D4AF37] text-black border-[#D4AF37] hover:bg-[#b5952f] shadow-[0_0_20px_rgba(212,175,55,0.3)]' : 'bg-[#111] text-gray-500 border-[#333] cursor-not-allowed'}`}
+              disabled={!probeFile}
+              className={`px-8 py-3 text-sm font-bold tracking-widest rounded-sm border transition-all ${probeFile ? 'bg-[#D4AF37] text-black border-[#D4AF37] hover:bg-[#b5952f] shadow-[0_0_20px_rgba(212,175,55,0.3)]' : 'bg-[#111] text-gray-500 border-[#333] cursor-not-allowed'}`}
             >
-              INITIALIZE VERIFICATION
+              INITIATE VAULT SWEEP
             </button>
           </div>
         )}
@@ -420,9 +388,9 @@ export default function Home() {
           <div className="h-full flex flex-col items-center justify-center">
             <div className="w-12 h-12 border-4 border-[#333] border-t-[#D4AF37] rounded-full animate-spin mb-4"></div>
             <p className="text-sm text-gray-300 tracking-widest animate-pulse">
-              {step === 'uploading' && "UPLOADING TO SECURE VAULT..."}
-              {step === 'frontalizing' && "RUNNING 3DMM FRONTALIZATION..."}
-              {step === 'calculating' && "CALCULATING FUSED IDENTITY SCORE..."}
+              {step === 'uploading' && "UPLOADING TARGET..."}
+              {step === 'frontalizing' && "SCANNING ENCRYPTED VAULT..."}
+              {step === 'calculating' && "DECRYPTING IDENTITY VECTORS..."}
             </p>
           </div>
         )}
@@ -460,11 +428,8 @@ export default function Home() {
                 <button 
                   onClick={() => {
                     setStep('idle');
-                    setGalleryFile(null);
                     setProbeFile(null);
-                    if (galleryPreview) URL.revokeObjectURL(galleryPreview);
                     if (probePreview) URL.revokeObjectURL(probePreview);
-                    setGalleryPreview('');
                     setProbePreview('');
                     setIsXrayMode(false);
                     setResults(null);
