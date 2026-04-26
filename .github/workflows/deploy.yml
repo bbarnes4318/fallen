@@ -123,10 +123,26 @@ jobs:
             --command="python" \
             --args="scripts/wikimedia_crawler.py" \
             --service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com \
-            --memory=4Gi \
-            --cpu=2 \
+            --memory=8Gi \
+            --cpu=4 \
             --task-timeout=3600 \
             --max-retries=1 \
+            --set-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance \
+            --set-env-vars="KMS_KEY_NAME=projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek,BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=Fv966468!Sec5677,DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance"
+
+      - name: Deploy ArcFace Migration Job
+        run: |
+          gcloud run jobs deploy arcface-migration-job \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }} \
+            --image=${{ env.BACKEND_IMAGE }}:${{ github.sha }} \
+            --command="python" \
+            --args="scripts/migrate_arcface.py" \
+            --service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com \
+            --memory=8Gi \
+            --cpu=4 \
+            --task-timeout=3600 \
+            --max-retries=0 \
             --set-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance \
             --set-env-vars="KMS_KEY_NAME=projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek,BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=Fv966468!Sec5677,DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance"
 
@@ -140,3 +156,4 @@ jobs:
           flags: '--service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com --memory=1Gi --allow-unauthenticated'
           env_vars: |
             NEXT_PUBLIC_API_URL=${{ steps.deploy-backend.outputs.url }}
+
