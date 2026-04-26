@@ -660,6 +660,7 @@ export default function Home() {
                   deltaImageSrc={results.scar_delta_b64}
                   galleryWireframeSrc={results.gallery_wireframe_b64}
                   probeWireframeSrc={results.probe_wireframe_b64}
+                  auditLog={results.audit_log}
                 />
               </div>
             </div>

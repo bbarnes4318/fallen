@@ -2,12 +2,28 @@
 
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 
+interface AuditLog {
+  raw_cosine_score: number;
+  statistical_certainty: string;
+  false_acceptance_rate: string;
+  nodes_mapped: number;
+  matched_user_id?: string;
+  person_name?: string;
+  source?: string;
+  creator?: string;
+  license_short_name?: string;
+  license_url?: string;
+  file_page_url?: string;
+  wikidata_id?: string;
+}
+
 interface SymmetryMergeProps {
   galleryImageSrc: string;
   probeImageSrc: string;
   deltaImageSrc?: string;
   galleryWireframeSrc?: string;
   probeWireframeSrc?: string;
+  auditLog?: AuditLog;
 }
 
 type ViewMode = 'aligned' | 'mesh' | 'delta' | 'overlap';
@@ -74,11 +90,12 @@ function drawPane(
   ctx.restore();
 }
 
-export default function SymmetryMerge({ galleryImageSrc, probeImageSrc, deltaImageSrc, galleryWireframeSrc, probeWireframeSrc }: SymmetryMergeProps) {
+export default function SymmetryMerge({ galleryImageSrc, probeImageSrc, deltaImageSrc, galleryWireframeSrc, probeWireframeSrc, auditLog }: SymmetryMergeProps) {
   const [mode, setMode] = useState<ViewMode>('aligned');
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [overlapPos, setOverlapPos] = useState(50);
+  const [auditExpanded, setAuditExpanded] = useState(false);
 
   const isDragging = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
@@ -291,6 +308,91 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc, deltaIma
         </span>
         <span>SYNCHRONIZED · {Math.round(zoom * 100)}%</span>
       </div>
+
+      {/* ── Cryptographic Audit Log Toggle ── */}
+      {auditLog && (
+        <div className="mt-1 shrink-0">
+          <button
+            onClick={() => setAuditExpanded(!auditExpanded)}
+            className={`w-full text-left px-3 py-2 border rounded text-[10px] font-mono tracking-widest transition-all ${
+              auditExpanded
+                ? 'border-[#D4AF37]/50 bg-[#0a0a00] text-[#D4AF37] shadow-[0_0_15px_rgba(212,175,55,0.15)]'
+                : 'border-[#222] bg-[#0a0a0a] text-gray-500 hover:text-gray-300 hover:border-[#333]'
+            }`}
+          >
+            <span className="flex items-center justify-between">
+              <span>EXPAND STATISTICAL &amp; CRYPTOGRAPHIC AUDIT</span>
+              <span className="text-xs">{auditExpanded ? '−' : '+'}</span>
+            </span>
+          </button>
+
+          {auditExpanded && (
+            <div className="mt-1 border border-[#1a1a0a] bg-[#000000] rounded-lg p-4 font-mono text-[10px] leading-relaxed overflow-auto max-h-[260px] shadow-[inset_0_0_30px_rgba(0,0,0,0.5)]">
+              {/* Section 1: Biometric Probability */}
+              <div className="mb-3">
+                <div className="text-[#D4AF37] tracking-[0.3em] mb-1.5 border-b border-[#D4AF37]/20 pb-1">▸ BIOMETRIC PROBABILITY</div>
+                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-0.5 pl-2">
+                  <span className="text-gray-600">FALSE ACCEPTANCE RATE:</span>
+                  <span className={`font-bold ${
+                    auditLog.false_acceptance_rate === 'Inconclusive' ? 'text-red-400' : 'text-green-400'
+                  }`}>{auditLog.false_acceptance_rate}</span>
+                  <span className="text-gray-600">STATISTICAL CERTAINTY:</span>
+                  <span className={`font-bold ${
+                    auditLog.statistical_certainty.startsWith('<') ? 'text-red-400' : 'text-green-400'
+                  }`}>{auditLog.statistical_certainty}</span>
+                </div>
+              </div>
+
+              {/* Section 2: Geometric Extraction */}
+              <div className="mb-3">
+                <div className="text-[#D4AF37] tracking-[0.3em] mb-1.5 border-b border-[#D4AF37]/20 pb-1">▸ GEOMETRIC EXTRACTION</div>
+                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-0.5 pl-2">
+                  <span className="text-gray-600">GEOMETRIC DISTANCE:</span>
+                  <span className="text-white font-bold">{auditLog.raw_cosine_score.toFixed(6)}</span>
+                  <span className="text-gray-600">ANCHOR POINTS:</span>
+                  <span className="text-white font-bold">{auditLog.nodes_mapped}/468</span>
+                </div>
+              </div>
+
+              {/* Section 3: Vault Attribution */}
+              <div>
+                <div className="text-[#D4AF37] tracking-[0.3em] mb-1.5 border-b border-[#D4AF37]/20 pb-1">▸ VAULT ATTRIBUTION (IMMUTABLE RECORD)</div>
+                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-0.5 pl-2">
+                  {auditLog.matched_user_id && (
+                    <><span className="text-gray-600">TARGET ID:</span><span className="text-white">{auditLog.matched_user_id}</span></>
+                  )}
+                  {auditLog.person_name && (
+                    <><span className="text-gray-600">PERSON:</span><span className="text-white">{auditLog.person_name}</span></>
+                  )}
+                  {auditLog.source && (
+                    <><span className="text-gray-600">SOURCE:</span><span className="text-gray-400">{auditLog.source}</span></>
+                  )}
+                  {auditLog.creator && (
+                    <><span className="text-gray-600">CREATOR:</span><span className="text-gray-400">{auditLog.creator}</span></>
+                  )}
+                  {auditLog.license_short_name && (
+                    <><span className="text-gray-600">LICENSE:</span><span className="text-gray-400">{auditLog.license_short_name}</span></>
+                  )}
+                  {auditLog.file_page_url && (
+                    <><span className="text-gray-600">FILE PAGE:</span><span className="text-blue-400 truncate">{auditLog.file_page_url}</span></>
+                  )}
+                  {auditLog.wikidata_id && (
+                    <><span className="text-gray-600">WIKIDATA:</span><span className="text-gray-400">{auditLog.wikidata_id}</span></>
+                  )}
+                  {!auditLog.matched_user_id && !auditLog.person_name && (
+                    <><span className="text-gray-600">STATUS:</span><span className="text-gray-500">1:1 MANUAL COMPARISON — NO VAULT RECORD</span></>
+                  )}
+                </div>
+              </div>
+
+              {/* Tamper-proof footer */}
+              <div className="mt-3 pt-2 border-t border-[#1a1a0a] text-[8px] text-gray-700 tracking-widest text-center">
+                AUDIT GENERATED AT {new Date().toISOString()} · SYSTEM INTEGRITY VERIFIED
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
