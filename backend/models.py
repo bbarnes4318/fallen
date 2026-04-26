@@ -14,12 +14,12 @@ DB_NAME = os.getenv("DB_NAME", "facial_db")
 CLOUD_SQL_CONNECTION_NAME = os.getenv("CLOUD_SQL_CONNECTION_NAME", "hoppwhistle:us-central1:facial-db-instance")
 
 # For local development via Cloud SQL Auth Proxy, host is typically 127.0.0.1
-# For Cloud Run, host is a unix socket: /cloudsql/hoppwhistle:us-central1:facial-db-instance
+# For Cloud Run Services/Jobs, host is a unix socket: /cloudsql/<instance>
 # For direct connection (crawler), set DATABASE_URL env var
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@127.0.0.1:5432/{DB_NAME}"
-    if os.getenv("K_SERVICE"):  # Running in Cloud Run
+    if os.getenv("K_SERVICE") or os.getenv("CLOUD_RUN_JOB"):  # Cloud Run Service or Job
         DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@/{DB_NAME}?host=/cloudsql/{CLOUD_SQL_CONNECTION_NAME}"
 
 engine = create_engine(DATABASE_URL)
