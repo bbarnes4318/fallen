@@ -38,7 +38,7 @@ if os.getenv("K_SERVICE") or os.getenv("CLOUD_RUN_JOB"):
 else:
     DATASETS_DIR = os.path.join(PROJECT_ROOT, "datasets")
 LFW_DIR = os.path.join(DATASETS_DIR, "lfw")
-LFW_URL = "https://vis-www.cs.umass.edu/lfw/lfw.tgz"
+LFW_URL = "https://ndownloader.figshare.com/files/5976018"
 BATCH_SIZE = 100  # Number of profiles to commit to DB at once
 MAX_WORKERS = 4   # Number of concurrent ArcFace/KMS threads
 
