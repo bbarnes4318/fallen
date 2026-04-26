@@ -6,6 +6,7 @@ import datetime
 import base64
 import struct
 import hashlib
+import time
 import os
 from pathlib import Path
 import uuid
@@ -215,6 +216,11 @@ class AuditLog(BaseModel):
     license_url: Optional[str] = None
     file_page_url: Optional[str] = None
     wikidata_id: Optional[str] = None
+    # Deep Forensic Telemetry
+    vector_hash: Optional[str] = None
+    alignment_variance: Optional[dict] = None
+    liveness_check: Optional[dict] = None
+    crypto_envelope: Optional[dict] = None
 
 class VerificationResponse(BaseModel):
     structural_score: float
@@ -251,6 +257,92 @@ def calculate_statistical_confidence(cosine_score: float) -> dict:
         far = "Inconclusive"
         certainty = "< 99%"
     return {"false_acceptance_rate": far, "statistical_certainty": certainty}
+
+
+# ---------------------------------------------------------
+# DEEP FORENSIC TELEMETRY HELPERS
+# ---------------------------------------------------------
+
+def compute_vector_hash(embedding: np.ndarray) -> str:
+    """SHA-256 hash representation of the 1404-D embedding array."""
+    return hashlib.sha256(embedding.tobytes()).hexdigest()
+
+
+def compute_alignment_variance(image: np.ndarray) -> dict:
+    """
+    Extracts Yaw, Pitch, Roll correction degrees from the face
+    using solvePnP against the generic 3DMM model points.
+    Returns variance as formatted degree strings.
+    """
+    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    results = face_mesh.process(rgb)
+
+    if not results.multi_face_landmarks:
+        return {"yaw": "N/A", "pitch": "N/A", "roll": "N/A"}
+
+    landmarks = results.multi_face_landmarks[0].landmark
+    h, w = image.shape[:2]
+
+    image_points = np.array([
+        (landmarks[1].x * w, landmarks[1].y * h),
+        (landmarks[152].x * w, landmarks[152].y * h),
+        (landmarks[33].x * w, landmarks[33].y * h),
+        (landmarks[263].x * w, landmarks[263].y * h),
+        (landmarks[61].x * w, landmarks[61].y * h),
+        (landmarks[291].x * w, landmarks[291].y * h)
+    ], dtype="double")
+
+    camera_matrix, dist_coeffs = estimate_camera_intrinsic(image.shape)
+    success, rotation_vector, _ = cv2.solvePnP(
+        MODEL_POINTS_3D, image_points, camera_matrix, dist_coeffs,
+        flags=cv2.SOLVEPNP_ITERATIVE
+    )
+
+    if not success:
+        return {"yaw": "N/A", "pitch": "N/A", "roll": "N/A"}
+
+    rmat, _ = cv2.Rodrigues(rotation_vector)
+    euler_angles = cv2.RQDecomp3x3(rmat)[0]
+
+    pitch = euler_angles[0]
+    yaw = euler_angles[1]
+    roll = euler_angles[2]
+
+    return {
+        "yaw": f"{yaw:+.1f}°",
+        "pitch": f"{pitch:+.1f}°",
+        "roll": f"{roll:+.1f}°"
+    }
+
+
+def build_liveness_telemetry(liveness_score: float) -> dict:
+    """
+    Packages the PAD liveness score into a forensic telemetry block.
+    """
+    spoof_prob = (1.0 - liveness_score) * 100
+    if liveness_score >= 0.98:
+        status = "VERIFIED_3D_ORGANIC"
+    elif liveness_score >= 0.95:
+        status = "PROBABLE_ORGANIC"
+    else:
+        status = "SPOOF_SUSPECTED"
+
+    return {
+        "spoof_probability": f"{spoof_prob:.3f}%",
+        "status": status
+    }
+
+
+def build_crypto_envelope(decryption_time_ms: float | None = None) -> dict:
+    """
+    Builds the cryptographic envelope telemetry.
+    Uses actual decryption latency if available, otherwise a realistic static value.
+    """
+    latency = f"{decryption_time_ms:.0f}ms" if decryption_time_ms is not None else "N/A (1:1 mode)"
+    return {
+        "standard": "AES-256-GCM / GCP KMS",
+        "decryption_time": latency
+    }
 
 # ---------------------------------------------------------
 # CORE PREPROCESSING LOGIC
@@ -764,6 +856,7 @@ def verify_pipeline(request: VerificationRequest, _: dict = Depends(verify_jwt))
     
     # 1.5 Presentation Attack Detection (Liveness Firewall)
     liveness_score = detect_liveness(probe_img)
+    liveness_telemetry = build_liveness_telemetry(liveness_score)
     if liveness_score < 0.95:
         raise HTTPException(status_code=403, detail="SPOOF_DETECTED: Presentation attack suspected.")
     
@@ -833,11 +926,20 @@ def verify_pipeline(request: VerificationRequest, _: dict = Depends(verify_jwt))
 
     # Statistical confidence from Tier-1 raw cosine
     stats = calculate_statistical_confidence(structural_sim)
+
+    # Deep Forensic Telemetry
+    probe_vector_hash = compute_vector_hash(embed_probe)
+    probe_alignment = compute_alignment_variance(probe_aligned)
+
     audit = AuditLog(
         raw_cosine_score=round(structural_sim, 6),
         statistical_certainty=stats["statistical_certainty"],
         false_acceptance_rate=stats["false_acceptance_rate"],
         nodes_mapped=468,
+        vector_hash=probe_vector_hash,
+        alignment_variance=probe_alignment,
+        liveness_check=liveness_telemetry,
+        crypto_envelope=build_crypto_envelope(),
     )
 
     return VerificationResponse(
@@ -901,6 +1003,7 @@ def vault_search(request: VaultSearchRequest, _: dict = Depends(verify_jwt)):
 
     # 2. Liveness firewall
     liveness = detect_liveness(probe_img)
+    liveness_telemetry_vault = build_liveness_telemetry(liveness)
     if liveness < 0.95:
         raise HTTPException(status_code=403, detail="SPOOF_DETECTED: Presentation attack suspected.")
 
@@ -920,6 +1023,7 @@ def vault_search(request: VaultSearchRequest, _: dict = Depends(verify_jwt)):
     session = SessionLocal()
     best_score = -1.0
     best_user_id = None
+    vault_decrypt_start = time.perf_counter()
 
     try:
         profiles = session.query(IdentityProfile).all()
@@ -944,6 +1048,7 @@ def vault_search(request: VaultSearchRequest, _: dict = Depends(verify_jwt)):
                 continue  # Skip corrupted or undecryptable records
     finally:
         session.close()
+    vault_decrypt_elapsed_ms = (time.perf_counter() - vault_decrypt_start) * 1000
 
     if best_user_id is None:
         raise HTTPException(
@@ -1020,6 +1125,10 @@ def vault_search(request: VaultSearchRequest, _: dict = Depends(verify_jwt)):
     finally:
         attr_session.close()
 
+    # Deep Forensic Telemetry
+    vault_vector_hash = compute_vector_hash(probe_embedding)
+    vault_alignment = compute_alignment_variance(probe_aligned)
+
     audit = AuditLog(
         raw_cosine_score=round(best_score, 6),
         statistical_certainty=stats["statistical_certainty"],
@@ -1033,6 +1142,10 @@ def vault_search(request: VaultSearchRequest, _: dict = Depends(verify_jwt)):
         license_url=matched_profile.license_url if matched_profile else None,
         file_page_url=matched_profile.file_page_url if matched_profile else None,
         wikidata_id=matched_profile.wikidata_id if matched_profile else None,
+        vector_hash=vault_vector_hash,
+        alignment_variance=vault_alignment,
+        liveness_check=liveness_telemetry_vault,
+        crypto_envelope=build_crypto_envelope(vault_decrypt_elapsed_ms),
     )
 
     return VerificationResponse(

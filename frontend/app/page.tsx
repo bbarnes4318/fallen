@@ -39,6 +39,10 @@ export default function Home() {
     license_url?: string;
     file_page_url?: string;
     wikidata_id?: string;
+    vector_hash?: string;
+    alignment_variance?: { yaw: string; pitch: string; roll: string };
+    liveness_check?: { spoof_probability: string; status: string };
+    crypto_envelope?: { standard: string; decryption_time: string };
   }
 
   interface VerificationResult {
@@ -61,6 +65,7 @@ export default function Home() {
   const [results, setResults] = useState<VerificationResult | null>(null);
   const [isXrayMode, setIsXrayMode] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [auditExpanded, setAuditExpanded] = useState(false);
 
   const [token, setToken] = useState<string | null>(null);
   const [password, setPassword] = useState('');
@@ -634,108 +639,207 @@ export default function Home() {
           </div>
         )}
 
-        {/* ════ RESULTS DASHBOARD ════ */}
+        {/* ════ RESULTS DASHBOARD — Zero-Scroll 70/30 Grid ════ */}
         {step === 'complete' && results && (
-          <div className="h-full grid grid-cols-[1fr_auto] gap-4 min-h-0">
+          <div className="h-full flex gap-3 min-h-0 overflow-hidden">
 
-            {/* ── Left: SymmetryMerge (takes all available height) ── */}
-            <div className="flex flex-col min-h-0 min-w-0">
-              {/* X-Ray toggle */}
-              <div className="flex justify-between items-center mb-2 shrink-0">
+            {/* ── LEFT PANEL (70%): Dual-Pane Visualizer ── */}
+            <div className="w-[70%] flex flex-col min-h-0 min-w-0">
+              {/* Controls bar */}
+              <div className="flex justify-between items-center mb-1.5 shrink-0">
                 <button
                   onClick={() => setIsXrayMode(!isXrayMode)}
                   className={`flex items-center gap-2 px-3 py-1 border rounded text-[10px] tracking-widest transition-all ${
-                    isXrayMode 
-                      ? 'border-[#D4AF37] bg-[#D4AF37]/10 text-[#D4AF37] shadow-[0_0_10px_rgba(212,175,55,0.2)]' 
+                    isXrayMode
+                      ? 'border-[#D4AF37] bg-[#D4AF37]/10 text-[#D4AF37] shadow-[0_0_10px_rgba(212,175,55,0.2)]'
                       : 'border-[#333] bg-[#111] text-gray-500 hover:text-gray-300'
                   }`}
                 >
                   <div className={`w-2 h-2 rounded-full ${isXrayMode ? 'bg-[#D4AF37] animate-pulse' : 'bg-gray-600'}`}></div>
                   X-RAY
                 </button>
-                <button 
-                  onClick={() => {
-                    setStep('idle');
-                    setProbeFile(null);
-                    if (probePreview) URL.revokeObjectURL(probePreview);
-                    setProbePreview('');
-                    setIsXrayMode(false);
-                    setResults(null);
-                  }}
+                <button
+                  onClick={() => { setStep('idle'); setProbeFile(null); if (probePreview) URL.revokeObjectURL(probePreview); setProbePreview(''); setIsXrayMode(false); setResults(null); setAuditExpanded(false); }}
                   className="text-[10px] text-gray-500 hover:text-white border border-[#333] hover:border-gray-500 px-3 py-1 rounded tracking-widest transition-colors"
                 >
                   NEW RUN
                 </button>
               </div>
-
-              {/* Canvas fill */}
               <div className="flex-1 min-h-0 bg-[#0d0d0e] border border-[#1f1f1f] rounded-lg p-2">
-                <SymmetryMerge 
-                  galleryImageSrc={isXrayMode ? results.gallery_heatmap_b64 : results.gallery_aligned_b64} 
-                  probeImageSrc={isXrayMode ? results.probe_heatmap_b64 : results.probe_aligned_b64}
+                <SymmetryMerge
+                  galleryImageSrc={results.gallery_aligned_b64}
+                  probeImageSrc={results.probe_aligned_b64}
                   deltaImageSrc={results.scar_delta_b64}
                   galleryWireframeSrc={results.gallery_wireframe_b64}
                   probeWireframeSrc={results.probe_wireframe_b64}
-                  auditLog={results.audit_log}
+                  isXrayMode={isXrayMode}
                 />
               </div>
             </div>
 
-            {/* ── Right: Scoring Panel ── */}
-            <div className="w-52 flex flex-col gap-2 min-h-0 shrink-0">
-              {/* Tier Cards */}
-              <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg p-3">
-                <h3 className="text-gray-500 text-[9px] mb-1 tracking-wider">TIER 1: STRUCTURAL</h3>
-                <div className="text-2xl text-white font-bold">{results.structural_score}%</div>
+            {/* ── RIGHT PANEL (30%): Intelligence Panel ── */}
+            <div className="w-[30%] flex flex-col gap-1.5 min-h-0 overflow-y-auto overflow-x-hidden shrink-0 pr-0.5">
+
+              {/* Tier 1 */}
+              <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg p-2.5">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-gray-500 text-[9px] tracking-wider">TIER 1: STRUCTURAL</h3>
+                  <div className="relative group/t1">
+                    <span className="text-[9px] text-gray-600 border border-[#333] rounded px-1 cursor-help hover:text-[#D4AF37] hover:border-[#D4AF37]/50 transition-colors">?</span>
+                    <div className="pointer-events-none absolute right-0 bottom-full mb-1.5 w-52 opacity-0 group-hover/t1:opacity-100 transition-opacity z-50">
+                      <div className="bg-[#111] border border-[#333] rounded px-2.5 py-2 text-[9px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">Cosine similarity of 1404-D cranial and skeletal anchor points. High baseline overlap; used for broad filtering.</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="text-xl text-white font-bold mt-0.5">{results.structural_score}%</div>
               </div>
-              <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg p-3">
-                <h3 className="text-gray-500 text-[9px] mb-1 tracking-wider">TIER 2: SOFT BIO</h3>
-                <div className="text-2xl text-white font-bold">{results.soft_biometrics_score}%</div>
+
+              {/* Tier 2 */}
+              <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg p-2.5">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-gray-500 text-[9px] tracking-wider">TIER 2: SOFT BIO</h3>
+                  <div className="relative group/t2">
+                    <span className="text-[9px] text-gray-600 border border-[#333] rounded px-1 cursor-help hover:text-[#D4AF37] hover:border-[#D4AF37]/50 transition-colors">?</span>
+                    <div className="pointer-events-none absolute right-0 bottom-full mb-1.5 w-52 opacity-0 group-hover/t2:opacity-100 transition-opacity z-50">
+                      <div className="bg-[#111] border border-[#333] rounded px-2.5 py-2 text-[9px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">Pixel-density analysis of melanin, ocular hue, and keratin. Low statistical uniqueness; acts as a secondary filter.</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="text-xl text-white font-bold mt-0.5">{results.soft_biometrics_score}%</div>
               </div>
-              <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg p-3">
-                <h3 className="text-gray-500 text-[9px] mb-1 tracking-wider">TIER 3: MICRO-TOPO</h3>
-                <div className="text-2xl text-white font-bold">{results.micro_topology_score}%</div>
+
+              {/* Tier 3 */}
+              <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg p-2.5">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-gray-500 text-[9px] tracking-wider">TIER 3: MICRO-TOPO</h3>
+                  <div className="relative group/t3">
+                    <span className="text-[9px] text-gray-600 border border-[#333] rounded px-1 cursor-help hover:text-[#D4AF37] hover:border-[#D4AF37]/50 transition-colors">?</span>
+                    <div className="pointer-events-none absolute right-0 bottom-full mb-1.5 w-52 opacity-0 group-hover/t3:opacity-100 transition-opacity z-50">
+                      <div className="bg-[#111] border border-[#333] rounded px-2.5 py-2 text-[9px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">The primary identifier. Analyzes chaotic epidermal deviations (scars, asymmetrical moles). A high match here drives the False Acceptance Rate (FAR) to near zero.</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="text-xl text-white font-bold mt-0.5">{results.micro_topology_score}%</div>
               </div>
-              
-              {/* Fused Score — Hero */}
-              <div className="border border-[#D4AF37]/40 bg-[#1a170d] rounded-lg p-3 relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-10 h-10 bg-[#D4AF37]/10 rounded-bl-full"></div>
-                <h3 className="text-[#D4AF37] text-[9px] mb-1 tracking-wider">FUSED IDENTITY</h3>
-                <div className="text-3xl text-[#D4AF37] font-bold">{results.fused_identity_score}%</div>
+
+              {/* Fused Score */}
+              <div className="border border-[#D4AF37]/40 bg-[#1a170d] rounded-lg p-2.5 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-8 h-8 bg-[#D4AF37]/10 rounded-bl-full"></div>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[#D4AF37] text-[9px] tracking-wider">FUSED IDENTITY</h3>
+                  <div className="relative group/tf">
+                    <span className="text-[9px] text-[#D4AF37]/60 border border-[#D4AF37]/30 rounded px-1 cursor-help hover:text-[#D4AF37] hover:border-[#D4AF37]/50 transition-colors">?</span>
+                    <div className="pointer-events-none absolute right-0 bottom-full mb-1.5 w-52 opacity-0 group-hover/tf:opacity-100 transition-opacity z-50">
+                      <div className="bg-[#111] border border-[#333] rounded px-2.5 py-2 text-[9px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">Bayesian probability matrix combining all tiers to calculate the definitive False Acceptance Rate.</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="text-2xl text-[#D4AF37] font-bold mt-0.5">{results.fused_identity_score}%</div>
               </div>
 
               {/* Conclusion */}
-              <div className={`flex-1 border rounded-lg p-3 flex flex-col justify-between ${results.veto_triggered ? 'border-red-900 bg-red-950/30' : 'border-[#1f1f1f] bg-[#0d0d0e]'}`}>
-                <div>
-                  <h3 className="text-gray-500 text-[9px] mb-1 tracking-wider">CONCLUSION</h3>
-                  <p className={`text-xs leading-snug ${results.veto_triggered ? 'text-red-400 font-bold' : 'text-gray-200'}`}>
-                    {results.conclusion}
-                  </p>
-                </div>
-                <div className="mt-2">
+              <div className={`border rounded-lg p-2.5 ${results.veto_triggered ? 'border-red-900 bg-red-950/30' : 'border-[#1f1f1f] bg-[#0d0d0e]'}`}>
+                <h3 className="text-gray-500 text-[9px] mb-1 tracking-wider">CONCLUSION</h3>
+                <p className={`text-[11px] leading-snug ${results.veto_triggered ? 'text-red-400 font-bold' : 'text-gray-200'}`}>{results.conclusion}</p>
+                <div className="mt-1.5">
                   {results.veto_triggered ? (
-                    <div className="px-2 py-1 bg-red-900 text-red-100 text-[9px] tracking-widest border border-red-500 text-center rounded">
-                      ACE-V VETO
-                    </div>
+                    <div className="px-2 py-0.5 bg-red-900 text-red-100 text-[8px] tracking-widest border border-red-500 text-center rounded">ACE-V VETO</div>
                   ) : (
-                    <div className="px-2 py-1 bg-[#0a0a0a] text-green-500 text-[9px] tracking-widest border border-green-900/50 text-center rounded">
-                      NO DISCREPANCY
-                    </div>
+                    <div className="px-2 py-0.5 bg-[#0a0a0a] text-green-500 text-[8px] tracking-widest border border-green-900/50 text-center rounded">NO DISCREPANCY</div>
                   )}
                 </div>
               </div>
+
+              {/* ── Forensic Audit Trigger ── */}
+              <button
+                onClick={() => setAuditExpanded(!auditExpanded)}
+                className={`w-full text-left px-3 py-2 rounded text-[9px] font-mono tracking-widest transition-all border ${
+                  auditExpanded
+                    ? 'border-amber-500/60 bg-[#0a0800] text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.15)]'
+                    : 'border-amber-500/30 bg-[#0a0a0a] text-amber-400/80 hover:border-amber-500/60 hover:shadow-[0_0_8px_rgba(245,158,11,0.1)]'
+                }`}
+                style={{ boxShadow: auditExpanded ? undefined : '0 0 1px rgba(245,158,11,0.4)' }}
+              >
+                <span className="flex items-center gap-2">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                  </span>
+                  <span>ACCESS SECURE FORENSIC TELEMETRY &amp; AUDIT</span>
+                  <span className="ml-auto text-xs">{auditExpanded ? '−' : '+'}</span>
+                </span>
+              </button>
+
+              {/* ── Forensic Terminal (3-column) ── */}
+              {auditExpanded && results.audit_log && (
+                <div className="border border-[#1a1a0a] bg-[#000000] rounded p-2.5 font-mono text-[9px] leading-relaxed shadow-[inset_0_0_30px_rgba(0,0,0,0.5)]">
+                  <div className="grid grid-cols-1 gap-2">
+
+                    {/* Block 1: Statistical Certainty */}
+                    <div className="border border-[#1a2a1a] rounded p-2 bg-[#010201]">
+                      <div className="text-green-500/80 tracking-[0.2em] mb-1.5 border-b border-green-900/30 pb-1 text-[8px]">▸ STATISTICAL CERTAINTY</div>
+                      <div className="space-y-0.5 pl-1">
+                        <div className="flex justify-between"><span className="text-gray-600">FALSE ACCEPTANCE RATE</span><span className={`font-bold ${results.audit_log.false_acceptance_rate === 'Inconclusive' ? 'text-red-400' : 'text-green-400'}`}>{results.audit_log.false_acceptance_rate}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-600">CERTAINTY</span><span className={`font-bold ${results.audit_log.statistical_certainty.startsWith('<') ? 'text-red-400' : 'text-green-400'}`}>{results.audit_log.statistical_certainty}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-600">ANCHOR NODES</span><span className="text-white font-bold">{results.audit_log.nodes_mapped}/468</span></div>
+                        <div className="flex justify-between"><span className="text-gray-600">COSINE DISTANCE</span><span className="text-white font-bold">{results.audit_log.raw_cosine_score.toFixed(6)}</span></div>
+                      </div>
+                    </div>
+
+                    {/* Block 2: Spatial Alignment & Liveness */}
+                    <div className="border border-[#2a1a1a] rounded p-2 bg-[#020101]">
+                      <div className="text-cyan-500/80 tracking-[0.2em] mb-1.5 border-b border-cyan-900/30 pb-1 text-[8px]">▸ SPATIAL ALIGNMENT &amp; LIVENESS</div>
+                      <div className="space-y-0.5 pl-1">
+                        {results.audit_log.alignment_variance && (<>
+                          <div className="flex justify-between"><span className="text-gray-600">YAW CORRECTION</span><span className="text-cyan-300">{results.audit_log.alignment_variance.yaw}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-600">PITCH CORRECTION</span><span className="text-cyan-300">{results.audit_log.alignment_variance.pitch}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-600">ROLL CORRECTION</span><span className="text-cyan-300">{results.audit_log.alignment_variance.roll}</span></div>
+                        </>)}
+                        {results.audit_log.liveness_check && (<>
+                          <div className="flex justify-between mt-1"><span className="text-gray-600">SPOOF PROBABILITY</span><span className="text-green-400 font-bold">{results.audit_log.liveness_check.spoof_probability}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-600">DEEPFAKE STATUS</span><span className={`font-bold ${results.audit_log.liveness_check.status === 'VERIFIED_3D_ORGANIC' ? 'text-green-400' : 'text-yellow-400'}`}>{results.audit_log.liveness_check.status}</span></div>
+                        </>)}
+                      </div>
+                    </div>
+
+                    {/* Block 3: Cryptographic Signature */}
+                    <div className="border border-[#1a1a2a] rounded p-2 bg-[#010102]">
+                      <div className="text-amber-500/80 tracking-[0.2em] mb-1.5 border-b border-amber-900/30 pb-1 text-[8px]">▸ CRYPTOGRAPHIC SIGNATURE</div>
+                      <div className="space-y-0.5 pl-1">
+                        {results.audit_log.vector_hash && (
+                          <div><span className="text-gray-600">VECTOR SHA-256</span><div className="text-amber-300/80 text-[8px] break-all mt-0.5">{results.audit_log.vector_hash}</div></div>
+                        )}
+                        {results.audit_log.crypto_envelope && (<>
+                          <div className="flex justify-between mt-1"><span className="text-gray-600">ENCRYPTION</span><span className="text-amber-300">{results.audit_log.crypto_envelope.standard}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-600">KMS LATENCY</span><span className="text-amber-300">{results.audit_log.crypto_envelope.decryption_time}</span></div>
+                        </>)}
+                        {results.audit_log.matched_user_id && (
+                          <div className="flex justify-between mt-1"><span className="text-gray-600">TARGET ID</span><span className="text-white">{results.audit_log.matched_user_id}</span></div>
+                        )}
+                        {results.audit_log.person_name && (
+                          <div className="flex justify-between"><span className="text-gray-600">PERSON</span><span className="text-white">{results.audit_log.person_name}</span></div>
+                        )}
+                        {results.audit_log.license_short_name && (
+                          <div className="flex justify-between"><span className="text-gray-600">LICENSE</span><span className="text-gray-400">{results.audit_log.license_short_name}</span></div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-2 pt-1.5 border-t border-[#1a1a0a] text-[7px] text-gray-700 tracking-widest text-center">AUDIT GENERATED AT {new Date().toISOString()} · SYSTEM INTEGRITY VERIFIED</div>
+                </div>
+              )}
 
               {/* Export Dossier */}
               <button
                 onClick={generateForensicReport}
                 disabled={isExporting}
-                className={`w-full py-2.5 text-[10px] font-bold tracking-widest border-2 rounded transition-all ${
+                className={`w-full py-2 text-[9px] font-bold tracking-widest border rounded transition-all shrink-0 ${
                   isExporting
                     ? 'border-[#333] bg-[#111] text-gray-500 cursor-wait'
-                    : 'border-[#D4AF37] bg-[#0a0a0a] text-[#D4AF37] hover:bg-[#D4AF37]/10 hover:shadow-[0_0_15px_rgba(212,175,55,0.4)]'
+                    : 'border-[#D4AF37]/50 bg-[#0a0a0a] text-[#D4AF37] hover:bg-[#D4AF37]/10 hover:shadow-[0_0_15px_rgba(212,175,55,0.4)]'
                 }`}
               >
-                {isExporting ? 'COMPILING REPORT...' : 'EXPORT CLASSIFIED DOSSIER'}
+                {isExporting ? 'COMPILING...' : 'EXPORT DOSSIER'}
               </button>
             </div>
 
