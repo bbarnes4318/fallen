@@ -38,7 +38,7 @@ if os.getenv("K_SERVICE") or os.getenv("CLOUD_RUN_JOB"):
 else:
     DATASETS_DIR = os.path.join(PROJECT_ROOT, "datasets")
 LFW_DIR = os.path.join(DATASETS_DIR, "lfw")
-LFW_URL = "http://vis-www.cs.umass.edu/lfw/lfw.tgz"
+LFW_URL = "https://vis-www.cs.umass.edu/lfw/lfw.tgz"
 BATCH_SIZE = 100  # Number of profiles to commit to DB at once
 MAX_WORKERS = 4   # Number of concurrent ArcFace/KMS threads
 
@@ -54,6 +54,7 @@ def _ts(): return datetime.now().strftime("%H:%M:%S")
 
 def download_and_extract_lfw():
     """Fetches the 13k+ Labeled Faces in the Wild dataset if missing."""
+    import requests as req
     if not os.path.exists(DATASETS_DIR):
         os.makedirs(DATASETS_DIR)
 
@@ -62,8 +63,15 @@ def download_and_extract_lfw():
     if not os.path.exists(LFW_DIR):
         if not os.path.exists(archive_path):
             print(f"  {_C.DIM}[{_ts()}]{_C.RESET} {_C.GOLD}DOWNLOADING LFW DATASET (170MB)...{_C.RESET}")
-            urllib.request.urlretrieve(LFW_URL, archive_path)
-            print(f"  {_C.DIM}[{_ts()}]{_C.RESET} {_C.GREEN}DOWNLOAD COMPLETE.{_C.RESET}")
+            resp = req.get(LFW_URL, stream=True, timeout=120)
+            resp.raise_for_status()
+            downloaded = 0
+            with open(archive_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    print(f"\r  Downloaded {downloaded / (1024*1024):.0f} MB", end="", flush=True)
+            print(f"\n  {_C.DIM}[{_ts()}]{_C.RESET} {_C.GREEN}DOWNLOAD COMPLETE ({downloaded / (1024*1024):.0f} MB).{_C.RESET}")
         
         print(f"  {_C.DIM}[{_ts()}]{_C.RESET} {_C.GOLD}EXTRACTING ARCHIVE...{_C.RESET}")
         with tarfile.open(archive_path, "r:gz") as tar:
