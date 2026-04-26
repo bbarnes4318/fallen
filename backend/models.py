@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, LargeBinary, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, LargeBinary, DateTime, Boolean, Text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.sql import func
 import os
@@ -32,6 +32,7 @@ class IdentityProfile(Base):
     Core schema for a user's biometric identity profile.
     Utilizes Application-Level Envelope Encryption to store the 512-dimensional CNN facial embedding
     as an encrypted blob (LargeBinary), eliminating plain-text biometric exposure.
+    Includes Wikimedia Commons legal attribution metadata for crawled targets.
     """
     __tablename__ = "identity_profiles"
 
@@ -44,6 +45,19 @@ class IdentityProfile(Base):
     # Store auxiliary data for Tier 2 and Tier 3 checks
     soft_biometrics_hash = Column(String(512), nullable=True) # E.g., geospatial mole map hash
     lbp_texture_hash = Column(String(512), nullable=True)
+
+    # ── Wikimedia Legal Attribution Metadata ──
+    image_url = Column(Text, nullable=True)
+    thumbnail_url = Column(Text, nullable=True)
+    file_page_url = Column(Text, nullable=True)
+    creator = Column(Text, nullable=True)
+    license_short_name = Column(String(255), nullable=True)
+    license_url = Column(Text, nullable=True)
+    credit = Column(Text, nullable=True)
+    attribution_required = Column(Boolean, nullable=True, default=False)
+    source = Column(Text, nullable=True)
+    person_name = Column(Text, nullable=True)
+    wikidata_id = Column(String(64), nullable=True, index=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

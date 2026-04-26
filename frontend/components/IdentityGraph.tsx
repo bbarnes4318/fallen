@@ -118,8 +118,10 @@ export default function IdentityGraph() {
   useEffect(() => {
     const token = localStorage.getItem('operator_token');
     if (!token) {
-      setGraphData(DUMMY_GRAPH);
-      setLoading(false);
+      queueMicrotask(() => {
+        setGraphData(DUMMY_GRAPH);
+        setLoading(false);
+      });
       return;
     }
 
@@ -219,8 +221,28 @@ export default function IdentityGraph() {
         width={dimensions.width}
         height={dimensions.height}
         backgroundColor="#050505"
-        nodeCanvasObject={nodeCanvasObject as never}
-        nodePointerAreaPaint={(node: GraphNode, color: string, ctx: CanvasRenderingContext2D) => {
+        nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D) => {
+          const x = node.x ?? 0;
+          const y = node.y ?? 0;
+          const isGold = node.group === 2;
+          const radius = isGold ? 6 : 4;
+          if (isGold) { ctx.shadowColor = '#D4AF37'; ctx.shadowBlur = 12; }
+          ctx.beginPath();
+          ctx.arc(x, y, radius, 0, 2 * Math.PI);
+          ctx.fillStyle = isGold ? '#D4AF37' : '#666666';
+          ctx.fill();
+          ctx.strokeStyle = isGold ? '#D4AF37' : '#444444';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.shadowColor = 'transparent';
+          ctx.shadowBlur = 0;
+          ctx.font = '3px Courier New';
+          ctx.fillStyle = isGold ? '#D4AF37' : '#888888';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(node.name ?? node.id, x + radius + 3, y);
+        }}
+        nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
           const x = node.x ?? 0;
           const y = node.y ?? 0;
           ctx.beginPath();
@@ -228,12 +250,12 @@ export default function IdentityGraph() {
           ctx.fillStyle = color;
           ctx.fill();
         }}
-        linkColor={linkColor as never}
-        linkWidth={linkWidth as never}
+        linkColor={(link: any) => (link.value > 95 ? '#660000' : '#333333')}
+        linkWidth={(link: any) => (link.value > 95 ? 1.5 : 0.5)}
         linkDirectionalParticles={1}
-        linkDirectionalParticleWidth={(link: GraphLink) => link.value > 95 ? 2 : 0}
+        linkDirectionalParticleWidth={(link: any) => link.value > 95 ? 2 : 0}
         linkDirectionalParticleColor={() => '#660000'}
-        onNodeClick={handleNodeClick as never}
+        onNodeClick={(node: any) => setSelectedNode(node)}
         cooldownTicks={100}
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.3}
