@@ -5,7 +5,9 @@ import math
 import datetime
 import base64
 import struct
+import hashlib
 import os
+from pathlib import Path
 import uuid
 import jwt
 from google.cloud import storage
@@ -18,6 +20,7 @@ from pydantic import BaseModel
 from skimage.feature import local_binary_pattern
 import mediapipe as mp
 import onnxruntime as ort
+from models import SessionLocal, IdentityProfile
 
 app = FastAPI(title="Biometric Facial Verification Pipeline")
 
@@ -794,4 +797,172 @@ def verify_pipeline(request: VerificationRequest, _: dict = Depends(verify_jwt))
         scar_delta_b64=scar_delta,
         gallery_wireframe_b64=gallery_wireframe,
         probe_wireframe_b64=probe_wireframe
+    )
+
+# ---------------------------------------------------------
+# PHASE 2: 1:N VAULT SEARCH (TARGET ACQUISITION)
+# ---------------------------------------------------------
+TARGET_PROFILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "target_profiles")
+
+
+class VaultSearchRequest(BaseModel):
+    probe_url: str
+
+
+def _generate_user_id(filepath: str) -> str:
+    """Mirrors the ingestion script's deterministic user_id generation."""
+    stem = Path(filepath).stem.lower().replace(" ", "_")
+    file_hash = hashlib.sha256(Path(filepath).name.encode()).hexdigest()[:8]
+    return f"{stem}_{file_hash}"
+
+
+def _resolve_target_image(user_id: str) -> str | None:
+    """
+    Reverse-lookup: scans target_profiles/ and finds the original
+    image file whose deterministic user_id matches the vault record.
+    """
+    if not os.path.isdir(TARGET_PROFILES_DIR):
+        return None
+    for fname in os.listdir(TARGET_PROFILES_DIR):
+        fpath = os.path.join(TARGET_PROFILES_DIR, fname)
+        if os.path.isfile(fpath) and _generate_user_id(fpath) == user_id:
+            return fpath
+    return None
+
+
+@app.post("/vault/search", response_model=VerificationResponse)
+def vault_search(request: VaultSearchRequest, _: dict = Depends(verify_jwt)):
+    """
+    Phase 2: 1:N Target Acquisition.
+    Compares an uploaded probe image against every encrypted IdentityProfile
+    in the vault and returns the highest-confidence match with full
+    forensic visualization (heatmaps, scar delta, wireframe HUD).
+    """
+    # 1. Fetch & validate probe
+    probe_img = fetch_image_from_url(request.probe_url)
+
+    # 2. Liveness firewall
+    liveness = detect_liveness(probe_img)
+    if liveness < 0.95:
+        raise HTTPException(status_code=403, detail="SPOOF_DETECTED: Presentation attack suspected.")
+
+    # 3. Pre-process probe
+    probe_clahe = apply_clahe(probe_img)
+    probe_aligned, probe_landmarks = align_face_crop(probe_clahe)
+
+    if probe_landmarks is None:
+        raise HTTPException(
+            status_code=400,
+            detail="FACE_NOT_DETECTED: No face detected in probe image."
+        )
+
+    probe_embedding = extract_landmark_embedding(probe_landmarks)
+
+    # 4. Decrypt & search the entire vault
+    session = SessionLocal()
+    best_score = -1.0
+    best_user_id = None
+
+    try:
+        profiles = session.query(IdentityProfile).all()
+
+        if not profiles:
+            raise HTTPException(
+                status_code=404,
+                detail="VAULT_EMPTY: No identity profiles in the database."
+            )
+
+        for profile in profiles:
+            try:
+                gallery_vec = decrypt_embedding(profile.encrypted_facial_embedding)
+                # Skip dimension mismatch (legacy 512-D vs current 1404-D)
+                if gallery_vec.shape[0] != probe_embedding.shape[0]:
+                    continue
+                score = calculate_cosine_similarity(probe_embedding, gallery_vec)
+                if score > best_score:
+                    best_score = score
+                    best_user_id = profile.user_id
+            except Exception:
+                continue  # Skip corrupted or undecryptable records
+    finally:
+        session.close()
+
+    if best_user_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail="NO_MATCH: Could not match against any vault profile."
+        )
+
+    # 5. Tier 1 score from vault search
+    tier1_score = best_score * 100
+
+    # 6. Load matched gallery image from disk for forensic overlays
+    gallery_file = _resolve_target_image(best_user_id)
+
+    if gallery_file and os.path.isfile(gallery_file):
+        gallery_img = cv2.imread(gallery_file)
+        gallery_clahe = apply_clahe(gallery_img)
+        gallery_aligned, gallery_landmarks = align_face_crop(gallery_clahe)
+    else:
+        # Fallback: gallery image not on disk — use probe as stand-in
+        gallery_aligned = probe_aligned
+        gallery_landmarks = probe_landmarks
+
+    # 7. Tier 2: Soft Biometrics (Geometric Ratios)
+    if gallery_landmarks is not None:
+        ratios_gallery = extract_geometric_ratios(gallery_landmarks)
+        ratios_probe = extract_geometric_ratios(probe_landmarks)
+        tier2_score = calculate_cosine_similarity(ratios_gallery, ratios_probe) * 100
+    else:
+        tier2_score = 0.0
+
+    # 8. Tier 3: Micro-Topology (LBP)
+    lbp_gal = extract_lbp_histogram(gallery_aligned)
+    lbp_pro = extract_lbp_histogram(probe_aligned)
+    tier3_score = np.sum(np.minimum(lbp_gal, lbp_pro)) * 100
+
+    # 9. Fused score: 50% Structural + 25% Soft Bio + 25% Micro-Topo
+    fused_score = (tier1_score * 0.50) + (tier2_score * 0.25) + (tier3_score * 0.25)
+
+    # 10. Conclusion
+    if fused_score > 90.0:
+        conclusion = f"TARGET ACQUIRED — Strongest match: {best_user_id} (Fused: {fused_score:.1f}%)"
+    elif fused_score > 75.0:
+        conclusion = f"TARGET ACQUIRED — Probable match: {best_user_id} (Fused: {fused_score:.1f}%)"
+    else:
+        conclusion = f"WEAK MATCH — Nearest candidate: {best_user_id} (Fused: {fused_score:.1f}%)"
+
+    # 11. Forensic visualizations
+    gallery_heatmap = generate_xai_heatmap(gallery_aligned)
+    probe_heatmap = generate_xai_heatmap(probe_aligned)
+
+    _, gal_buf = cv2.imencode('.png', gallery_aligned)
+    gallery_aligned_b64 = f"data:image/png;base64,{base64.b64encode(gal_buf).decode('utf-8')}"
+    _, pro_buf = cv2.imencode('.png', probe_aligned)
+    probe_aligned_b64 = f"data:image/png;base64,{base64.b64encode(pro_buf).decode('utf-8')}"
+
+    scar_delta = generate_scar_delta_map(gallery_aligned, probe_aligned)
+
+    # Wireframe HUD
+    gallery_wireframe_b64 = ""
+    probe_wireframe_b64 = ""
+    if gallery_landmarks:
+        gallery_wireframe_b64 = generate_wireframe_hud(gallery_aligned, gallery_landmarks)
+    if probe_landmarks:
+        probe_wireframe_b64 = generate_wireframe_hud(probe_aligned, probe_landmarks)
+
+    return VerificationResponse(
+        structural_score=round(tier1_score, 2),
+        soft_biometrics_score=round(tier2_score, 2),
+        micro_topology_score=round(tier3_score, 2),
+        fused_identity_score=round(fused_score, 2),
+        conclusion=conclusion,
+        veto_triggered=False,
+        gallery_heatmap_b64=gallery_heatmap,
+        probe_heatmap_b64=probe_heatmap,
+        gallery_aligned_b64=gallery_aligned_b64,
+        probe_aligned_b64=probe_aligned_b64,
+        scar_delta_b64=scar_delta,
+        gallery_wireframe_b64=gallery_wireframe_b64,
+        probe_wireframe_b64=probe_wireframe_b64,
     )
