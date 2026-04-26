@@ -245,109 +245,146 @@ export default function Home() {
     if (!results) return;
     setIsExporting(true);
 
+    const audit = results.audit_log;
+    const ts = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const docId = crypto.randomUUID().slice(0, 8).toUpperCase();
+
     try {
-      // Build hidden dossier template
+      // ── Strict A4 hidden print template (794×1123 = exact A4 aspect ratio) ──
       const container = document.createElement('div');
-      container.style.cssText = 'position:absolute;left:-9999px;top:0;width:800px;padding:0;margin:0;';
+      container.style.cssText = 'position:absolute;left:-9999px;top:-9999px;width:794px;height:1123px;overflow:hidden;margin:0;padding:0;';
       container.innerHTML = `
-        <div style="background:#0A0A0B;color:#E0E0E0;font-family:'Courier New',monospace;padding:48px 40px;width:800px;box-sizing:border-box;">
-          <!-- Header -->
-          <div style="border-bottom:2px solid #D4AF37;padding-bottom:16px;margin-bottom:24px;">
-            <div style="font-size:11px;color:#D4AF37;letter-spacing:6px;margin-bottom:4px;">▓▓ CLASSIFIED ▓▓</div>
-            <div style="font-size:22px;font-weight:bold;color:white;letter-spacing:4px;">SCARGODS <span style="color:#D4AF37;">BIOMETRIC INTELLIGENCE</span></div>
-            <div style="font-size:10px;color:#666;margin-top:6px;letter-spacing:3px;">FORENSIC VERIFICATION DOSSIER</div>
+        <div style="background:#000;color:#ccc;font-family:'Courier New',monospace;width:794px;height:1123px;box-sizing:border-box;padding:28px 32px 20px;display:flex;flex-direction:column;overflow:hidden;">
+
+          <!-- HEADER -->
+          <div style="border-bottom:2px solid #D4AF37;padding-bottom:10px;margin-bottom:12px;flex-shrink:0;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-end;">
+              <div>
+                <div style="font-size:8px;color:#D4AF37;letter-spacing:5px;margin-bottom:2px;">▓▓ CLASSIFIED ▓▓</div>
+                <div style="font-size:16px;font-weight:bold;color:white;letter-spacing:3px;">AURUMSHIELD <span style="color:#D4AF37;">BIOMETRIC DOSSIER</span></div>
+              </div>
+              <div style="text-align:right;">
+                <div style="font-size:7px;color:#555;letter-spacing:2px;">GENERATED ${ts} UTC</div>
+                <div style="font-size:7px;color:#555;letter-spacing:2px;">DOC ID: ${docId} · LEVEL 3 RESTRICTED</div>
+              </div>
+            </div>
           </div>
 
-          <!-- Metadata -->
-          <div style="display:flex;justify-content:space-between;margin-bottom:24px;border:1px solid #222;padding:12px 16px;background:#0d0d0e;">
+          <!-- VISUAL EVIDENCE -->
+          <div style="display:flex;gap:8px;margin-bottom:10px;flex-shrink:0;">
+            <div style="flex:1;border:1px solid #333;padding:4px;background:#0a0a0a;text-align:center;">
+              <img src="${results.probe_aligned_b64}" style="width:100%;height:180px;object-fit:contain;display:block;" />
+              <div style="font-size:7px;color:#666;letter-spacing:3px;margin-top:4px;">PROBE (UNKNOWN TARGET)</div>
+            </div>
+            <div style="flex:1;border:1px solid #333;padding:4px;background:#0a0a0a;text-align:center;">
+              <img src="${results.gallery_aligned_b64}" style="width:100%;height:180px;object-fit:contain;display:block;" />
+              <div style="font-size:7px;color:#666;letter-spacing:3px;margin-top:4px;">GALLERY (VAULT MATCH)</div>
+            </div>
+          </div>
+
+          <!-- 4-COLUMN METRIC GRID -->
+          <div style="display:flex;gap:0;border:1px solid #333;margin-bottom:10px;flex-shrink:0;">
+            <div style="flex:1;padding:8px 10px;border-right:1px solid #222;background:#0a0a0a;">
+              <div style="font-size:7px;color:#666;letter-spacing:2px;">TIER 1: STRUCTURAL</div>
+              <div style="font-size:22px;color:white;font-weight:bold;margin:2px 0;">${results.structural_score}%</div>
+              <div style="font-size:7px;color:#555;line-height:1.3;">1404-D cranial geometry cosine similarity.</div>
+            </div>
+            <div style="flex:1;padding:8px 10px;border-right:1px solid #222;background:#0a0a0a;">
+              <div style="font-size:7px;color:#666;letter-spacing:2px;">TIER 2: SOFT BIO</div>
+              <div style="font-size:22px;color:white;font-weight:bold;margin:2px 0;">${results.soft_biometrics_score}%</div>
+              <div style="font-size:7px;color:#555;line-height:1.3;">Melanin & ocular hue pixel-density overlap.</div>
+            </div>
+            <div style="flex:1;padding:8px 10px;border-right:1px solid #222;background:#0a0a0a;">
+              <div style="font-size:7px;color:#666;letter-spacing:2px;">TIER 3: MICRO-TOPO</div>
+              <div style="font-size:22px;color:white;font-weight:bold;margin:2px 0;">${results.micro_topology_score}%</div>
+              <div style="font-size:7px;color:#555;line-height:1.3;">Epidermal deviation & scar alignment.</div>
+            </div>
+            <div style="flex:1;padding:8px 10px;background:#1a170d;">
+              <div style="font-size:7px;color:#D4AF37;letter-spacing:2px;">FUSED IDENTITY</div>
+              <div style="font-size:22px;color:#D4AF37;font-weight:bold;margin:2px 0;">${results.fused_identity_score}%</div>
+              <div style="font-size:7px;color:#997a1d;line-height:1.3;">Bayesian false-acceptance probability.</div>
+            </div>
+          </div>
+
+          <!-- CONCLUSION -->
+          <div style="border:1px solid ${results.veto_triggered ? '#7f1d1d' : '#333'};padding:8px 12px;background:${results.veto_triggered ? '#1a0505' : '#0a0a0a'};margin-bottom:10px;flex-shrink:0;display:flex;justify-content:space-between;align-items:center;">
             <div>
-              <div style="font-size:9px;color:#666;letter-spacing:2px;">REPORT GENERATED</div>
-              <div style="font-size:12px;color:white;margin-top:2px;">${new Date().toISOString().replace('T', ' ').slice(0, 19)} UTC</div>
+              <div style="font-size:7px;color:#666;letter-spacing:2px;margin-bottom:2px;">CONCLUSION</div>
+              <div style="font-size:11px;color:${results.veto_triggered ? '#f87171' : '#e5e5e5'};font-weight:bold;">${results.conclusion}</div>
             </div>
-            <div style="text-align:right;">
-              <div style="font-size:9px;color:#666;letter-spacing:2px;">CLASSIFICATION</div>
-              <div style="font-size:12px;color:#D4AF37;margin-top:2px;font-weight:bold;">LEVEL 3 — RESTRICTED</div>
-            </div>
+            <div style="padding:3px 10px;background:${results.veto_triggered ? '#7f1d1d' : '#0a0a0a'};color:${results.veto_triggered ? '#fee2e2' : '#22c55e'};font-size:8px;letter-spacing:2px;border:1px solid ${results.veto_triggered ? '#ef4444' : 'rgba(34,197,94,0.3)'};">${results.veto_triggered ? 'ACE-V VETO' : 'NO DISCREPANCY'}</div>
           </div>
 
-          <!-- Subject Images -->
-          <div style="display:flex;gap:16px;margin-bottom:24px;">
-            <div style="flex:1;border:1px solid #333;padding:8px;background:#111;text-align:center;">
-              <img src="${results.gallery_aligned_b64}" style="width:100%;height:auto;display:block;" />
-              <div style="font-size:9px;color:#666;letter-spacing:3px;margin-top:8px;">GALLERY (REFERENCE)</div>
-            </div>
-            <div style="flex:1;border:1px solid #333;padding:8px;background:#111;text-align:center;">
-              <img src="${results.probe_aligned_b64}" style="width:100%;height:auto;display:block;" />
-              <div style="font-size:9px;color:#666;letter-spacing:3px;margin-top:8px;">PROBE (TARGET)</div>
-            </div>
-          </div>
+          <!-- CRYPTOGRAPHIC AUDIT LOG (Terminal Block) -->
+          <div style="flex:1;border:1px solid #1a1a0a;background:#000;padding:10px 14px;font-size:8px;line-height:1.6;overflow:hidden;">
+            <div style="color:#D4AF37;font-size:8px;letter-spacing:3px;margin-bottom:8px;border-bottom:1px solid #1a1a0a;padding-bottom:4px;font-weight:bold;">▸ CRYPTOGRAPHIC AUDIT LOG</div>
 
-          <!-- Scoring Grid -->
-          <div style="border:1px solid #333;margin-bottom:16px;">
-            <div style="display:flex;border-bottom:1px solid #222;">
-              <div style="flex:1;padding:14px 16px;border-right:1px solid #222;">
-                <div style="font-size:9px;color:#666;letter-spacing:2px;">TIER 1: STRUCTURAL</div>
-                <div style="font-size:28px;color:white;font-weight:bold;margin-top:4px;">${results.structural_score}%</div>
+            <div style="display:flex;gap:16px;">
+              <!-- Col 1: Statistical Certainty -->
+              <div style="flex:1;">
+                <div style="color:#22c55e;font-size:7px;letter-spacing:2px;margin-bottom:4px;">STATISTICAL CERTAINTY</div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">FALSE ACCEPT RATE</span><span style="color:#4ade80;font-weight:bold;">${audit?.false_acceptance_rate || 'N/A'}</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">CERTAINTY</span><span style="color:#4ade80;font-weight:bold;">${audit?.statistical_certainty || 'N/A'}</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">NODES MAPPED</span><span style="color:#fff;font-weight:bold;">${audit?.nodes_mapped || 468}/468</span></div>
+                <div style="display:flex;justify-content:space-between;"><span style="color:#555;">COSINE DIST</span><span style="color:#fff;font-weight:bold;">${audit?.raw_cosine_score?.toFixed(6) || 'N/A'}</span></div>
               </div>
-              <div style="flex:1;padding:14px 16px;border-right:1px solid #222;">
-                <div style="font-size:9px;color:#666;letter-spacing:2px;">TIER 2: SOFT BIO</div>
-                <div style="font-size:28px;color:white;font-weight:bold;margin-top:4px;">${results.soft_biometrics_score}%</div>
+
+              <!-- Col 2: Spatial Alignment & Liveness -->
+              <div style="flex:1;border-left:1px solid #1a1a0a;padding-left:16px;">
+                <div style="color:#06b6d4;font-size:7px;letter-spacing:2px;margin-bottom:4px;">SPATIAL ALIGNMENT</div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">YAW</span><span style="color:#67e8f9;">${audit?.alignment_variance?.yaw || 'N/A'}</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">PITCH</span><span style="color:#67e8f9;">${audit?.alignment_variance?.pitch || 'N/A'}</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">ROLL</span><span style="color:#67e8f9;">${audit?.alignment_variance?.roll || 'N/A'}</span></div>
+                <div style="color:#06b6d4;font-size:7px;letter-spacing:2px;margin:4px 0 2px;">LIVENESS</div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">SPOOF PROB</span><span style="color:#4ade80;font-weight:bold;">${audit?.liveness_check?.spoof_probability || 'N/A'}</span></div>
+                <div style="display:flex;justify-content:space-between;"><span style="color:#555;">STATUS</span><span style="color:#4ade80;font-weight:bold;">${audit?.liveness_check?.status || 'N/A'}</span></div>
               </div>
-              <div style="flex:1;padding:14px 16px;">
-                <div style="font-size:9px;color:#666;letter-spacing:2px;">TIER 3: MICRO-TOPO</div>
-                <div style="font-size:28px;color:white;font-weight:bold;margin-top:4px;">${results.micro_topology_score}%</div>
+
+              <!-- Col 3: Cryptography & Source -->
+              <div style="flex:1;border-left:1px solid #1a1a0a;padding-left:16px;">
+                <div style="color:#f59e0b;font-size:7px;letter-spacing:2px;margin-bottom:4px;">CRYPTOGRAPHY</div>
+                <div style="margin-bottom:2px;"><span style="color:#555;">VECTOR SHA-256</span></div>
+                <div style="color:#fbbf24;font-size:6px;word-break:break-all;margin-bottom:3px;">${audit?.vector_hash || 'N/A'}</div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">ENCRYPTION</span><span style="color:#fbbf24;">${audit?.crypto_envelope?.standard || 'N/A'}</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">KMS LATENCY</span><span style="color:#fbbf24;">${audit?.crypto_envelope?.decryption_time || 'N/A'}</span></div>
+                ${audit?.matched_user_id ? `<div style="color:#f59e0b;font-size:7px;letter-spacing:2px;margin:4px 0 2px;">SOURCE</div><div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">TARGET</span><span style="color:#fff;">${audit.matched_user_id}</span></div>` : ''}
+                ${audit?.person_name ? `<div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">PERSON</span><span style="color:#fff;">${audit.person_name}</span></div>` : ''}
+                ${audit?.license_short_name ? `<div style="display:flex;justify-content:space-between;"><span style="color:#555;">LICENSE</span><span style="color:#888;">${audit.license_short_name}</span></div>` : ''}
               </div>
             </div>
           </div>
 
-          <!-- Fused Score -->
-          <div style="border:2px solid #D4AF37;padding:20px 24px;margin-bottom:16px;background:#1a170d;position:relative;">
-            <div style="font-size:9px;color:#D4AF37;letter-spacing:3px;">FUSED IDENTITY SCORE</div>
-            <div style="font-size:48px;color:#D4AF37;font-weight:bold;margin-top:4px;">${results.fused_identity_score}%</div>
-          </div>
-
-          <!-- Conclusion -->
-          <div style="border:1px solid ${results.veto_triggered ? '#7f1d1d' : '#333'};padding:16px 20px;background:${results.veto_triggered ? 'rgba(127,29,29,0.15)' : '#0d0d0e'};margin-bottom:24px;">
-            <div style="font-size:9px;color:#666;letter-spacing:2px;margin-bottom:6px;">CONCLUSION</div>
-            <div style="font-size:14px;color:${results.veto_triggered ? '#f87171' : '#e5e5e5'};font-weight:bold;">${results.conclusion}</div>
-            ${results.veto_triggered ? '<div style="margin-top:10px;display:inline-block;padding:4px 12px;background:#7f1d1d;color:#fee2e2;font-size:10px;letter-spacing:3px;border:1px solid #ef4444;">ACE-V VETO TRIGGERED</div>' : '<div style="margin-top:10px;display:inline-block;padding:4px 12px;background:#0a0a0a;color:#22c55e;font-size:10px;letter-spacing:3px;border:1px solid rgba(34,197,94,0.3);">NO DISCREPANCY DETECTED</div>'}
-          </div>
-
-          <!-- Footer -->
-          <div style="border-top:1px solid #222;padding-top:12px;display:flex;justify-content:space-between;">
-            <div style="font-size:8px;color:#444;letter-spacing:2px;">SCARGODS BIOMETRIC INTELLIGENCE DIVISION</div>
-            <div style="font-size:8px;color:#444;letter-spacing:2px;">DOCUMENT ID: ${crypto.randomUUID().slice(0, 8).toUpperCase()}</div>
+          <!-- FOOTER -->
+          <div style="margin-top:8px;padding-top:6px;border-top:1px solid #1a1a0a;display:flex;justify-content:space-between;flex-shrink:0;">
+            <div style="font-size:6px;color:#333;letter-spacing:2px;">AURUMSHIELD BIOMETRIC INTELLIGENCE · CLASSIFIED</div>
+            <div style="font-size:6px;color:#333;letter-spacing:2px;">DOC ${docId} · ${ts}</div>
           </div>
         </div>
       `;
 
       document.body.appendChild(container);
-
-      // Wait for images to settle in the DOM
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await new Promise(resolve => setTimeout(resolve, 400));
 
       const canvas = await html2canvas(container.firstElementChild as HTMLElement, {
-        backgroundColor: '#0A0A0B',
+        backgroundColor: '#000000',
         scale: 2,
         useCORS: true,
         logging: false,
+        width: 794,
+        height: 1123,
       });
 
       document.body.removeChild(container);
 
-      // Generate PDF sized to the rendered canvas
+      // ── Strict A4 PDF sizing ──
       const imgData = canvas.toDataURL('image/png');
-      const pdfWidth = canvas.width;
-      const pdfHeight = canvas.height;
-      const pdf = new jsPDF({
-        orientation: pdfHeight > pdfWidth ? 'portrait' : 'landscape',
-        unit: 'px',
-        format: [pdfWidth, pdfHeight],
-      });
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
       pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
 
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      pdf.save(`SCARGODS_FORENSIC_DOSSIER_${timestamp}.pdf`);
+      const fileTs = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      pdf.save(`AURUMSHIELD_DOSSIER_${fileTs}.pdf`);
     } catch (err) {
       console.error('PDF export failed:', err);
     } finally {
