@@ -5,9 +5,12 @@ import React, { useRef, useState, useEffect } from 'react';
 interface SymmetryMergeProps {
   galleryImageSrc: string;
   probeImageSrc: string;
+  deltaImageSrc?: string;
+  galleryWireframeSrc?: string;
+  probeWireframeSrc?: string;
 }
 
-export default function SymmetryMerge({ galleryImageSrc, probeImageSrc }: SymmetryMergeProps) {
+export default function SymmetryMerge({ galleryImageSrc, probeImageSrc, deltaImageSrc, galleryWireframeSrc, probeWireframeSrc }: SymmetryMergeProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -15,14 +18,19 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc }: Symmet
   const [sliderPos, setSliderPos] = useState(50);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [mode, setMode] = useState<'split' | 'pan'>('split');
+  const [mode, setMode] = useState<'split' | 'pan' | 'delta' | 'wireframe'>('split');
   
   const [isDragging, setIsDragging] = useState(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
   const [loadedSources, setLoadedSources] = useState({ gallery: '', probe: '' });
+  const [deltaLoaded, setDeltaLoaded] = useState(false);
+  const [wireframeLoaded, setWireframeLoaded] = useState(false);
   
   const galleryImgRef = useRef<HTMLImageElement | null>(null);
   const probeImgRef = useRef<HTMLImageElement | null>(null);
+  const deltaImgRef = useRef<HTMLImageElement | null>(null);
+  const gWireRef = useRef<HTMLImageElement | null>(null);
+  const pWireRef = useRef<HTMLImageElement | null>(null);
 
   const imagesLoaded = loadedSources.gallery === galleryImageSrc && loadedSources.probe === probeImageSrc;
 
@@ -54,12 +62,51 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc }: Symmet
     pImg.onload = onLoad;
     probeImgRef.current = pImg;
 
+    // Load delta image if available
+    if (deltaImageSrc) {
+      const dImg = new Image();
+      dImg.crossOrigin = 'anonymous';
+      dImg.src = deltaImageSrc;
+      dImg.onload = () => { if (!cancelled) setDeltaLoaded(true); };
+      deltaImgRef.current = dImg;
+    } else {
+      deltaImgRef.current = null;
+      queueMicrotask(() => setDeltaLoaded(false));
+    }
+
+    // Load wireframe images if available
+    if (galleryWireframeSrc && probeWireframeSrc) {
+      let wireCount = 0;
+      const onWireLoad = () => {
+        wireCount++;
+        if (wireCount === 2 && !cancelled) setWireframeLoaded(true);
+      };
+
+      const gwImg = new Image();
+      gwImg.crossOrigin = 'anonymous';
+      gwImg.src = galleryWireframeSrc;
+      gwImg.onload = onWireLoad;
+      gWireRef.current = gwImg;
+
+      const pwImg = new Image();
+      pwImg.crossOrigin = 'anonymous';
+      pwImg.src = probeWireframeSrc;
+      pwImg.onload = onWireLoad;
+      pWireRef.current = pwImg;
+    } else {
+      gWireRef.current = null;
+      pWireRef.current = null;
+      queueMicrotask(() => setWireframeLoaded(false));
+    }
+
     return () => { cancelled = true; };
-  }, [galleryImageSrc, probeImageSrc]);
+  }, [galleryImageSrc, probeImageSrc, deltaImageSrc, galleryWireframeSrc, probeWireframeSrc]);
 
   // 2. Draw Canvas (Hardware Accelerated)
   useEffect(() => {
     if (!imagesLoaded || !canvasRef.current || !galleryImgRef.current || !probeImgRef.current || !containerRef.current) return;
+    if (mode === 'delta' && (!deltaImgRef.current || !deltaLoaded)) return;
+    if (mode === 'wireframe' && (!gWireRef.current || !pWireRef.current || !wireframeLoaded)) return;
     
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -92,30 +139,64 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc }: Symmet
     ctx.translate(offsetX, offsetY);
     ctx.scale(currentScale, currentScale);
 
-    const splitX = (sliderPos / 100) * imgWidth;
+    if (mode === 'delta' && deltaImgRef.current) {
+      // ── DELTA MODE: Draw the scar map overlay, perfectly scaled ──
+      ctx.drawImage(deltaImgRef.current, 0, 0, imgWidth, imgHeight);
 
-    // Draw Gallery (Left)
-    if (splitX > 0) {
-      ctx.drawImage(galleryImgRef.current, 0, 0, splitX, imgHeight, 0, 0, splitX, imgHeight);
+      // Crimson vignette border
+      ctx.strokeStyle = 'rgba(180, 0, 30, 0.5)';
+      ctx.lineWidth = 3 / currentScale;
+      ctx.strokeRect(0, 0, imgWidth, imgHeight);
+    } else if (mode === 'wireframe' && gWireRef.current && pWireRef.current) {
+      // ── WIREFRAME MODE: Split-slider over gold mesh HUD images ──
+      const splitX = (sliderPos / 100) * imgWidth;
+
+      // Draw Gallery wireframe (Left)
+      if (splitX > 0) {
+        ctx.drawImage(gWireRef.current, 0, 0, splitX, imgHeight, 0, 0, splitX, imgHeight);
+      }
+
+      // Draw Probe wireframe (Right)
+      if (splitX < imgWidth) {
+        ctx.drawImage(pWireRef.current, splitX, 0, imgWidth - splitX, imgHeight, splitX, 0, imgWidth - splitX, imgHeight);
+      }
+
+      // Draw Gold Guideline
+      ctx.beginPath();
+      ctx.moveTo(splitX, 0);
+      ctx.lineTo(splitX, imgHeight);
+      ctx.strokeStyle = '#D4AF37';
+      ctx.lineWidth = 2 / currentScale;
+      ctx.shadowBlur = 10 / currentScale;
+      ctx.shadowColor = 'rgba(212, 175, 55, 0.8)';
+      ctx.stroke();
+    } else {
+      // ── SPLIT / PAN MODE ──
+      const splitX = (sliderPos / 100) * imgWidth;
+
+      // Draw Gallery (Left)
+      if (splitX > 0) {
+        ctx.drawImage(galleryImgRef.current, 0, 0, splitX, imgHeight, 0, 0, splitX, imgHeight);
+      }
+
+      // Draw Probe (Right)
+      if (splitX < imgWidth) {
+        ctx.drawImage(probeImgRef.current, splitX, 0, imgWidth - splitX, imgHeight, splitX, 0, imgWidth - splitX, imgHeight);
+      }
+
+      // Draw Gold Guideline
+      ctx.beginPath();
+      ctx.moveTo(splitX, 0);
+      ctx.lineTo(splitX, imgHeight);
+      ctx.strokeStyle = '#D4AF37';
+      ctx.lineWidth = 2 / currentScale;
+      ctx.shadowBlur = 10 / currentScale;
+      ctx.shadowColor = 'rgba(212, 175, 55, 0.8)';
+      ctx.stroke();
     }
-
-    // Draw Probe (Right)
-    if (splitX < imgWidth) {
-      ctx.drawImage(probeImgRef.current, splitX, 0, imgWidth - splitX, imgHeight, splitX, 0, imgWidth - splitX, imgHeight);
-    }
-
-    // Draw Gold Guideline
-    ctx.beginPath();
-    ctx.moveTo(splitX, 0);
-    ctx.lineTo(splitX, imgHeight);
-    ctx.strokeStyle = '#D4AF37';
-    ctx.lineWidth = 2 / currentScale; // Keep line width constant despite zoom
-    ctx.shadowBlur = 10 / currentScale;
-    ctx.shadowColor = 'rgba(212, 175, 55, 0.8)';
-    ctx.stroke();
     
     ctx.restore();
-  }, [sliderPos, imagesLoaded, zoom, pan]);
+  }, [sliderPos, imagesLoaded, zoom, pan, mode, deltaLoaded, wireframeLoaded]);
 
   // 3. Interaction Handlers
   const handlePointerDown = (clientX: number, clientY: number) => {
@@ -126,11 +207,11 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc }: Symmet
   const handlePointerMove = (clientX: number, clientY: number) => {
     if (!isDragging || !containerRef.current) return;
     
-    if (mode === 'split') {
+    if (mode === 'split' || mode === 'wireframe') {
       const rect = containerRef.current.getBoundingClientRect();
       const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
       setSliderPos((x / rect.width) * 100);
-    } else if (mode === 'pan') {
+    } else if (mode === 'pan' || mode === 'delta') {
       const dx = clientX - lastMousePos.current.x;
       const dy = clientY - lastMousePos.current.y;
       setPan(prev => ({ x: prev.x + dx, y: prev.y + dy }));
@@ -169,6 +250,30 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc }: Symmet
             >
               PAN
             </button>
+            {deltaImageSrc && (
+              <button 
+                onClick={() => setMode('delta')} 
+                className={`px-3 py-1 transition-colors border-l ${
+                  mode === 'delta' 
+                    ? 'bg-[#1a0005] text-[#ff2040] font-bold border-[#5a0015] shadow-[inset_0_0_12px_rgba(180,0,30,0.3)]' 
+                    : 'text-gray-400 hover:text-red-300 border-[#333]'
+                }`}
+              >
+                DELTA
+              </button>
+            )}
+            {galleryWireframeSrc && probeWireframeSrc && (
+              <button 
+                onClick={() => setMode('wireframe')} 
+                className={`px-3 py-1 transition-colors border-l ${
+                  mode === 'wireframe' 
+                    ? 'bg-[#D4AF37] text-black font-bold border-[#D4AF37]' 
+                    : 'text-gray-400 hover:text-[#D4AF37] border-[#333]'
+                }`}
+              >
+                MESH
+              </button>
+            )}
           </div>
 
           <div className="flex border border-[#333] rounded bg-[#111] overflow-hidden text-gray-400">
@@ -187,7 +292,7 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc }: Symmet
       {/* ── Canvas Viewport ── */}
       <div 
         ref={containerRef}
-        className={`relative flex-1 min-h-0 overflow-hidden rounded border border-[#333] bg-[#050505] ${mode === 'split' ? 'cursor-col-resize' : 'cursor-move'}`}
+        className={`relative flex-1 min-h-0 overflow-hidden rounded border ${mode === 'delta' ? 'border-red-900/60' : mode === 'wireframe' ? 'border-[#D4AF37]/30' : 'border-[#333]'} bg-[#050505] ${mode === 'split' || mode === 'wireframe' ? 'cursor-col-resize' : 'cursor-move'}`}
         onMouseDown={(e) => handlePointerDown(e.clientX, e.clientY)}
         onMouseUp={() => setIsDragging(false)}
         onMouseLeave={() => setIsDragging(false)}
@@ -211,6 +316,8 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc }: Symmet
       <div className="flex w-full justify-between pt-1 text-[9px] font-mono text-gray-600 tracking-widest shrink-0">
         <span>GALLERY (A)</span>
         {mode === 'pan' && <span className="text-[#D4AF37]">DRAG TO PAN IMAGE</span>}
+        {mode === 'delta' && <span className="text-red-500">BIOLOGICAL TOPOGRAPHY DELTA</span>}
+        {mode === 'wireframe' && <span className="text-[#D4AF37]">3DMM WIREFRAME HUD</span>}
         <span>PROBE (B)</span>
       </div>
     </div>

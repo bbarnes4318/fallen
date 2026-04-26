@@ -30,6 +30,9 @@ export default function Home() {
     probe_heatmap_b64: string;
     gallery_aligned_b64: string;
     probe_aligned_b64: string;
+    scar_delta_b64: string;
+    gallery_wireframe_b64: string;
+    probe_wireframe_b64: string;
   }
 
   const [results, setResults] = useState<VerificationResult | null>(null);
@@ -359,7 +362,10 @@ export default function Home() {
               <div className="flex-1 min-h-0 bg-[#0d0d0e] border border-[#1f1f1f] rounded-lg p-2">
                 <SymmetryMerge 
                   galleryImageSrc={isXrayMode ? results.gallery_heatmap_b64 : results.gallery_aligned_b64} 
-                  probeImageSrc={isXrayMode ? results.probe_heatmap_b64 : results.probe_aligned_b64} 
+                  probeImageSrc={isXrayMode ? results.probe_heatmap_b64 : results.probe_aligned_b64}
+                  deltaImageSrc={results.scar_delta_b64}
+                  galleryWireframeSrc={results.gallery_wireframe_b64}
+                  probeWireframeSrc={results.probe_wireframe_b64}
                 />
               </div>
             </div>

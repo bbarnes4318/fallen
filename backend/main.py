@@ -202,6 +202,9 @@ class VerificationResponse(BaseModel):
     probe_heatmap_b64: str
     gallery_aligned_b64: str
     probe_aligned_b64: str
+    scar_delta_b64: str
+    gallery_wireframe_b64: str
+    probe_wireframe_b64: str
 
 # ---------------------------------------------------------
 # CORE PREPROCESSING LOGIC
@@ -532,6 +535,117 @@ def generate_xai_heatmap(image: np.ndarray) -> str:
     b64_str = base64.b64encode(buffer).decode('utf-8')
     return f"data:image/png;base64,{b64_str}"
 
+def generate_scar_delta_map(img_gallery: np.ndarray, img_probe: np.ndarray) -> str:
+    """
+    Biological Topography Delta — Scar Mapper.
+    Isolates persistent micro-topology (scars, pores, creases) that appears
+    consistently across both the gallery and probe aligned face crops.
+
+    ALGORITHM:
+    1. Convert both images to grayscale.
+    2. Run Canny edge detection on both to extract edge maps.
+    3. Compute absdiff on grayscales and threshold at a LOW value —
+       pixels with small intensity difference represent *persistent* structure.
+    4. bitwise_and(gallery_edges, probe_edges, persistent_mask) isolates
+       topology that exists in BOTH images and didn't shift between captures.
+    5. Dilate slightly for UI readability.
+    6. Overlay in neon crimson (BGR: 30, 0, 180) on a darkened, desaturated
+       version of the gallery image.
+    7. Base64 encode and return as a data URI.
+    """
+    # 1. Grayscale conversion
+    gray_gallery = cv2.cvtColor(img_gallery, cv2.COLOR_BGR2GRAY)
+    gray_probe = cv2.cvtColor(img_probe, cv2.COLOR_BGR2GRAY)
+
+    # 2. Canny edge detection (tuned for facial micro-features)
+    edges_gallery = cv2.Canny(gray_gallery, 30, 100)
+    edges_probe = cv2.Canny(gray_probe, 30, 100)
+
+    # 3. Absolute difference → persistent structure mask
+    #    Low diff = structure that didn't move between captures
+    diff = cv2.absdiff(gray_gallery, gray_probe)
+    _, persistent_mask = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY_INV)
+
+    # 4. Intersection: edges present in BOTH images AND persistent
+    common_edges = cv2.bitwise_and(edges_gallery, edges_probe)
+    true_scars = cv2.bitwise_and(common_edges, persistent_mask)
+
+    # 5. Dilate for UI visibility (2×2 kernel, 1 iteration)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+    true_scars = cv2.dilate(true_scars, kernel, iterations=1)
+
+    # 6. Build overlay canvas: darkened, desaturated gallery
+    hsv = cv2.cvtColor(img_gallery, cv2.COLOR_BGR2HSV)
+    hsv[:, :, 1] = (hsv[:, :, 1] * 0.3).astype(np.uint8)   # Desaturate
+    hsv[:, :, 2] = (hsv[:, :, 2] * 0.35).astype(np.uint8)   # Darken
+    canvas = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+    # Paint neon crimson (BGR: 30, 0, 180) where scars are detected
+    canvas[true_scars > 0] = (30, 0, 180)
+
+    # 7. Encode to base64 data URI
+    _, buffer = cv2.imencode('.png', canvas)
+    b64_str = base64.b64encode(buffer).decode('utf-8')
+    return f"data:image/png;base64,{b64_str}"
+
+def generate_wireframe_hud(image: np.ndarray, landmarks) -> str:
+    """
+    3DMM Wireframe HUD — Geometric Mesh Visualizer.
+    Renders the full FACEMESH_TESSELATION (468-point mesh) in 24K Gold
+    over a darkened, desaturated copy of the input image to prove
+    geometric extraction to the operator.
+
+    STYLING:
+    - Mesh color: 24K Gold → BGR (55, 175, 212)
+    - Line thickness: 1px hairline
+    - Landmark dots: suppressed (circle_radius=0 removes them entirely)
+    - Background: 30% saturation, 35% brightness (matches Scar Delta canvas)
+
+    Returns a base64-encoded PNG data URI.
+    """
+    mp_drawing = mp.solutions.drawing_utils
+    mp_face_mesh_module = mp.solutions.face_mesh
+
+    # Build darkened, desaturated canvas
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    hsv[:, :, 1] = (hsv[:, :, 1] * 0.3).astype(np.uint8)   # Desaturate
+    hsv[:, :, 2] = (hsv[:, :, 2] * 0.35).astype(np.uint8)   # Darken
+    canvas = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+    # Reconstruct a NormalizedLandmarkList so draw_landmarks can consume it
+    from mediapipe.framework.formats.landmark_pb2 import NormalizedLandmarkList, NormalizedLandmark
+    landmark_list = NormalizedLandmarkList()
+    for lm in landmarks:
+        landmark_list.landmark.append(
+            NormalizedLandmark(x=lm.x, y=lm.y, z=lm.z)
+        )
+
+    # 24K Gold connection style — BGR (55, 175, 212), 1px, no circles
+    gold_spec = mp_drawing.DrawingSpec(
+        color=(55, 175, 212),
+        thickness=1,
+        circle_radius=0
+    )
+    # Suppress landmark dots entirely
+    dot_spec = mp_drawing.DrawingSpec(
+        color=(55, 175, 212),
+        thickness=0,
+        circle_radius=0
+    )
+
+    mp_drawing.draw_landmarks(
+        image=canvas,
+        landmark_list=landmark_list,
+        connections=mp_face_mesh_module.FACEMESH_TESSELATION,
+        landmark_drawing_spec=dot_spec,
+        connection_drawing_spec=gold_spec
+    )
+
+    # Encode to base64 data URI
+    _, buffer = cv2.imencode('.png', canvas)
+    b64_str = base64.b64encode(buffer).decode('utf-8')
+    return f"data:image/png;base64,{b64_str}"
+
 class UploadUrlsRequest(BaseModel):
     gallery_content_type: str
     probe_content_type: str
@@ -659,6 +773,13 @@ def verify_pipeline(request: VerificationRequest, _: dict = Depends(verify_jwt))
     _, pro_buf = cv2.imencode('.png', probe_aligned)
     probe_aligned_b64 = f"data:image/png;base64,{base64.b64encode(pro_buf).decode('utf-8')}"
 
+    # Biological Topography Delta (Scar Mapper)
+    scar_delta = generate_scar_delta_map(gallery_aligned, probe_aligned)
+
+    # 3DMM Wireframe HUD (Geometric Mesh Overlay)
+    gallery_wireframe = generate_wireframe_hud(gallery_aligned, gallery_landmarks)
+    probe_wireframe = generate_wireframe_hud(probe_aligned, probe_landmarks)
+
     return VerificationResponse(
         structural_score=round(tier1_score, 2),
         soft_biometrics_score=round(tier2_score, 2),
@@ -669,5 +790,8 @@ def verify_pipeline(request: VerificationRequest, _: dict = Depends(verify_jwt))
         gallery_heatmap_b64=gallery_heatmap,
         probe_heatmap_b64=probe_heatmap,
         gallery_aligned_b64=gallery_aligned_b64,
-        probe_aligned_b64=probe_aligned_b64
+        probe_aligned_b64=probe_aligned_b64,
+        scar_delta_b64=scar_delta,
+        gallery_wireframe_b64=gallery_wireframe,
+        probe_wireframe_b64=probe_wireframe
     )
