@@ -158,7 +158,7 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc, deltaIma
     } else {
       const dx = cx - lastMouse.current.x;
       const dy = cy - lastMouse.current.y;
-      setPan(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+      setPan((prev: { x: number; y: number }) => ({ x: prev.x + dx, y: prev.y + dy }));
       lastMouse.current = { x: cx, y: cy };
     }
   };
@@ -168,7 +168,7 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc, deltaIma
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     const d = e.deltaY < 0 ? 1.05 : 0.95;
-    setZoom(z => Math.min(Math.max(z * d, 1), 8));
+    setZoom((z: number) => Math.min(Math.max(z * d, 1), 8));
   };
 
   const commonPaneEvents = {
@@ -214,11 +214,11 @@ export default function SymmetryMerge({ galleryImageSrc, probeImageSrc, deltaIma
 
           {/* Zoom Controls */}
           <div className="flex border border-[#333] rounded bg-[#111] overflow-hidden text-gray-400">
-            <button onClick={() => setZoom(z => Math.max(1, z - 0.2))} className="px-2 hover:bg-[#222] hover:text-white transition-colors">-</button>
+            <button onClick={() => setZoom((z: number) => Math.max(1, z - 0.2))} className="px-2 hover:bg-[#222] hover:text-white transition-colors">-</button>
             <div className="px-2 py-1 text-[10px] border-x border-[#333] font-mono min-w-[45px] text-center">
               {Math.round(zoom * 100)}%
             </div>
-            <button onClick={() => setZoom(z => Math.min(8, z + 0.2))} className="px-2 hover:bg-[#222] hover:text-white transition-colors">+</button>
+            <button onClick={() => setZoom((z: number) => Math.min(8, z + 0.2))} className="px-2 hover:bg-[#222] hover:text-white transition-colors">+</button>
             <button onClick={() => { setZoom(1); setPan({x:0, y:0}); }} className="px-2 py-1 text-[10px] border-l border-[#333] hover:bg-[#222] hover:text-[#D4AF37] transition-colors">
               RESET
             </button>
