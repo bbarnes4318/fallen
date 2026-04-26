@@ -408,7 +408,7 @@ export default function Home() {
             <input 
               type="password" 
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
               placeholder="ENTER PASSPHRASE"
               className="w-full bg-[#111] border border-[#333] text-white p-3 text-center text-sm tracking-widest focus:outline-none focus:border-[#D4AF37] transition-colors"
             />

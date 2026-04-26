@@ -4,8 +4,8 @@
 ║  BIOMETRIC VAULT — MASS INGESTION ENGINE                        ║
 ║  Phase 2: 1:N Database Population                               ║
 ║                                                                  ║
-║  Reads raw target profile images, extracts 1404-D geometric     ║
-║  embeddings via MediaPipe, encrypts via KMS envelope encryption, ║
+║  Reads raw target profile images, extracts 512-D ArcFace        ║
+║  embeddings via DeepFace, encrypts via KMS envelope encryption,  ║
 ║  and commits to PostgreSQL (pgvector-ready Cloud SQL).           ║
 ║                                                                  ║
 ║  Usage (from project root):                                      ║
@@ -32,7 +32,7 @@ import cv2
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from backend.main import align_face_crop, extract_landmark_embedding, encrypt_embedding
+from backend.main import align_face_crop, extract_arcface_embedding, encrypt_embedding
 from backend.models import engine, SessionLocal, IdentityProfile, Base
 
 # ---------------------------------------------------------------------------
@@ -146,8 +146,8 @@ def ingest_single(filepath: str, session) -> str:
     if landmarks is None:
         return "skip"
 
-    # 3. Extract 1404-D geometric embedding
-    embedding = extract_landmark_embedding(landmarks)
+    # 3. Extract 512-D ArcFace biometric embedding
+    embedding = extract_arcface_embedding(aligned)
 
     # 4. KMS envelope encryption
     encrypted_payload = encrypt_embedding(embedding)

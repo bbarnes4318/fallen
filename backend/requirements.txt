@@ -16,3 +16,5 @@ google-cloud-kms==2.21.3
 cryptography==42.0.5
 PyJWT==2.8.0
 stripe==8.4.0
+deepface==0.0.93
+tf-keras==2.16.0

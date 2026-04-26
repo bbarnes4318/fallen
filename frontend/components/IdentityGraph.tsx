@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
@@ -149,53 +149,6 @@ export default function IdentityGraph() {
     fetchGraph();
   }, []);
 
-  // ── Custom Node Renderer ──
-  const nodeCanvasObject = useCallback((node: GraphNode, ctx: CanvasRenderingContext2D) => {
-    const x = node.x ?? 0;
-    const y = node.y ?? 0;
-    const isGold = node.group === 2;
-    const radius = isGold ? 6 : 4;
-
-    // Glow for high-profile anomalies
-    if (isGold) {
-      ctx.shadowColor = '#D4AF37';
-      ctx.shadowBlur = 12;
-    }
-
-    // Node circle
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, 2 * Math.PI);
-    ctx.fillStyle = isGold ? '#D4AF37' : '#666666';
-    ctx.fill();
-    ctx.strokeStyle = isGold ? '#D4AF37' : '#444444';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    // Reset shadow
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
-
-    // Label
-    ctx.font = '3px Courier New';
-    ctx.fillStyle = isGold ? '#D4AF37' : '#888888';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(node.name, x + radius + 3, y);
-  }, []);
-
-  // ── Custom Link Renderer ──
-  const linkColor = useCallback((link: GraphLink) => {
-    return link.value > 95 ? '#660000' : '#333333';
-  }, []);
-
-  const linkWidth = useCallback((link: GraphLink) => {
-    return link.value > 95 ? 1.5 : 0.5;
-  }, []);
-
-  // ── Node Click ──
-  const handleNodeClick = useCallback((node: GraphNode) => {
-    setSelectedNode(node);
-  }, []);
 
   const connections = selectedNode ? getNodeConnections(selectedNode.id, graphData.links) : [];
 
@@ -221,9 +174,9 @@ export default function IdentityGraph() {
         width={dimensions.width}
         height={dimensions.height}
         backgroundColor="#050505"
-        nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D) => {
-          const x = node.x ?? 0;
-          const y = node.y ?? 0;
+        nodeCanvasObject={(node: Record<string, unknown>, ctx: CanvasRenderingContext2D) => {
+          const x = (node.x as number) ?? 0;
+          const y = (node.y as number) ?? 0;
           const isGold = node.group === 2;
           const radius = isGold ? 6 : 4;
           if (isGold) { ctx.shadowColor = '#D4AF37'; ctx.shadowBlur = 12; }
@@ -240,22 +193,22 @@ export default function IdentityGraph() {
           ctx.fillStyle = isGold ? '#D4AF37' : '#888888';
           ctx.textAlign = 'left';
           ctx.textBaseline = 'middle';
-          ctx.fillText(node.name ?? node.id, x + radius + 3, y);
+          ctx.fillText((node.name as string) ?? (node.id as string), x + radius + 3, y);
         }}
-        nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
-          const x = node.x ?? 0;
-          const y = node.y ?? 0;
+        nodePointerAreaPaint={(node: Record<string, unknown>, color: string, ctx: CanvasRenderingContext2D) => {
+          const x = (node.x as number) ?? 0;
+          const y = (node.y as number) ?? 0;
           ctx.beginPath();
           ctx.arc(x, y, 8, 0, 2 * Math.PI);
           ctx.fillStyle = color;
           ctx.fill();
         }}
-        linkColor={(link: any) => (link.value > 95 ? '#660000' : '#333333')}
-        linkWidth={(link: any) => (link.value > 95 ? 1.5 : 0.5)}
+        linkColor={(link: Record<string, unknown>) => ((link.value as number) > 95 ? '#660000' : '#333333')}
+        linkWidth={(link: Record<string, unknown>) => ((link.value as number) > 95 ? 1.5 : 0.5)}
         linkDirectionalParticles={1}
-        linkDirectionalParticleWidth={(link: any) => link.value > 95 ? 2 : 0}
+        linkDirectionalParticleWidth={(link: Record<string, unknown>) => (link.value as number) > 95 ? 2 : 0}
         linkDirectionalParticleColor={() => '#660000'}
-        onNodeClick={(node: any) => setSelectedNode(node)}
+        onNodeClick={(node: Record<string, unknown>) => setSelectedNode(node as unknown as GraphNode)}
         cooldownTicks={100}
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.3}
