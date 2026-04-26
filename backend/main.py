@@ -21,9 +21,13 @@ from typing import Optional
 from skimage.feature import local_binary_pattern
 import mediapipe as mp
 import onnxruntime as ort
-from models import SessionLocal, IdentityProfile
+from models import SessionLocal, IdentityProfile, init_db
 
 app = FastAPI(title="Biometric Facial Verification Pipeline")
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
 
 app.add_middleware(
     CORSMiddleware,
