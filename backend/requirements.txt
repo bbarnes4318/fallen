@@ -20,3 +20,4 @@ deepface==0.0.93
 tf-keras==2.16.0
 slowapi==0.1.9
 tqdm==4.67.1
+scikit-learn==1.4.1

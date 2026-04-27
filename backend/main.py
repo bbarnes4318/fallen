@@ -109,7 +109,7 @@ try:
     pad_session = ort.InferenceSession("models/MiniFASNetV2.onnx", providers=['CPUExecutionProvider'])
     PAD_MODEL_AVAILABLE = True
 except Exception as e:
-    print(f"Warning: PAD ONNX model not found. Falling back to simulated PAD. {e}")
+    print(f"Warning: PAD ONNX model not found. Using Laplacian variance fallback. {e}")
     PAD_MODEL_AVAILABLE = False
 
 def detect_liveness(image: np.ndarray) -> dict:
@@ -243,6 +243,9 @@ class AuditLog(BaseModel):
     alignment_variance: Optional[dict] = None
     liveness_check: Optional[dict] = None
     crypto_envelope: Optional[dict] = None
+    # Calibration provenance
+    calibration_benchmark: Optional[str] = None
+    calibration_pairs: Optional[int] = None
 
 class VerificationResponse(BaseModel):
     structural_score: float
@@ -261,30 +264,67 @@ class VerificationResponse(BaseModel):
     audit_log: Optional[AuditLog] = None
 
 # ---------------------------------------------------------
-# STATISTICAL CONFIDENCE ENGINE
+# STATISTICAL CONFIDENCE ENGINE (CALIBRATION-DRIVEN)
 # ---------------------------------------------------------
+
+# Load empirical calibration data at startup
+CALIBRATION = None
+_cal_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration_data", "lfw_calibration.json")
+try:
+    import json as _json
+    with open(_cal_path, "r") as _f:
+        CALIBRATION = _json.load(_f)
+    print(f"Calibration loaded: {CALIBRATION['benchmark']} ({CALIBRATION['pairs_evaluated']} pairs)")
+except FileNotFoundError:
+    print("WARNING: No calibration data found at calibration_data/lfw_calibration.json. FAR will be reported as UNCALIBRATED.")
+except Exception as _e:
+    print(f"WARNING: Failed to load calibration data: {_e}. FAR will be reported as UNCALIBRATED.")
 
 def calculate_statistical_confidence(cosine_score: float) -> dict:
     """
-    Convert ArcFace cosine similarity to FAR and statistical certainty.
-    ArcFace cosine threshold: >= 0.68 definitive match, < 0.40 definitive non-match.
+    Convert ArcFace cosine similarity to FAR and statistical certainty
+    using empirically calibrated thresholds from the LFW benchmark.
+    If no calibration data is available, honestly reports UNCALIBRATED.
     """
-    if cosine_score > 0.75:
-        far = "1 in 4.2 Million"
-        certainty = "99.99998%"
-    elif cosine_score > 0.68:
-        far = "1 in 100,000"
-        certainty = "99.999%"
-    elif cosine_score > 0.55:
-        far = "1 in 10,000"
-        certainty = "99.99%"
-    elif cosine_score > 0.40:
-        far = "1 in 1,000"
-        certainty = "99.9%"
-    else:
-        far = "DIFFERENT IDENTITIES"
+    if CALIBRATION is None:
+        return {
+            "false_acceptance_rate": "UNCALIBRATED",
+            "statistical_certainty": "UNCALIBRATED",
+            "benchmark": "N/A",
+            "pairs_evaluated": 0
+        }
+
+    thresholds = CALIBRATION["arcface"]["thresholds"]
+    # Find the highest threshold the score exceeds
+    sorted_thresh = sorted(thresholds.keys(), key=float)
+
+    far_value = None
+    frr_value = None
+    matched_threshold = None
+
+    for t in sorted_thresh:
+        if cosine_score >= float(t):
+            far_value = thresholds[t]["far"]
+            frr_value = thresholds[t]["frr"]
+            matched_threshold = t
+
+    if far_value is None or far_value <= 0:
+        # Score is below all calibrated thresholds
+        far_str = "DIFFERENT IDENTITIES"
         certainty = "0% — Non-Match"
-    return {"false_acceptance_rate": far, "statistical_certainty": certainty}
+    elif far_value < 1e-7:
+        far_str = f"< 1 in {10_000_000:,}"
+        certainty = f"{(1.0 - far_value) * 100:.6f}%"
+    else:
+        far_str = f"1 in {int(1.0 / far_value):,}"
+        certainty = f"{(1.0 - far_value) * 100:.6f}%"
+
+    return {
+        "false_acceptance_rate": far_str,
+        "statistical_certainty": certainty,
+        "benchmark": CALIBRATION.get("benchmark", "LFW"),
+        "pairs_evaluated": CALIBRATION.get("pairs_evaluated", 0),
+    }
 
 
 # ---------------------------------------------------------
@@ -1003,9 +1043,12 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     # If ArcFace cosine < 0.40, these are definitively DIFFERENT people.
     veto_triggered = structural_sim < 0.40
     
-    # FUSED SCORE: 60% Structural + 25% Geometric + 15% Micro-Topology
-    # Weights reflect discriminative power: ArcFace is NIST-validated primary.
-    fused_score = (tier1_score * 0.60) + (tier2_score * 0.25) + (tier3_score * 0.15)
+    # FUSED SCORE: Use empirical weights from LFW calibration if available
+    _fw = CALIBRATION["fusion"]["optimal_weights"] if CALIBRATION else None
+    _w1 = _fw["structural"] if _fw else 0.60
+    _w2 = _fw["geometric"] if _fw else 0.25
+    _w3 = _fw["micro_topology"] if _fw else 0.15
+    fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3)
     
     if veto_triggered:
         fused_score = min(fused_score, tier1_score)  # Cap — never inflate a non-match
@@ -1050,6 +1093,8 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         alignment_variance=probe_alignment,
         liveness_check=liveness_telemetry,
         crypto_envelope=build_crypto_envelope(),
+        calibration_benchmark=stats.get("benchmark"),
+        calibration_pairs=stats.get("pairs_evaluated"),
     )
 
     return VerificationResponse(
@@ -1219,8 +1264,12 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     chi_squared = 0.5 * float(np.sum(((lbp_gal - lbp_pro) ** 2) / (lbp_gal + lbp_pro + 1e-10)))
     tier3_score = max(0.0, min(100.0, (1.0 - chi_squared) * 100))
 
-    # 9. Fused score: 60% Structural + 25% Geometric + 15% Micro-Topo
-    fused_score = (tier1_score * 0.60) + (tier2_score * 0.25) + (tier3_score * 0.15)
+    # 9. Fused score: Use empirical weights from LFW calibration if available
+    _fw = CALIBRATION["fusion"]["optimal_weights"] if CALIBRATION else None
+    _w1 = _fw["structural"] if _fw else 0.60
+    _w2 = _fw["geometric"] if _fw else 0.25
+    _w3 = _fw["micro_topology"] if _fw else 0.15
+    fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3)
 
     # 10. ArcFace Veto — hard fail if cosine < 0.40
     veto_arcface = best_score < 0.40
@@ -1287,6 +1336,8 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         alignment_variance=vault_alignment,
         liveness_check=liveness_telemetry_vault,
         crypto_envelope=build_crypto_envelope(vault_decrypt_elapsed_ms),
+        calibration_benchmark=stats.get("benchmark"),
+        calibration_pairs=stats.get("pairs_evaluated"),
     )
 
     return VerificationResponse(

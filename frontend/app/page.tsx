@@ -43,6 +43,8 @@ export default function Home() {
     alignment_variance?: { yaw: string; pitch: string; roll: string };
     liveness_check?: { method: string; spoof_probability: string; status: string; laplacian_variance?: number };
     crypto_envelope?: { standard: string; decryption_time: string };
+    calibration_benchmark?: string;
+    calibration_pairs?: number;
   }
 
   interface VerificationResult {
@@ -834,10 +836,13 @@ export default function Home() {
                     <div className="border border-[#1a2a1a] rounded p-2 bg-[#010201]">
                       <div className="text-green-500/80 tracking-[0.2em] mb-1.5 border-b border-green-900/30 pb-1 text-[8px]">▸ STATISTICAL CERTAINTY</div>
                       <div className="space-y-0.5 pl-1">
-                        <div className="flex justify-between"><span className="text-gray-600">FALSE ACCEPTANCE RATE</span><span className={`font-bold ${results.audit_log.false_acceptance_rate === 'Inconclusive' ? 'text-red-400' : 'text-green-400'}`}>{results.audit_log.false_acceptance_rate}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-600">CERTAINTY</span><span className={`font-bold ${results.audit_log.statistical_certainty.startsWith('<') ? 'text-red-400' : 'text-green-400'}`}>{results.audit_log.statistical_certainty}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-600">FALSE ACCEPTANCE RATE</span><span className={`font-bold ${results.audit_log.false_acceptance_rate === 'UNCALIBRATED' || results.audit_log.false_acceptance_rate === 'Inconclusive' ? 'text-yellow-400' : results.audit_log.false_acceptance_rate === 'DIFFERENT IDENTITIES' ? 'text-red-400' : 'text-green-400'}`}>{results.audit_log.false_acceptance_rate}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-600">CERTAINTY</span><span className={`font-bold ${results.audit_log.statistical_certainty === 'UNCALIBRATED' ? 'text-yellow-400' : results.audit_log.statistical_certainty.startsWith('<') || results.audit_log.statistical_certainty.startsWith('0%') ? 'text-red-400' : 'text-green-400'}`}>{results.audit_log.statistical_certainty}</span></div>
                         <div className="flex justify-between group relative"><span className="text-gray-600">ANCHOR NODES</span><span className="text-white font-bold">{results.audit_log.nodes_mapped}/468</span><div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-50"><div className="bg-[#111] border border-[#333] rounded px-3 py-2 text-[8px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">MediaPipe mesh density. 6 anchor points used for alignment, 12 ratios for Tier 2.<div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#333]"></div></div></div></div>
                         <div className="flex justify-between"><span className="text-gray-600">COSINE DISTANCE</span><span className="text-white font-bold">{results.audit_log.raw_cosine_score.toFixed(6)}</span></div>
+                        {results.audit_log.calibration_benchmark && (
+                          <div className="flex justify-between mt-0.5"><span className="text-gray-600">BENCHMARK</span><span className={`font-bold ${results.audit_log.calibration_benchmark === 'N/A' ? 'text-yellow-400' : 'text-green-400'}`}>{results.audit_log.calibration_benchmark}{results.audit_log.calibration_pairs ? ` (${results.audit_log.calibration_pairs.toLocaleString()} pairs)` : ''}</span></div>
+                        )}
                       </div>
                     </div>
 
