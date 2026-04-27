@@ -18,18 +18,11 @@ import concurrent.futures
 import cv2
 import numpy as np
 
-# Path Bootstrap
+# Path Bootstrap — must happen before any backend imports
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, "/app")                                     # Docker container
+sys.path.insert(0, os.path.join(str(PROJECT_ROOT), "backend")) # Local dev
 sys.path.insert(0, str(PROJECT_ROOT))
-
-# Import paths differ: in the Docker container, backend code lives flat at /app/
-# Locally from the project root, it's under backend/
-try:
-    from main import align_face_crop, extract_arcface_embedding, encrypt_embedding
-    from models import engine, SessionLocal, IdentityProfile, Base
-except ModuleNotFoundError:
-    from backend.main import align_face_crop, extract_arcface_embedding, encrypt_embedding
-    from backend.models import engine, SessionLocal, IdentityProfile, Base
 
 # Config — Cloud Run can only write to /tmp (in-memory tmpfs)
 if os.getenv("K_SERVICE") or os.getenv("CLOUD_RUN_JOB"):
@@ -41,8 +34,18 @@ else:
 GCS_BUCKET = "hoppwhistle-facial-uploads"
 GCS_BLOB_PATH = "datasets/lfw_color.zip"
 LFW_DIR = os.path.join(DATASETS_DIR, "lfwcrop_color", "faces")
-BATCH_SIZE = 100  # Number of profiles to commit to DB at once
-MAX_WORKERS = 4   # Number of concurrent ArcFace/KMS threads
+BATCH_SIZE = 100
+MAX_WORKERS = 2  # Keep low — each worker holds an image + embedding in RAM
+
+# ── Lazy-loaded references (populated by init_backend()) ──
+align_face_crop = None
+extract_arcface_embedding = None
+encrypt_embedding = None
+engine = None
+SessionLocal = None
+IdentityProfile = None
+Base = None
+
 
 class _C:
     GOLD = "\033[38;2;212;175;55m"
@@ -53,6 +56,30 @@ class _C:
     RESET = "\033[0m"
 
 def _ts(): return datetime.now().strftime("%H:%M:%S")
+
+
+def init_backend():
+    """
+    Lazily import the heavy backend modules AFTER the dataset download
+    completes, so TF/ArcFace model loading doesn't compete with the
+    152MB zip download for tmpfs RAM.
+    """
+    global align_face_crop, extract_arcface_embedding, encrypt_embedding
+    global engine, SessionLocal, IdentityProfile, Base
+
+    print(f"  {_C.DIM}[{_ts()}]{_C.RESET} {_C.GOLD}LOADING BACKEND (TensorFlow + ArcFace)...{_C.RESET}")
+    from main import align_face_crop as _afc, extract_arcface_embedding as _eae, encrypt_embedding as _ee
+    from models import engine as _eng, SessionLocal as _SL, IdentityProfile as _IP, Base as _B
+
+    align_face_crop = _afc
+    extract_arcface_embedding = _eae
+    encrypt_embedding = _ee
+    engine = _eng
+    SessionLocal = _SL
+    IdentityProfile = _IP
+    Base = _B
+    print(f"  {_C.DIM}[{_ts()}]{_C.RESET} {_C.GREEN}BACKEND LOADED.{_C.RESET}")
+
 
 def download_and_extract_lfw():
     """Downloads LFW color dataset from our GCS bucket and extracts it."""
@@ -90,7 +117,7 @@ def process_single_image(filepath: str):
     """Worker function: Runs the heavy compute off the main thread."""
     try:
         user_id = generate_user_id(filepath)
-        
+
         # Extract name from filename (e.g., George_W_Bush_0001.ppm -> George W Bush)
         stem = Path(filepath).stem  # George_W_Bush_0001
         person_name = "_".join(stem.split("_")[:-1]).replace("_", " ")
@@ -103,7 +130,7 @@ def process_single_image(filepath: str):
 
         # Heavy Compute
         embedding = extract_arcface_embedding(aligned)
-        
+
         # Network I/O (KMS Encryption)
         encrypted_payload = encrypt_embedding(embedding)
 
@@ -123,9 +150,12 @@ def main():
     print(f"  Target: Labeled Faces in the Wild (13,233 Profiles)")
     print(f"{_C.GOLD}══════════════════════════════════════════════════════════════════{_C.RESET}\n")
 
-    # 1. Get Data
+    # 1. Download & extract FIRST (lightweight — no TF loaded yet)
     download_and_extract_lfw()
-    
+
+    # 2. NOW load the heavy backend (TF + ArcFace) — zip is already purged from tmpfs
+    init_backend()
+
     image_paths = []
     for root, _, files in os.walk(LFW_DIR):
         for file in files:
@@ -134,11 +164,11 @@ def main():
 
     total_images = len(image_paths)
     print(f"  {_C.DIM}[{_ts()}]{_C.RESET} Discovered {total_images} target images.")
-    
-    # 2. Init DB
+
+    # 3. Init DB
     Base.metadata.create_all(bind=engine)
     session = SessionLocal()
-    
+
     # Pre-cache existing user_ids to avoid DB roundtrips during checks
     print(f"  {_C.DIM}[{_ts()}]{_C.RESET} Caching existing vault indexes...")
     existing_ids = {row[0] for row in session.query(IdentityProfile.user_id).all()}
@@ -152,7 +182,7 @@ def main():
     try:
         # Use ThreadPoolExecutor to saturate CPU and parallelize KMS network requests
         with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            
+
             # Submit only images that aren't already in the vault
             future_to_path = {}
             for path in image_paths:
@@ -169,10 +199,10 @@ def main():
             for future in concurrent.futures.as_completed(future_to_path):
                 processed_count += 1
                 result = future.result()
-                
+
                 if result["status"] == "ok":
                     stats["ok"] += 1
-                    
+
                     profile = IdentityProfile(
                         user_id=result["user_id"],
                         person_name=result["person_name"],
@@ -192,7 +222,7 @@ def main():
                     stats["skip"] += 1
                 else:
                     stats["error"] += 1
-                    
+
                 # Terminal Progress updates
                 if processed_count % 50 == 0:
                     sys.stdout.write(f"\r  {_C.CYAN}Engine Status:{_C.RESET} {processed_count}/{total_futures} Extracted | Vaulted: {stats['ok']} | Errors: {stats['error']}")
