@@ -112,11 +112,10 @@ except Exception as e:
     print(f"Warning: PAD ONNX model not found. Falling back to simulated PAD. {e}")
     PAD_MODEL_AVAILABLE = False
 
-def detect_liveness(image: np.ndarray) -> float:
+def detect_liveness(image: np.ndarray) -> dict:
     """
     Presentation Attack Detection (PAD).
-    Evaluates moiré patterns, blurriness, and digital artifacts.
-    Returns a confidence score between 0.0 and 1.0.
+    Returns a dict with 'score' (0.0-1.0) and 'variance' (raw Laplacian value).
     """
     if PAD_MODEL_AVAILABLE:
         # Preprocess for MiniFASNet: Resize to 80x80, normalize, CHW format
@@ -128,16 +127,16 @@ def detect_liveness(image: np.ndarray) -> float:
         
         input_name = pad_session.get_inputs()[0].name
         outputs = pad_session.run(None, {input_name: input_data})
-        # Assuming output tensor has [fake_prob, real_prob]
         real_prob = float(outputs[0][0][1])
-        return real_prob
+        return {"score": real_prob, "variance": None}
     else:
-        # Simulated PAD: Detect severe blurring or screen noise via Laplacian variance
+        # PAD fallback: Laplacian variance measures edge sharpness.
+        # Low variance (<50) indicates a blurry source (printed photo, screen capture).
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+        laplacian_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         if laplacian_var < 50:
-            return 0.10 # Likely a blurry presentation attack (photo of a screen)
-        return 0.98 # Simulate a live face
+            return {"score": 0.10, "variance": round(laplacian_var, 2)}
+        return {"score": 0.98, "variance": round(laplacian_var, 2)}
 
 # ---------------------------------------------------------
 # KMS ENVELOPE ENCRYPTION (BIOMETRIC VAULT)
@@ -344,22 +343,38 @@ def compute_alignment_variance(image: np.ndarray) -> dict:
     }
 
 
-def build_liveness_telemetry(liveness_score: float) -> dict:
+def build_liveness_telemetry(liveness_result: dict) -> dict:
     """
-    Packages the PAD liveness score into a forensic telemetry block.
+    Packages the PAD result into a forensic telemetry block.
+    Honestly reports the detection method used.
     """
-    spoof_prob = (1.0 - liveness_score) * 100
-    if liveness_score >= 0.98:
-        status = "VERIFIED_3D_ORGANIC"
-    elif liveness_score >= 0.95:
-        status = "PROBABLE_ORGANIC"
-    else:
-        status = "SPOOF_SUSPECTED"
+    score = liveness_result["score"]
+    variance = liveness_result["variance"]
+    spoof_prob = (1.0 - score) * 100
 
-    return {
+    if PAD_MODEL_AVAILABLE:
+        method = "MINIFASNET_ONNX"
+        if score >= 0.98:
+            status = "LIVE_VERIFIED"
+        elif score >= 0.95:
+            status = "PROBABLE_LIVE"
+        else:
+            status = "SPOOF_SUSPECTED"
+    else:
+        method = "LAPLACIAN_VARIANCE"
+        if score >= 0.95:
+            status = "BLUR_CHECK_PASSED"
+        else:
+            status = "BLUR_CHECK_FAILED"
+
+    result = {
+        "method": method,
         "spoof_probability": f"{spoof_prob:.3f}%",
         "status": status
     }
+    if variance is not None:
+        result["laplacian_variance"] = variance
+    return result
 
 
 def build_crypto_envelope(decryption_time_ms: float | None = None) -> dict:
@@ -700,29 +715,58 @@ def extract_lbp_histogram(image: np.ndarray) -> np.ndarray:
     hist /= (hist.sum() + 1e-7) # Normalize
     return hist
 
-def generate_xai_heatmap(image: np.ndarray) -> str:
+# Discriminative landmark indices for ArcFace alignment regions.
+# Eyes, nose, and mouth carry the highest identity signal in deep face models.
+# Ref: Deng et al., "ArcFace: Additive Angular Margin Loss" (CVPR 2019)
+DISCRIMINATIVE_LANDMARKS = {
+    # Left eye contour (16 points)
+    "left_eye": [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246],
+    # Right eye contour (16 points)
+    "right_eye": [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398],
+    # Nose ridge and tip (9 points)
+    "nose": [1, 2, 98, 327, 4, 5, 195, 197, 6],
+    # Lips outer contour (20 points)
+    "lips": [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 308, 324, 318, 402, 317, 14, 87, 178, 88],
+}
+
+def generate_landmark_attention_map(image: np.ndarray, landmarks: list) -> str:
     """
-    Explainable AI (XAI) Grad-CAM Heatmap.
-    In a full PyTorch pipeline, this uses gradients from the final conv layer.
-    Here we simulate the spatial activations (focusing on structural hubs: eyes, nose, mouth)
-    and return a base64 encoded thermal overlay.
+    Landmark Attention Map — places a Gaussian kernel at each of the 468
+    MediaPipe mesh points. Discriminative regions (eyes, nose, mouth) are
+    weighted higher because these are the anchor points for ArcFace alignment
+    and contain the highest identity signal.
+    Returns a base64-encoded JET colormap overlay blended with the source image.
     """
     h, w = image.shape[:2]
-    heatmap_raw = np.zeros((h, w), dtype=np.float32)
-    
-    cx, cy = w // 2, h // 2
-    # Simulate CNN focal points
-    cv2.circle(heatmap_raw, (cx, cy), radius=int(min(h,w)*0.2), color=1.0, thickness=-1)
-    cv2.circle(heatmap_raw, (cx - int(w*0.15), cy - int(h*0.1)), radius=int(min(h,w)*0.1), color=0.8, thickness=-1)
-    cv2.circle(heatmap_raw, (cx + int(w*0.15), cy - int(h*0.1)), radius=int(min(h,w)*0.1), color=0.8, thickness=-1)
-    cv2.circle(heatmap_raw, (cx, cy + int(h*0.2)), radius=int(min(h,w)*0.15), color=0.6, thickness=-1)
-    
-    heatmap_raw = cv2.GaussianBlur(heatmap_raw, (99, 99), 30)
-    heatmap_norm = cv2.normalize(heatmap_raw, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+    heatmap = np.zeros((h, w), dtype=np.float32)
+
+    # Collect all discriminative indices into a set for O(1) lookup
+    discriminative_set = set()
+    for indices in DISCRIMINATIVE_LANDMARKS.values():
+        discriminative_set.update(indices)
+
+    # Place Gaussian kernel at each landmark position
+    for idx, lm in enumerate(landmarks):
+        px = int(lm.x * w)
+        py = int(lm.y * h)
+        if 0 <= px < w and 0 <= py < h:
+            # Higher weight for identity-discriminative regions
+            weight = 1.5 if idx in discriminative_set else 0.6
+            radius = int(min(h, w) * 0.025)
+            cv2.circle(heatmap, (px, py), radius, weight, -1)
+
+    # Smooth into a continuous density field
+    kernel_size = int(min(h, w) * 0.15) | 1  # Ensure odd
+    sigma = kernel_size / 4.0
+    heatmap = cv2.GaussianBlur(heatmap, (kernel_size, kernel_size), sigma)
+
+    # Normalize and colorize
+    heatmap_norm = cv2.normalize(heatmap, None, alpha=0, beta=255,
+                                  norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
     heatmap_color = cv2.applyColorMap(heatmap_norm, cv2.COLORMAP_JET)
-    
+
     blended = cv2.addWeighted(image, 0.6, heatmap_color, 0.4, 0)
-    
+
     _, buffer = cv2.imencode('.png', blended)
     b64_str = base64.b64encode(buffer).decode('utf-8')
     return f"data:image/png;base64,{b64_str}"
@@ -910,9 +954,9 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     probe_img = fetch_image_from_url(payload.probe_url)
     
     # 1.5 Presentation Attack Detection (Liveness Firewall)
-    liveness_score = detect_liveness(probe_img)
-    liveness_telemetry = build_liveness_telemetry(liveness_score)
-    if liveness_score < 0.95:
+    liveness_result = detect_liveness(probe_img)
+    liveness_telemetry = build_liveness_telemetry(liveness_result)
+    if liveness_result["score"] < 0.95:
         raise HTTPException(status_code=403, detail="SPOOF_DETECTED: Presentation attack suspected.")
     
     # 2. Preprocess (CLAHE)
@@ -973,9 +1017,9 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     else:
         conclusion = "Exclusion: Insufficient Fused Similarity"
 
-    # XAI Heatmaps on aligned crops
-    gallery_heatmap = generate_xai_heatmap(gallery_aligned)
-    probe_heatmap = generate_xai_heatmap(probe_aligned)
+    # Landmark Attention Maps on aligned crops (real 468-point density, not fabricated)
+    gallery_heatmap = generate_landmark_attention_map(gallery_aligned, gallery_landmarks)
+    probe_heatmap = generate_landmark_attention_map(probe_aligned, probe_landmarks)
     
     # Encode aligned crops as base64 for frontend SymmetryMerge
     _, gal_buf = cv2.imencode('.png', gallery_aligned)
@@ -1068,10 +1112,9 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     # 1. Fetch & validate probe
     probe_img = fetch_image_from_url(payload.probe_url)
 
-    # 2. Liveness firewall
-    liveness = detect_liveness(probe_img)
-    liveness_telemetry_vault = build_liveness_telemetry(liveness)
-    if liveness < 0.95:
+    liveness_result = detect_liveness(probe_img)
+    liveness_telemetry_vault = build_liveness_telemetry(liveness_result)
+    if liveness_result["score"] < 0.95:
         raise HTTPException(status_code=403, detail="SPOOF_DETECTED: Presentation attack suspected.")
 
     # 3. Pre-process probe
@@ -1193,9 +1236,9 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     else:
         conclusion = f"WEAK MATCH — Nearest candidate: {best_user_id} (Fused: {fused_score:.1f}%)"
 
-    # 11. Forensic visualizations
-    gallery_heatmap = generate_xai_heatmap(gallery_aligned)
-    probe_heatmap = generate_xai_heatmap(probe_aligned)
+    # 11. Forensic visualizations (real landmark density maps)
+    gallery_heatmap = generate_landmark_attention_map(gallery_aligned, gallery_landmarks)
+    probe_heatmap = generate_landmark_attention_map(probe_aligned, probe_landmarks)
 
     _, gal_buf = cv2.imencode('.png', gallery_aligned)
     gallery_aligned_b64 = f"data:image/png;base64,{base64.b64encode(gal_buf).decode('utf-8')}"

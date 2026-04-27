@@ -41,7 +41,7 @@ export default function Home() {
     wikidata_id?: string;
     vector_hash?: string;
     alignment_variance?: { yaw: string; pitch: string; roll: string };
-    liveness_check?: { spoof_probability: string; status: string };
+    liveness_check?: { method: string; spoof_probability: string; status: string; laplacian_variance?: number };
     crypto_envelope?: { standard: string; decryption_time: string };
   }
 
@@ -836,7 +836,7 @@ export default function Home() {
                       <div className="space-y-0.5 pl-1">
                         <div className="flex justify-between"><span className="text-gray-600">FALSE ACCEPTANCE RATE</span><span className={`font-bold ${results.audit_log.false_acceptance_rate === 'Inconclusive' ? 'text-red-400' : 'text-green-400'}`}>{results.audit_log.false_acceptance_rate}</span></div>
                         <div className="flex justify-between"><span className="text-gray-600">CERTAINTY</span><span className={`font-bold ${results.audit_log.statistical_certainty.startsWith('<') ? 'text-red-400' : 'text-green-400'}`}>{results.audit_log.statistical_certainty}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-600">ANCHOR NODES</span><span className="text-white font-bold">{results.audit_log.nodes_mapped}/468</span></div>
+                        <div className="flex justify-between group relative"><span className="text-gray-600">ANCHOR NODES</span><span className="text-white font-bold">{results.audit_log.nodes_mapped}/468</span><div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-50"><div className="bg-[#111] border border-[#333] rounded px-3 py-2 text-[8px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">MediaPipe mesh density. 6 anchor points used for alignment, 12 ratios for Tier 2.<div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#333]"></div></div></div></div>
                         <div className="flex justify-between"><span className="text-gray-600">COSINE DISTANCE</span><span className="text-white font-bold">{results.audit_log.raw_cosine_score.toFixed(6)}</span></div>
                       </div>
                     </div>
@@ -851,8 +851,12 @@ export default function Home() {
                           <div className="flex justify-between"><span className="text-gray-600">ROLL CORRECTION</span><span className="text-cyan-300">{results.audit_log.alignment_variance.roll}</span></div>
                         </>)}
                         {results.audit_log.liveness_check && (<>
-                          <div className="flex justify-between mt-1"><span className="text-gray-600">SPOOF PROBABILITY</span><span className="text-green-400 font-bold">{results.audit_log.liveness_check.spoof_probability}</span></div>
-                          <div className="flex justify-between"><span className="text-gray-600">DEEPFAKE STATUS</span><span className={`font-bold ${results.audit_log.liveness_check.status === 'VERIFIED_3D_ORGANIC' ? 'text-green-400' : 'text-yellow-400'}`}>{results.audit_log.liveness_check.status}</span></div>
+                          <div className="flex justify-between mt-1"><span className="text-gray-600">PAD METHOD</span><span className="text-cyan-300 font-bold">{results.audit_log.liveness_check.method}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-600">SPOOF PROBABILITY</span><span className={`font-bold ${results.audit_log.liveness_check.status.includes('PASSED') || results.audit_log.liveness_check.status.includes('VERIFIED') || results.audit_log.liveness_check.status.includes('LIVE') ? 'text-green-400' : 'text-red-400'}`}>{results.audit_log.liveness_check.spoof_probability}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-600">PAD STATUS</span><span className={`font-bold ${results.audit_log.liveness_check.status.includes('PASSED') || results.audit_log.liveness_check.status.includes('VERIFIED') || results.audit_log.liveness_check.status.includes('LIVE') ? 'text-green-400' : 'text-red-400'}`}>{results.audit_log.liveness_check.status}</span></div>
+                          {results.audit_log.liveness_check.laplacian_variance != null && (
+                            <div className="flex justify-between"><span className="text-gray-600">LAPLACIAN σ²</span><span className="text-cyan-300">{results.audit_log.liveness_check.laplacian_variance}</span></div>
+                          )}
                         </>)}
                       </div>
                     </div>
@@ -880,7 +884,7 @@ export default function Home() {
                       </div>
                     </div>
                   </div>
-                  <div className="mt-2 pt-1.5 border-t border-[#1a1a0a] text-[7px] text-gray-700 tracking-widest text-center">AUDIT GENERATED AT {new Date().toISOString()} · SYSTEM INTEGRITY VERIFIED</div>
+                  <div className="mt-2 pt-1.5 border-t border-[#1a1a0a] text-[7px] text-gray-700 tracking-widest text-center">AUDIT GENERATED AT {new Date().toISOString()}</div>
                 </div>
               )}
             </div>

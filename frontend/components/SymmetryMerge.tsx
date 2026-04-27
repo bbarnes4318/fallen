@@ -16,8 +16,8 @@ type ViewMode = 'aligned' | 'mesh' | 'delta' | 'overlap';
 /* ── Tooltip descriptions for each view mode ── */
 const VIEW_TOOLTIPS: Record<ViewMode, string> = {
   aligned: 'Procrustes normalized planar view. Scales and centers faces to eliminate distance and angle bias.',
-  mesh: '1404-D geometric topology. Maps 468 precise anatomical anchor points.',
-  delta: 'Heatmap of structural deviations. Red areas indicate geometric mismatch.',
+  mesh: '468-point MediaPipe face mesh overlay. Visualizes landmark positions used for alignment and geometric ratio extraction.',
+  delta: 'Edge-based differential overlay between aligned gallery and probe crops. Highlights persistent structural deviations.',
   overlap: 'Alpha-blended composite layout for manual symmetry verification.',
 };
 
