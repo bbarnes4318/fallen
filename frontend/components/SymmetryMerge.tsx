@@ -141,19 +141,17 @@ export default function SymmetryMerge({
 
   const imagesReady = !!galleryImg && !!probeImg;
 
-  // ── LEFT PANE = PROBE ──
+  // ── LEFT PANE = PROBE (clean reference in delta mode) ──
   const getLeftOverlay = useCallback((): HTMLImageElement | null => {
     if (mode === 'mesh' && pWireImg) return pWireImg;
-    if (mode === 'delta' && deltaImg) return deltaImg;
     return null;
-  }, [mode, pWireImg, deltaImg]);
+  }, [mode, pWireImg]);
 
-  // ── RIGHT PANE = GALLERY ──
+  // ── RIGHT PANE = GALLERY (mesh overlay only; delta replaces base) ──
   const getRightOverlay = useCallback((): HTMLImageElement | null => {
     if (mode === 'mesh' && gWireImg) return gWireImg;
-    if (mode === 'delta' && deltaImg) return deltaImg;
     return null;
-  }, [mode, gWireImg, deltaImg]);
+  }, [mode, gWireImg]);
 
   const getBorderColor = (): string | undefined => {
     if (mode === 'delta') return 'rgba(180, 0, 30, 0.5)';
@@ -166,15 +164,19 @@ export default function SymmetryMerge({
   const baseOpacity = isXrayMode && hasOverlay ? 0.1 : 1.0;
   const overlayOpacity = isXrayMode && hasOverlay ? 1.0 : 0.85;
 
-  // Draw dual panes — LEFT = PROBE, RIGHT = GALLERY
+  // Draw dual panes — LEFT = PROBE, RIGHT = GALLERY (or DELTA map)
   useEffect(() => {
     if (!imagesReady || mode === 'overlap') return;
 
     if (leftCanvasRef.current && probeImg) {
       drawPane(leftCanvasRef.current, probeImg, getLeftOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity);
     }
-    if (rightCanvasRef.current && galleryImg) {
-      drawPane(rightCanvasRef.current, galleryImg, getRightOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity);
+    if (rightCanvasRef.current) {
+      // In delta mode, render the delta map as the sole base image (no gallery underneath)
+      const rightBase = (mode === 'delta' && deltaImg) ? deltaImg : galleryImg;
+      if (rightBase) {
+        drawPane(rightCanvasRef.current, rightBase, getRightOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity);
+      }
     }
   });
 
@@ -322,7 +324,7 @@ export default function SymmetryMerge({
             {...commonPaneEvents}
           >
             <canvas ref={leftCanvasRef} className="block w-full h-full" />
-            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">PROBE (A)</div>
+            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? 'PROBE (REF)' : 'PROBE (A)'}</div>
           </div>
 
           {/* Right Pane: Gallery */}
@@ -331,7 +333,7 @@ export default function SymmetryMerge({
             {...commonPaneEvents}
           >
             <canvas ref={rightCanvasRef} className="block w-full h-full" />
-            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">GALLERY (B)</div>
+            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">DELTA MAP</span> : 'GALLERY (B)'}</div>
           </div>
         </div>
       )}
