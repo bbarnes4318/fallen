@@ -1116,17 +1116,40 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     # 5. Tier 1 score from vault search
     tier1_score = best_score * 100
 
-    # 6. Load matched gallery image from disk for forensic overlays
-    gallery_file = _resolve_target_image(best_user_id)
+    # 6. Load matched gallery image for forensic overlays
+    # First, fetch the matched profile from DB to get thumbnail_url
+    gallery_session = SessionLocal()
+    matched_profile_for_gallery = None
+    try:
+        matched_profile_for_gallery = gallery_session.query(IdentityProfile).filter(
+            IdentityProfile.user_id == best_user_id
+        ).first()
+    finally:
+        gallery_session.close()
 
-    if gallery_file and os.path.isfile(gallery_file):
-        gallery_img = cv2.imread(gallery_file)
-        gallery_clahe = apply_clahe(gallery_img)
-        gallery_aligned, gallery_landmarks = align_face_crop(gallery_clahe)
+    gallery_aligned = probe_aligned
+    gallery_landmarks = probe_landmarks
+
+    if matched_profile_for_gallery and matched_profile_for_gallery.thumbnail_url:
+        try:
+            gallery_img = fetch_image_from_url(matched_profile_for_gallery.thumbnail_url)
+            gallery_clahe = apply_clahe(gallery_img)
+            gallery_aligned, gallery_landmarks = align_face_crop(gallery_clahe)
+            if gallery_landmarks is None:
+                gallery_aligned = probe_aligned
+                gallery_landmarks = probe_landmarks
+        except Exception:
+            pass  # Fallback to probe if gallery fetch fails
     else:
-        # Fallback: gallery image not on disk — use probe as stand-in
-        gallery_aligned = probe_aligned
-        gallery_landmarks = probe_landmarks
+        # Legacy fallback: try local target_profiles/ directory
+        gallery_file = _resolve_target_image(best_user_id)
+        if gallery_file and os.path.isfile(gallery_file):
+            gallery_img = cv2.imread(gallery_file)
+            gallery_clahe = apply_clahe(gallery_img)
+            gallery_aligned, gallery_landmarks = align_face_crop(gallery_clahe)
+            if gallery_landmarks is None:
+                gallery_aligned = probe_aligned
+                gallery_landmarks = probe_landmarks
 
     # 7. Tier 2: Soft Biometrics (Geometric Ratios)
     if gallery_landmarks is not None:

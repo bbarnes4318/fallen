@@ -113,8 +113,21 @@ def generate_user_id(filepath: str) -> str:
     file_hash = hashlib.sha256(Path(filepath).name.encode()).hexdigest()[:8]
     return f"{stem}_{file_hash}"
 
+def upload_face_to_gcs(aligned_img, filename: str) -> str:
+    """Uploads an aligned face crop to GCS and returns the public URL."""
+    from google.cloud import storage as gcs_storage
+    _, buf = cv2.imencode('.jpg', aligned_img, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    blob_path = f"gallery/{filename}.jpg"
+    client = gcs_storage.Client()
+    bucket = client.bucket(GCS_BUCKET)
+    blob = bucket.blob(blob_path)
+    blob.upload_from_string(buf.tobytes(), content_type="image/jpeg")
+    # Return the authenticated GCS URI — the backend can sign or proxy this
+    return f"https://storage.googleapis.com/{GCS_BUCKET}/{blob_path}"
+
+
 def process_single_image(filepath: str):
-    """Worker function: Runs the heavy compute off the main thread."""
+    """Processes a single image: align, embed, encrypt, upload gallery thumbnail."""
     try:
         user_id = generate_user_id(filepath)
 
@@ -134,12 +147,16 @@ def process_single_image(filepath: str):
         # Network I/O (KMS Encryption)
         encrypted_payload = encrypt_embedding(embedding)
 
+        # Upload aligned face crop to GCS gallery
+        thumbnail_url = upload_face_to_gcs(aligned, stem)
+
         return {
             "status": "ok",
             "file": filepath,
             "user_id": user_id,
             "person_name": person_name,
-            "payload": encrypted_payload
+            "payload": encrypted_payload,
+            "thumbnail_url": thumbnail_url
         }
     except Exception as e:
         return {"status": "error", "file": filepath, "msg": str(e)}
@@ -201,6 +218,7 @@ def main():
                     person_name=result["person_name"],
                     source="LFW Academic Dataset",
                     encrypted_facial_embedding=result["payload"],
+                    thumbnail_url=result.get("thumbnail_url"),
                 )
                 pending_inserts.append(profile)
 
