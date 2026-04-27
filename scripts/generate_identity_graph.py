@@ -8,7 +8,7 @@ This script:
   1. Queries all IdentityProfile records from PostgreSQL
   2. Decrypts each KMS-encrypted 512-D ArcFace embedding
   3. Computes upper-triangle NxN cosine similarity matrix
-  4. Filters links > 75% match threshold
+  4. Filters links > 90% match threshold (capped at 5,000 strongest)
   5. Uploads the resulting JSON graph to GCS
 
 Designed to run as an asynchronous Cloud Run Job triggered by
@@ -160,7 +160,7 @@ def generate_graph():
                 comparisons += 1
                 score = calculate_cosine_similarity(vec_a, vec_b) * 100
 
-                if score > 75.0:
+                if score > 90.0:
                     links.append({
                         "source": decrypted[i]["user_id"],
                         "target": decrypted[j]["user_id"],
@@ -169,7 +169,14 @@ def generate_graph():
 
         compute_elapsed = (time.perf_counter() - compute_start) * 1000
         print(f"[GRAPH] Computed {comparisons} pairwise comparisons in {compute_elapsed:.0f}ms")
-        print(f"[GRAPH] Found {len(links)} links above 75% threshold")
+        print(f"[GRAPH] Found {len(links)} links above 90% threshold")
+
+        # Cap links to strongest 5,000 for browser renderability
+        MAX_LINKS = 5000
+        if len(links) > MAX_LINKS:
+            links.sort(key=lambda l: l["value"], reverse=True)
+            links = links[:MAX_LINKS]
+            print(f"[GRAPH] Capped to top {MAX_LINKS} strongest links")
 
         # 4. Mark high-connectivity nodes as anomalies (group 2)
         connection_counts = {}
@@ -185,6 +192,14 @@ def generate_graph():
         for node in nodes:
             if connection_counts.get(node["id"], 0) > avg_connections * 1.5:
                 node["group"] = 2
+
+        # Prune orphan nodes (no links) to keep the graph compact
+        linked_ids = set()
+        for link in links:
+            linked_ids.add(link["source"])
+            linked_ids.add(link["target"])
+        nodes = [n for n in nodes if n["id"] in linked_ids]
+        print(f"[GRAPH] Pruned to {len(nodes)} connected nodes")
 
         graph_data = {"nodes": nodes, "links": links}
 
@@ -206,7 +221,7 @@ def _upload_graph(bucket_name: str, gcs_path: str, graph_data: dict):
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(gcs_path)
     blob.upload_from_string(
-        json.dumps(graph_data, indent=2),
+        json.dumps(graph_data, separators=(',', ':')),
         content_type="application/json",
     )
 
