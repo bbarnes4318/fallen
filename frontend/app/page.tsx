@@ -612,7 +612,7 @@ export default function Home() {
                 </div>
                 <div className="grid grid-cols-3 gap-3 opacity-30 select-none">
                   <div><div className="text-[9px] text-gray-500 tracking-wider">STRUCTURAL</div><div className="text-lg text-white font-bold">██.█%</div></div>
-                  <div><div className="text-[9px] text-gray-500 tracking-wider">SOFT BIO</div><div className="text-lg text-white font-bold">██.█%</div></div>
+                  <div><div className="text-[9px] text-gray-500 tracking-wider">GEOMETRIC</div><div className="text-lg text-white font-bold">██.█%</div></div>
                   <div><div className="text-[9px] text-gray-500 tracking-wider">MICRO-TOPO</div><div className="text-lg text-white font-bold">██.█%</div></div>
                 </div>
               </div>
@@ -725,7 +725,7 @@ export default function Home() {
                   <div className="relative group/t1">
                     <span className="text-[9px] text-gray-600 border border-[#333] rounded px-1 cursor-help hover:text-[#D4AF37] hover:border-[#D4AF37]/50 transition-colors">?</span>
                     <div className="pointer-events-none absolute right-0 bottom-full mb-1.5 w-52 opacity-0 group-hover/t1:opacity-100 transition-opacity z-50">
-                      <div className="bg-[#111] border border-[#333] rounded px-2.5 py-2 text-[9px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">Cosine similarity of 1404-D cranial and skeletal anchor points. High baseline overlap; used for broad filtering.</div>
+                      <div className="bg-[#111] border border-[#333] rounded px-2.5 py-2 text-[9px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">512-D ArcFace CNN embedding cosine similarity. NIST FRVT-validated deep neural identity discriminator. Primary biometric signal.</div>
                     </div>
                   </div>
                 </div>
@@ -735,11 +735,11 @@ export default function Home() {
               {/* Tier 2 */}
               <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg p-2.5">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-gray-500 text-[9px] tracking-wider">TIER 2: SOFT BIO</h3>
+                  <h3 className="text-gray-500 text-[9px] tracking-wider">TIER 2: GEOMETRIC</h3>
                   <div className="relative group/t2">
                     <span className="text-[9px] text-gray-600 border border-[#333] rounded px-1 cursor-help hover:text-[#D4AF37] hover:border-[#D4AF37]/50 transition-colors">?</span>
                     <div className="pointer-events-none absolute right-0 bottom-full mb-1.5 w-52 opacity-0 group-hover/t2:opacity-100 transition-opacity z-50">
-                      <div className="bg-[#111] border border-[#333] rounded px-2.5 py-2 text-[9px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">Pixel-density analysis of melanin, ocular hue, and keratin. Low statistical uniqueness; acts as a secondary filter.</div>
+                      <div className="bg-[#111] border border-[#333] rounded px-2.5 py-2 text-[9px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">12-D anthropometric facial ratio vector. Euclidean (L2) distance between scale-invariant proportions: nose-chin, mouth width, jaw symmetry, brow height. Independent geometric verification.</div>
                     </div>
                   </div>
                 </div>
@@ -753,7 +753,7 @@ export default function Home() {
                   <div className="relative group/t3">
                     <span className="text-[9px] text-gray-600 border border-[#333] rounded px-1 cursor-help hover:text-[#D4AF37] hover:border-[#D4AF37]/50 transition-colors">?</span>
                     <div className="pointer-events-none absolute right-0 bottom-full mb-1.5 w-52 opacity-0 group-hover/t3:opacity-100 transition-opacity z-50">
-                      <div className="bg-[#111] border border-[#333] rounded px-2.5 py-2 text-[9px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">The primary identifier. Analyzes chaotic epidermal deviations (scars, asymmetrical moles). A high match here drives the False Acceptance Rate (FAR) to near zero.</div>
+                      <div className="bg-[#111] border border-[#333] rounded px-2.5 py-2 text-[9px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">Local Binary Pattern (LBP) texture histograms compared via chi-squared (χ²) distance. Captures epidermal micro-texture: pore density, fine wrinkles, scarring patterns.</div>
                     </div>
                   </div>
                 </div>
@@ -768,7 +768,7 @@ export default function Home() {
                   <div className="relative group/tf">
                     <span className="text-[9px] text-[#D4AF37]/60 border border-[#D4AF37]/30 rounded px-1 cursor-help hover:text-[#D4AF37] hover:border-[#D4AF37]/50 transition-colors">?</span>
                     <div className="pointer-events-none absolute right-0 bottom-full mb-1.5 w-52 opacity-0 group-hover/tf:opacity-100 transition-opacity z-50">
-                      <div className="bg-[#111] border border-[#333] rounded px-2.5 py-2 text-[9px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">Bayesian probability matrix combining all tiers to calculate the definitive False Acceptance Rate.</div>
+                      <div className="bg-[#111] border border-[#333] rounded px-2.5 py-2 text-[9px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">Weighted fusion: 60% ArcFace + 25% Geometric L2 + 15% LBP χ². Capped by ArcFace veto protocol at cosine &lt; 0.40. Cannot exceed structural score on non-match.</div>
                     </div>
                   </div>
                 </div>

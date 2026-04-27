@@ -935,26 +935,36 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     structural_sim = calculate_cosine_similarity(embed_gallery, embed_probe)
     tier1_score = structural_sim * 100
     
-    # 5. TIER 2: Soft Biometrics (Geometric Ratio Comparison — MediaPipe)
+    # 5. TIER 2: Geometric Biometrics (Anthropometric Ratio — L2 Distance)
+    # Uses Euclidean distance between 12-D scale-invariant facial ratio vectors.
+    # Cosine similarity is inappropriate here: ratio vectors are always positive
+    # and in similar ranges, yielding ~0.99+ for ANY two human faces.
     ratios_gallery = extract_geometric_ratios(gallery_landmarks)
     ratios_probe = extract_geometric_ratios(probe_landmarks)
-    tier2_score = calculate_cosine_similarity(ratios_gallery, ratios_probe) * 100
+    ratio_l2 = float(np.linalg.norm(ratios_gallery - ratios_probe))
+    # L2 mapping: 0 distance → 100%, ≥0.40 → 0%. Empirical threshold from
+    # same-person L2 < 0.10, different-person L2 > 0.20.
+    tier2_score = max(0.0, min(100.0, (1.0 - (ratio_l2 / 0.40)) * 100))
     
-    # 6. TIER 3: Micro-Topology (LBP on aligned 256×256 crops)
+    # 6. TIER 3: Micro-Topology (LBP Chi-Squared Distance)
+    # Chi-squared is the standard metric for comparing LBP histograms
+    # in the biometrics literature. Histogram intersection is not
+    # discriminative enough on CLAHE-normalized, aligned crops.
     lbp_gal = extract_lbp_histogram(gallery_aligned)
     lbp_pro = extract_lbp_histogram(probe_aligned)
-    lbp_intersection = np.sum(np.minimum(lbp_gal, lbp_pro))
-    tier3_score = lbp_intersection * 100
+    chi_squared = 0.5 * float(np.sum(((lbp_gal - lbp_pro) ** 2) / (lbp_gal + lbp_pro + 1e-10)))
+    tier3_score = max(0.0, min(100.0, (1.0 - chi_squared) * 100))
     
     # 7. Veto Protocol — ArcFace Hard Fail
     # If ArcFace cosine < 0.40, these are definitively DIFFERENT people.
     veto_triggered = structural_sim < 0.40
     
-    # FUSED SCORE: 50% Structural + 25% Soft Biometrics + 25% Micro-Topology
-    fused_score = (tier1_score * 0.50) + (tier2_score * 0.25) + (tier3_score * 0.25)
+    # FUSED SCORE: 60% Structural + 25% Geometric + 15% Micro-Topology
+    # Weights reflect discriminative power: ArcFace is NIST-validated primary.
+    fused_score = (tier1_score * 0.60) + (tier2_score * 0.25) + (tier3_score * 0.15)
     
     if veto_triggered:
-        fused_score = structural_sim * 100  # Report raw ArcFace score, don't inflate
+        fused_score = min(fused_score, tier1_score)  # Cap — never inflate a non-match
         conclusion = "Exclusion: Biometric Non-Match (ArcFace Cosine < 0.40)"
     elif fused_score > 90.0:
         conclusion = "Strongest Support for Common Source"
@@ -1151,28 +1161,30 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
                 gallery_aligned = probe_aligned
                 gallery_landmarks = probe_landmarks
 
-    # 7. Tier 2: Soft Biometrics (Geometric Ratios)
+    # 7. Tier 2: Geometric Biometrics (Anthropometric Ratio — L2 Distance)
     if gallery_landmarks is not None:
         ratios_gallery = extract_geometric_ratios(gallery_landmarks)
         ratios_probe = extract_geometric_ratios(probe_landmarks)
-        tier2_score = calculate_cosine_similarity(ratios_gallery, ratios_probe) * 100
+        ratio_l2 = float(np.linalg.norm(ratios_gallery - ratios_probe))
+        tier2_score = max(0.0, min(100.0, (1.0 - (ratio_l2 / 0.40)) * 100))
     else:
         tier2_score = 0.0
 
-    # 8. Tier 3: Micro-Topology (LBP)
+    # 8. Tier 3: Micro-Topology (LBP Chi-Squared Distance)
     lbp_gal = extract_lbp_histogram(gallery_aligned)
     lbp_pro = extract_lbp_histogram(probe_aligned)
-    tier3_score = np.sum(np.minimum(lbp_gal, lbp_pro)) * 100
+    chi_squared = 0.5 * float(np.sum(((lbp_gal - lbp_pro) ** 2) / (lbp_gal + lbp_pro + 1e-10)))
+    tier3_score = max(0.0, min(100.0, (1.0 - chi_squared) * 100))
 
-    # 9. Fused score: 50% Structural + 25% Soft Bio + 25% Micro-Topo
-    fused_score = (tier1_score * 0.50) + (tier2_score * 0.25) + (tier3_score * 0.25)
+    # 9. Fused score: 60% Structural + 25% Geometric + 15% Micro-Topo
+    fused_score = (tier1_score * 0.60) + (tier2_score * 0.25) + (tier3_score * 0.15)
 
     # 10. ArcFace Veto — hard fail if cosine < 0.40
     veto_arcface = best_score < 0.40
 
     # 11. Conclusion
     if veto_arcface:
-        fused_score = best_score * 100  # Report raw ArcFace score, don't inflate
+        fused_score = min(fused_score, tier1_score)  # Cap — never inflate a non-match
         conclusion = f"EXCLUSION — Biometric Non-Match: {best_user_id} (ArcFace: {best_score:.4f})"
     elif fused_score > 90.0:
         conclusion = f"TARGET ACQUIRED — Strongest match: {best_user_id} (Fused: {fused_score:.1f}%)"
