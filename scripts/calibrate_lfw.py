@@ -239,17 +239,24 @@ def run_calibration():
         person_images[label].append(np.array(img))  # Convert PIL to numpy RGB
 
     # Build genuine pairs: same person, different images
-    genuine_pairs = []
+    # Cap at 3,000 to match standard LFW protocol (10 folds × 300 pairs)
+    MAX_PAIRS = 3000
+    all_genuine_candidates = []
     for label, images in person_images.items():
         if len(images) >= 2:
-            for i in range(len(images)):
-                for j in range(i + 1, len(images)):
-                    genuine_pairs.append((images[i], images[j], 1))
+            # Take up to 1 pair per person to maximize diversity
+            all_genuine_candidates.append((images[0], images[1], 1))
+            # If the person has more images, add more pairs (up to 3)
+            for k in range(2, min(len(images), 4)):
+                all_genuine_candidates.append((images[0], images[k], 1))
 
-    # Build impostor pairs: different persons (sample to balance)
-    person_labels = [l for l, imgs in person_images.items() if len(imgs) >= 1]
     import random
     random.seed(42)
+    random.shuffle(all_genuine_candidates)
+    genuine_pairs = all_genuine_candidates[:MAX_PAIRS]
+
+    # Build impostor pairs: different persons (sample to match genuine count)
+    person_labels = [l for l, imgs in person_images.items() if len(imgs) >= 1]
     impostor_pairs = []
     target_impostor = len(genuine_pairs)  # Match genuine count for balance
     attempts = 0
