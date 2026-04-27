@@ -678,7 +678,8 @@ export default function Home() {
 
         {/* ════ RESULTS DASHBOARD — Zero-Scroll 70/30 Grid ════ */}
         {step === 'complete' && results && (
-          <div className="h-full flex gap-3 min-h-0 overflow-hidden">
+          <div className="h-full flex flex-col gap-3 min-h-0 overflow-hidden">
+            <div className="flex-1 flex gap-3 min-h-0">
 
             {/* ── LEFT PANEL (70%): Dual-Pane Visualizer ── */}
             <div className="w-[70%] flex flex-col min-h-0 min-w-0">
@@ -787,30 +788,47 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* ── Forensic Audit Trigger ── */}
+
+
+              {/* Export Dossier */}
+              <button
+                onClick={generateForensicReport}
+                disabled={isExporting}
+                className={`w-full py-2 text-[9px] font-bold tracking-widest border rounded transition-all shrink-0 ${
+                  isExporting
+                    ? 'border-[#333] bg-[#111] text-gray-500 cursor-wait'
+                    : 'border-[#D4AF37]/50 bg-[#0a0a0a] text-[#D4AF37] hover:bg-[#D4AF37]/10 hover:shadow-[0_0_15px_rgba(212,175,55,0.4)]'
+                }`}
+              >
+                {isExporting ? 'COMPILING...' : 'EXPORT DOSSIER'}
+              </button>
+            </div>
+            </div>
+
+            {/* ── Full-Width Forensic Audit Block ── */}
+            <div className="shrink-0 w-full flex flex-col gap-2">
               <button
                 onClick={() => setAuditExpanded(!auditExpanded)}
-                className={`w-full text-left px-3 py-2 rounded text-[9px] font-mono tracking-widest transition-all border ${
+                className={`w-full flex items-center justify-between px-5 py-2.5 rounded font-mono tracking-[0.2em] transition-all border-2 ${
                   auditExpanded
-                    ? 'border-amber-500/60 bg-[#0a0800] text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.15)]'
-                    : 'border-amber-500/30 bg-[#0a0a0a] text-amber-400/80 hover:border-amber-500/60 hover:shadow-[0_0_8px_rgba(245,158,11,0.1)]'
+                    ? 'border-[#D4AF37] bg-[#D4AF37]/10 text-[#D4AF37] shadow-[0_0_20px_rgba(212,175,55,0.2)]'
+                    : 'border-[#D4AF37]/50 bg-[#0a0a0a] text-[#D4AF37]/90 hover:border-[#D4AF37] hover:bg-[#111] hover:shadow-[0_0_15px_rgba(212,175,55,0.3)]'
                 }`}
-                style={{ boxShadow: auditExpanded ? undefined : '0 0 1px rgba(245,158,11,0.4)' }}
               >
-                <span className="flex items-center gap-2">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                <span className="flex items-center gap-3 font-bold text-[11px]">
+                  <span className="relative flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#D4AF37] opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-[#D4AF37]"></span>
                   </span>
-                  <span>ACCESS SECURE FORENSIC TELEMETRY &amp; AUDIT</span>
-                  <span className="ml-auto text-xs">{auditExpanded ? '−' : '+'}</span>
+                  ACCESS SECURE FORENSIC TELEMETRY &amp; AUDIT LOG
                 </span>
+                <span className="text-lg font-bold">{auditExpanded ? '−' : '+'}</span>
               </button>
 
               {/* ── Forensic Terminal (3-column) ── */}
               {auditExpanded && results.audit_log && (
                 <div className="border border-[#1a1a0a] bg-[#000000] rounded p-2.5 font-mono text-[9px] leading-relaxed shadow-[inset_0_0_30px_rgba(0,0,0,0.5)]">
-                  <div className="grid grid-cols-1 gap-2">
+                  <div className="grid grid-cols-3 gap-4 mt-1">
 
                     {/* Block 1: Statistical Certainty */}
                     <div className="border border-[#1a2a1a] rounded p-2 bg-[#010201]">
@@ -865,19 +883,6 @@ export default function Home() {
                   <div className="mt-2 pt-1.5 border-t border-[#1a1a0a] text-[7px] text-gray-700 tracking-widest text-center">AUDIT GENERATED AT {new Date().toISOString()} · SYSTEM INTEGRITY VERIFIED</div>
                 </div>
               )}
-
-              {/* Export Dossier */}
-              <button
-                onClick={generateForensicReport}
-                disabled={isExporting}
-                className={`w-full py-2 text-[9px] font-bold tracking-widest border rounded transition-all shrink-0 ${
-                  isExporting
-                    ? 'border-[#333] bg-[#111] text-gray-500 cursor-wait'
-                    : 'border-[#D4AF37]/50 bg-[#0a0a0a] text-[#D4AF37] hover:bg-[#D4AF37]/10 hover:shadow-[0_0_15px_rgba(212,175,55,0.4)]'
-                }`}
-              >
-                {isExporting ? 'COMPILING...' : 'EXPORT DOSSIER'}
-              </button>
             </div>
 
           </div>
