@@ -303,9 +303,9 @@ export default function SymmetryMerge({
 
           {/* Slider handle */}
           <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: `${overlapPos}%`, transform: 'translateX(-50%)' }}>
-            <div className="w-[2px] h-full bg-[#D4AF37] shadow-[0_0_12px_rgba(212,175,55,0.8)]" />
-            <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-6 h-6 rounded-full border-2 border-[#D4AF37] bg-[#0A0A0B] flex items-center justify-center shadow-[0_0_15px_rgba(212,175,55,0.5)]">
-              <svg className="w-3 h-3 text-[#D4AF37]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 9l4-4 4 4M16 15l-4 4-4-4"></path></svg>
+            <div className="w-[1px] h-full bg-[#D4AF37]/20" />
+            <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 rounded-full border border-[#D4AF37]/50 bg-[#0A0A0B]/80 flex items-center justify-center backdrop-blur-sm">
+              <svg className="w-2 h-2 text-[#D4AF37]/70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 9l4-4 4 4M16 15l-4 4-4-4"></path></svg>
             </div>
           </div>
 
