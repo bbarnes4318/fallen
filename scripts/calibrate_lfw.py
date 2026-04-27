@@ -25,9 +25,6 @@ os.environ["TF_USE_LEGACY_KERAS"] = "1"
 import cv2
 import numpy as np
 import json
-import urllib.request
-import io
-import tarfile
 import datetime
 import sys
 from pathlib import Path
@@ -37,6 +34,7 @@ import mediapipe as mp
 from skimage.feature import local_binary_pattern
 from deepface import DeepFace
 from sklearn.metrics import roc_curve
+from sklearn.datasets import fetch_lfw_pairs
 from scipy.optimize import brentq
 from scipy.interpolate import interp1d
 from tqdm import tqdm
@@ -49,8 +47,6 @@ except ImportError:
     GCS_AVAILABLE = False
 
 # ── Constants ──
-LFW_PAIRS_URL = "http://vis-www.cs.umass.edu/lfw/pairs.txt"
-LFW_BASE_URL = "http://vis-www.cs.umass.edu/lfw/images"
 GCS_BUCKET = os.getenv("BUCKET_NAME", "hoppwhistle-facial-uploads")
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration_data")
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, "lfw_calibration.json")
@@ -216,73 +212,6 @@ def chi_squared_distance(h1: np.ndarray, h2: np.ndarray) -> float:
     return 0.5 * float(np.sum(((h1 - h2) ** 2) / (h1 + h2 + 1e-10)))
 
 
-# ═══════════════════════════════════════════════════════════
-# LFW PAIR LOADING
-# ═══════════════════════════════════════════════════════════
-
-def download_pairs_txt() -> str:
-    """Download the official LFW pairs.txt from UMass Amherst."""
-    print(f"Downloading pairs.txt from {LFW_PAIRS_URL}...")
-    req = urllib.request.urlopen(LFW_PAIRS_URL, timeout=30)
-    content = req.read().decode("utf-8")
-    print(f"Downloaded pairs.txt ({len(content)} bytes)")
-    return content
-
-
-def parse_pairs(content: str) -> Tuple[List[Tuple[str, int, int]], List[Tuple[str, str, int, int]]]:
-    """
-    Parse the LFW pairs.txt format.
-    Returns (genuine_pairs, impostor_pairs).
-    Genuine: (name, img_num1, img_num2)
-    Impostor: (name1, name2, img_num1, img_num2)
-    """
-    lines = content.strip().split("\n")
-    header = lines[0].strip().split()
-    num_sets = int(header[0])  # Number of positive/negative pairs per fold
-
-    genuine = []
-    impostor = []
-
-    idx = 1
-    for fold in range(10):  # 10 folds
-        # Genuine pairs for this fold
-        for _ in range(num_sets):
-            parts = lines[idx].strip().split("\t")
-            name = parts[0]
-            img1 = int(parts[1])
-            img2 = int(parts[2])
-            genuine.append((name, img1, img2))
-            idx += 1
-
-        # Impostor pairs for this fold
-        for _ in range(num_sets):
-            parts = lines[idx].strip().split("\t")
-            name1 = parts[0]
-            img1 = int(parts[1])
-            name2 = parts[2]
-            img2 = int(parts[3])
-            impostor.append((name1, name2, img1, img2))
-            idx += 1
-
-    return genuine, impostor
-
-
-def lfw_image_url(name: str, img_num: int) -> str:
-    """Construct the LFW image URL for a given person and image number."""
-    filename = f"{name}_{img_num:04d}.jpg"
-    return f"{LFW_BASE_URL}/{name}/{filename}"
-
-
-def fetch_image(url: str) -> Optional[np.ndarray]:
-    """Fetch an image from URL and decode it."""
-    try:
-        req = urllib.request.urlopen(url, timeout=15)
-        arr = np.asarray(bytearray(req.read()), dtype=np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        return img
-    except Exception:
-        return None
-
 
 # ═══════════════════════════════════════════════════════════
 # CALIBRATION ENGINE
@@ -291,16 +220,22 @@ def fetch_image(url: str) -> Optional[np.ndarray]:
 def run_calibration():
     """
     Main calibration procedure.
-    1. Download pairs.txt from UMass Amherst
-    2. Process all 6,000 pairs through the full pipeline
+    1. Fetch LFW pairs via sklearn (handles mirrors + caching)
+    2. Process all pairs through the full pipeline
     3. Compute ROC, EER, FAR at specific thresholds
     4. Output calibration JSON
     """
-    # 1. Download and parse pairs
-    pairs_content = download_pairs_txt()
-    genuine_pairs, impostor_pairs = parse_pairs(pairs_content)
+    # 1. Fetch LFW pairs using sklearn's built-in downloader
+    # This downloads from the official LFW source with fallback mirrors
+    print("Fetching LFW pairs via sklearn (this downloads the dataset)...")
+    lfw_train = fetch_lfw_pairs(subset='train', color=True, resize=1.0)
+    lfw_test = fetch_lfw_pairs(subset='test', color=True, resize=1.0)
 
-    print(f"Parsed {len(genuine_pairs)} genuine pairs, {len(impostor_pairs)} impostor pairs")
+    # Combine train + test for full 6,000 pair evaluation
+    all_pairs = np.concatenate([lfw_train.pairs, lfw_test.pairs], axis=0)
+    all_labels = np.concatenate([lfw_train.target, lfw_test.target], axis=0)
+
+    print(f"Loaded {len(all_pairs)} pairs ({np.sum(all_labels == 1)} genuine, {np.sum(all_labels == 0)} impostor)")
 
     # 2. Process all pairs
     labels = []       # 1 = genuine, 0 = impostor
@@ -308,17 +243,23 @@ def run_calibration():
     l2_scores = []
     chi2_scores = []
 
-    total_pairs = len(genuine_pairs) + len(impostor_pairs)
     processed = 0
     skipped = 0
 
-    # Process genuine pairs
-    print("\n═══ Processing Genuine Pairs ═══")
-    for name, img1_num, img2_num in tqdm(genuine_pairs, desc="Genuine"):
-        url1 = lfw_image_url(name, img1_num)
-        url2 = lfw_image_url(name, img2_num)
+    print("\n═══ Processing All Pairs ═══")
+    for i in tqdm(range(len(all_pairs)), desc="Pairs"):
+        pair = all_pairs[i]
+        label = all_labels[i]
 
-        result = process_pair(url1, url2)
+        # pair shape: (2, H, W, 3) — two RGB images
+        img1_rgb = (pair[0] * 255).astype(np.uint8) if pair[0].max() <= 1.0 else pair[0].astype(np.uint8)
+        img2_rgb = (pair[1] * 255).astype(np.uint8) if pair[1].max() <= 1.0 else pair[1].astype(np.uint8)
+
+        # Convert RGB to BGR for OpenCV pipeline
+        img1 = cv2.cvtColor(img1_rgb, cv2.COLOR_RGB2BGR)
+        img2 = cv2.cvtColor(img2_rgb, cv2.COLOR_RGB2BGR)
+
+        result = process_pair_images(img1, img2)
         if result is None:
             skipped += 1
             continue
@@ -327,28 +268,10 @@ def run_calibration():
         cosine_scores.append(cos)
         l2_scores.append(l2)
         chi2_scores.append(chi2)
-        labels.append(1)
+        labels.append(int(label))
         processed += 1
 
-    # Process impostor pairs
-    print("\n═══ Processing Impostor Pairs ═══")
-    for name1, name2, img1_num, img2_num in tqdm(impostor_pairs, desc="Impostor"):
-        url1 = lfw_image_url(name1, img1_num)
-        url2 = lfw_image_url(name2, img2_num)
-
-        result = process_pair(url1, url2)
-        if result is None:
-            skipped += 1
-            continue
-
-        cos, l2, chi2 = result
-        cosine_scores.append(cos)
-        l2_scores.append(l2)
-        chi2_scores.append(chi2)
-        labels.append(0)
-        processed += 1
-
-    print(f"\nProcessed: {processed}/{total_pairs} pairs ({skipped} skipped)")
+    print(f"\nProcessed: {processed}/{len(all_pairs)} pairs ({skipped} skipped)")
 
     if processed < 100:
         print("FATAL: Too few pairs processed. Calibration aborted.")
@@ -364,7 +287,6 @@ def run_calibration():
     arcface_metrics = compute_metrics(labels_arr, cosine_arr, "ArcFace Cosine")
 
     # 5. Compute metrics for geometric L2 (invert: lower L2 = more similar)
-    # Convert L2 to a similarity score for ROC: sim = 1 - (l2 / max_l2)
     max_l2 = max(l2_arr.max(), 0.01)
     l2_sim = 1.0 - (l2_arr / max_l2)
     geo_metrics = compute_metrics(labels_arr, l2_sim, "Geometric L2")
@@ -396,7 +318,7 @@ def run_calibration():
     # 8. Build calibration output
     calibration = {
         "benchmark": "LFW",
-        "source": "http://vis-www.cs.umass.edu/lfw/pairs.txt",
+        "source": "sklearn.datasets.fetch_lfw_pairs (official UMass LFW mirror)",
         "pairs_evaluated": processed,
         "pairs_skipped": skipped,
         "genuine_pairs": int(np.sum(labels_arr == 1)),
@@ -447,14 +369,14 @@ def run_calibration():
     print("=" * 60)
 
 
-def process_pair(url1: str, url2: str) -> Optional[Tuple[float, float, float]]:
+def process_pair_images(img1: np.ndarray, img2: np.ndarray) -> Optional[Tuple[float, float, float]]:
     """
-    Process a single pair through the full pipeline.
+    Process a single pair of pre-loaded images through the full pipeline.
     Returns (cosine_sim, l2_distance, chi2_distance) or None on failure.
     """
-    img1 = fetch_image(url1)
-    img2 = fetch_image(url2)
     if img1 is None or img2 is None:
+        return None
+    if img1.size == 0 or img2.size == 0:
         return None
 
     # CLAHE
