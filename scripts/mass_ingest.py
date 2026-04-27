@@ -177,62 +177,56 @@ def main():
     stats = {"ok": 0, "skip": 0, "dup": 0, "error": 0}
     t_start = time.time()
 
-    print(f"\n{_C.GOLD}▶ INITIATING MULTI-THREADED EXTRACTION PIPELINE...{_C.RESET}\n")
+    print(f"\n{_C.GOLD}▶ INITIATING SEQUENTIAL EXTRACTION PIPELINE (8-CPU TF parallelism)...{_C.RESET}\n")
 
     try:
-        # Use ThreadPoolExecutor to saturate CPU and parallelize KMS network requests
-        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-
-            # Submit only images that aren't already in the vault
-            future_to_path = {}
-            for path in image_paths:
-                uid = generate_user_id(path)
-                if uid in existing_ids:
-                    stats["dup"] += 1
-                else:
-                    future_to_path[executor.submit(process_single_image, path)] = path
-
-            # Process as they complete
-            processed_count = 0
-            total_futures = len(future_to_path)
-
-            for future in concurrent.futures.as_completed(future_to_path):
+        # Sequential loop — TF uses all 8 CPUs internally; Python-level threading
+        # causes SIGSEGV (free(): invalid pointer) in TF's C++ runtime.
+        processed_count = 0
+        for path in image_paths:
+            uid = generate_user_id(path)
+            if uid in existing_ids:
+                stats["dup"] += 1
                 processed_count += 1
-                result = future.result()
+                continue
 
-                if result["status"] == "ok":
-                    stats["ok"] += 1
+            result = process_single_image(path)
+            processed_count += 1
 
-                    profile = IdentityProfile(
-                        user_id=result["user_id"],
-                        person_name=result["person_name"],
-                        source="LFW Academic Dataset",
-                        encrypted_facial_embedding=result["payload"],
-                    )
-                    pending_inserts.append(profile)
+            if result["status"] == "ok":
+                stats["ok"] += 1
 
-                    # Batch Commit to PostgreSQL
-                    if len(pending_inserts) >= BATCH_SIZE:
-                        session.bulk_save_objects(pending_inserts)
-                        session.commit()
-                        pending_inserts.clear()
-                        print(f"  {_C.GREEN}✓ COMMITTED BATCH{_C.RESET} | {stats['ok'] + stats['dup']}/{total_images} processed")
+                profile = IdentityProfile(
+                    user_id=result["user_id"],
+                    person_name=result["person_name"],
+                    source="LFW Academic Dataset",
+                    encrypted_facial_embedding=result["payload"],
+                )
+                pending_inserts.append(profile)
 
-                elif result["status"] == "skip":
-                    stats["skip"] += 1
-                else:
-                    stats["error"] += 1
+                # Batch Commit to PostgreSQL
+                if len(pending_inserts) >= BATCH_SIZE:
+                    session.bulk_save_objects(pending_inserts)
+                    session.commit()
+                    pending_inserts.clear()
+                    print(f"  {_C.GREEN}✓ COMMITTED BATCH{_C.RESET} | {processed_count}/{total_images} processed")
 
-                # Terminal Progress updates
-                if processed_count % 50 == 0:
-                    sys.stdout.write(f"\r  {_C.CYAN}Engine Status:{_C.RESET} {processed_count}/{total_futures} Extracted | Vaulted: {stats['ok']} | Errors: {stats['error']}")
-                    sys.stdout.flush()
+            elif result["status"] == "skip":
+                stats["skip"] += 1
+            else:
+                stats["error"] += 1
+
+            # Terminal Progress updates
+            if processed_count % 100 == 0:
+                elapsed_so_far = time.time() - t_start
+                rate = processed_count / elapsed_so_far if elapsed_so_far > 0 else 0
+                print(f"  {_C.CYAN}Engine:{_C.RESET} {processed_count}/{total_images} | Vaulted: {stats['ok']} | Err: {stats['error']} | {rate:.1f} img/s")
 
         # Commit final remaining batch
         if pending_inserts:
             session.bulk_save_objects(pending_inserts)
             session.commit()
-            print(f"\n  {_C.GREEN}✓ COMMITTED FINAL BATCH{_C.RESET}")
+            print(f"  {_C.GREEN}✓ COMMITTED FINAL BATCH{_C.RESET}")
 
     finally:
         session.close()
