@@ -177,6 +177,38 @@ jobs:
             --max-retries=1 \
             --set-env-vars="BUCKET_NAME=hoppwhistle-facial-uploads"
 
+      - name: Deploy Identity Graph Generator Job
+        run: |
+          gcloud run jobs deploy identity-graph-job \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }} \
+            --image=${{ env.BACKEND_IMAGE }}:${{ github.sha }} \
+            --command="python" \
+            --args="scripts/generate_identity_graph.py" \
+            --service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com \
+            --memory=2Gi \
+            --cpu=2 \
+            --task-timeout=1800 \
+            --max-retries=1 \
+            --set-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance \
+            --set-env-vars="KMS_KEY_NAME=projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek,BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=Fv966468!Sec5677,DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance"
+
+      - name: Deploy WORM Ledger Anchor Job
+        run: |
+          gcloud run jobs deploy worm-anchor-job \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }} \
+            --image=${{ env.BACKEND_IMAGE }}:${{ github.sha }} \
+            --command="python" \
+            --args="scripts/anchor_ledger.py" \
+            --service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com \
+            --memory=1Gi \
+            --cpu=1 \
+            --task-timeout=600 \
+            --max-retries=1 \
+            --set-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance \
+            --set-env-vars="BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=Fv966468!Sec5677,DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance"
+
       - name: Deploy Frontend to Cloud Run
         id: deploy-frontend
         uses: google-github-actions/deploy-cloudrun@v2

@@ -989,6 +989,85 @@ def generate_wireframe_hud(image: np.ndarray, landmarks) -> str:
     b64_str = base64.b64encode(buffer).decode('utf-8')
     return f"data:image/png;base64,{b64_str}"
 
+
+# ---------------------------------------------------------
+# COMPOSITE FORENSIC RECEIPT (EVIDENCE PRESERVATION)
+# ---------------------------------------------------------
+
+def generate_forensic_receipt(
+    gallery_aligned: np.ndarray,
+    probe_aligned: np.ndarray,
+    gallery_heatmap_b64: str,
+    fused_score: float,
+    probe_file_hash: str,
+) -> str | None:
+    """
+    Generates a self-contained composite forensic receipt PNG.
+    Layout: Gallery (256x256) | Probe (256x256) | Attention Map (256x256)
+    with a high-contrast 94px text panel at the bottom (total: 768x350).
+
+    Uploads to GCS under receipts/ prefix.
+    Returns the GCS URI or None on failure.
+    """
+    try:
+        # Decode heatmap from base64 data URI back to numpy
+        b64_data = gallery_heatmap_b64.split(",")[1] if "," in gallery_heatmap_b64 else gallery_heatmap_b64
+        heatmap_bytes = base64.b64decode(b64_data)
+        heatmap_arr = np.frombuffer(heatmap_bytes, dtype=np.uint8)
+        heatmap_img = cv2.imdecode(heatmap_arr, cv2.IMREAD_COLOR)
+
+        # Ensure all panels are 256x256
+        g = cv2.resize(gallery_aligned, (256, 256))
+        p = cv2.resize(probe_aligned, (256, 256))
+        h = cv2.resize(heatmap_img, (256, 256)) if heatmap_img is not None else np.zeros((256, 256, 3), dtype=np.uint8)
+
+        # Stitch side-by-side: 768x256
+        composite = np.hstack([g, p, h])
+
+        # Build high-contrast text panel (768x94, dark background)
+        text_panel = np.zeros((94, 768, 3), dtype=np.uint8)
+        text_panel[:] = (20, 20, 20)
+
+        # Column labels
+        cv2.putText(text_panel, "GALLERY", (85, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (120, 120, 120), 1, cv2.LINE_AA)
+        cv2.putText(text_panel, "PROBE", (355, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (120, 120, 120), 1, cv2.LINE_AA)
+        cv2.putText(text_panel, "ATTENTION MAP", (570, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (120, 120, 120), 1, cv2.LINE_AA)
+
+        # Divider line
+        cv2.line(text_panel, (0, 24), (768, 24), (60, 60, 60), 1)
+
+        # ISO-8601 timestamp
+        timestamp_iso = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # Forensic data lines
+        cv2.putText(text_panel, f"FUSED SCORE: {fused_score:.2f}%", (15, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 220), 1, cv2.LINE_AA)
+        cv2.putText(text_panel, f"PROBE SHA-256: {probe_file_hash}", (15, 67), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1, cv2.LINE_AA)
+        cv2.putText(text_panel, f"UTC TIMESTAMP: {timestamp_iso}", (15, 87), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1, cv2.LINE_AA)
+
+        # Final composite: 768x350
+        final = np.vstack([composite, text_panel])
+
+        # Encode as PNG and upload to GCS
+        _, buffer = cv2.imencode('.png', final)
+        receipt_bytes = buffer.tobytes()
+
+        bucket_name = os.getenv("BUCKET_NAME", "hoppwhistle-facial-uploads")
+        receipt_blob_name = f"receipts/{uuid.uuid4().hex}.png"
+
+        storage_client = storage.Client()
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(receipt_blob_name)
+        blob.upload_from_string(receipt_bytes, content_type="image/png")
+
+        receipt_uri = f"gs://{bucket_name}/{receipt_blob_name}"
+        print(f"[RECEIPT] Forensic receipt uploaded: {receipt_uri}")
+        return receipt_uri
+
+    except Exception as e:
+        print(f"[RECEIPT] WARNING: Failed to generate forensic receipt: {e}")
+        return None
+
+
 class UploadUrlsRequest(BaseModel):
     gallery_content_type: Optional[str] = None
     probe_content_type: str
@@ -1185,6 +1264,15 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         audit_log=audit
     )
 
+    # ── Composite Forensic Receipt (Evidence Preservation) ──
+    receipt_url = generate_forensic_receipt(
+        gallery_aligned=gallery_aligned,
+        probe_aligned=probe_aligned,
+        gallery_heatmap_b64=gallery_heatmap,
+        fused_score=fused_score,
+        probe_file_hash=probe_file_hash,
+    )
+
     # ── Immutable Audit Ledger ──
     ledger_session = SessionLocal()
     try:
@@ -1201,6 +1289,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             structural_score_x100=round(tier1_score * 100),
             geometric_score_x100=round(tier2_score * 100),
             micro_topology_score_x100=round(tier3_score * 100),
+            receipt_url=receipt_url,
         )
         ledger_session.add(event)
         ledger_session.commit()
@@ -1461,6 +1550,15 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         audit_log=audit,
     )
 
+    # ── Composite Forensic Receipt (Evidence Preservation) ──
+    receipt_url = generate_forensic_receipt(
+        gallery_aligned=gallery_aligned,
+        probe_aligned=probe_aligned,
+        gallery_heatmap_b64=gallery_heatmap,
+        fused_score=fused_score,
+        probe_file_hash=probe_file_hash,
+    )
+
     # ── Immutable Audit Ledger ──
     ledger_session = SessionLocal()
     try:
@@ -1477,6 +1575,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             structural_score_x100=round(tier1_score * 100),
             geometric_score_x100=round(tier2_score * 100),
             micro_topology_score_x100=round(tier3_score * 100),
+            receipt_url=receipt_url,
         )
         ledger_session.add(event)
         ledger_session.commit()
@@ -1497,69 +1596,38 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
 def vault_network(_: dict = Depends(verify_jwt)):
     """
     Phase 3: Sovereign Identity Graph.
-    Decrypts every facial embedding in the vault and computes
-    the NxN structural cosine similarity matrix. Returns a graph
-    topology of nodes and links (only links with match > 75%).
+    Returns the pre-computed network topology JSON from GCS.
+    The graph is generated asynchronously by scripts/generate_identity_graph.py
+    (Cloud Run Job) to avoid O(N^2) KMS decryption and cosine computation
+    at request time.
     """
-    session = SessionLocal()
+    import json as _json
+    bucket_name = os.getenv("BUCKET_NAME", "hoppwhistle-facial-uploads")
     try:
-        profiles = session.query(IdentityProfile).all()
+        storage_client = storage.Client()
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob("topology/network_graph.json")
 
-        if not profiles:
-            return {"nodes": [], "links": []}
+        if not blob.exists():
+            return {
+                "nodes": [],
+                "links": [],
+                "status": "PENDING_GENERATION",
+                "detail": "Identity graph has not been generated yet. Run the generate_identity_graph Cloud Run Job."
+            }
 
-        # Decrypt all embeddings in-memory
-        decrypted = []
-        for profile in profiles:
-            try:
-                vec = decrypt_embedding(profile.encrypted_facial_embedding)
-                decrypted.append({
-                    "user_id": profile.user_id,
-                    "embedding": vec
-                })
-            except Exception:
-                continue  # Skip corrupted records
-
-        # Build nodes
-        nodes = [
-            {"id": d["user_id"], "name": d["user_id"], "group": 1}
-            for d in decrypted
-        ]
-
-        # Compute NxN cosine similarity (upper triangle only — no dupes)
-        links = []
-        for i in range(len(decrypted)):
-            for j in range(i + 1, len(decrypted)):
-                vec_a = decrypted[i]["embedding"]
-                vec_b = decrypted[j]["embedding"]
-
-                # Skip dimension mismatch
-                if vec_a.shape[0] != vec_b.shape[0]:
-                    continue
-
-                score = calculate_cosine_similarity(vec_a, vec_b) * 100
-
-                if score > 75.0:
-                    links.append({
-                        "source": decrypted[i]["user_id"],
-                        "target": decrypted[j]["user_id"],
-                        "value": round(score, 1)
-                    })
-
-        # Mark high-connectivity nodes as group 2 (anomalies)
-        connection_counts: dict[str, int] = {}
-        for link in links:
-            connection_counts[link["source"]] = connection_counts.get(link["source"], 0) + 1
-            connection_counts[link["target"]] = connection_counts.get(link["target"], 0) + 1
-
-        avg_connections = (sum(connection_counts.values()) / len(connection_counts)) if connection_counts else 0
-        for node in nodes:
-            if connection_counts.get(node["id"], 0) > avg_connections * 1.5:
-                node["group"] = 2
-
-        return {"nodes": nodes, "links": links}
-    finally:
-        session.close()
+        content = blob.download_as_text()
+        graph_data = _json.loads(content)
+        graph_data["status"] = "READY"
+        return graph_data
+    except Exception as e:
+        print(f"Failed to fetch network graph from GCS: {e}")
+        return {
+            "nodes": [],
+            "links": [],
+            "status": "ERROR",
+            "detail": str(e)
+        }
 
 
 # ---------------------------------------------------------

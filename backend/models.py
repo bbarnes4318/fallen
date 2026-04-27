@@ -101,6 +101,9 @@ class VerificationEvent(Base):
     geometric_score_x100 = Column(Integer, nullable=True)
     micro_topology_score_x100 = Column(Integer, nullable=True)
 
+    # Composite forensic receipt (GCS URI of stitched PNG)
+    receipt_url = Column(Text, nullable=True)
+
 # ---------------------------------------------------------
 # DATABASE INITIALIZATION
 # ---------------------------------------------------------
