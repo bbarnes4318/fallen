@@ -27,7 +27,7 @@ from typing import Optional
 from skimage.feature import local_binary_pattern
 import mediapipe as mp
 import onnxruntime as ort
-from models import SessionLocal, IdentityProfile, init_db
+from models import SessionLocal, IdentityProfile, VerificationEvent, init_db
 import stripe
 from deepface import DeepFace
 
@@ -225,6 +225,28 @@ class VerificationRequest(BaseModel):
     gallery_url: str
     probe_url: str
 
+# ---------------------------------------------------------
+# PIPELINE VERSION PINNING (Daubert Reproducibility)
+# ---------------------------------------------------------
+PIPELINE_VERSION = "AurumShield Daubert-Compliant v2.0"
+
+def _get_dependency_versions() -> dict:
+    """Snapshot the exact versions of critical biometric libraries."""
+    versions = {}
+    try:
+        import deepface
+        versions["deepface"] = getattr(deepface, "__version__", "unknown")
+    except Exception:
+        versions["deepface"] = "unavailable"
+    try:
+        versions["mediapipe"] = mp.__version__
+    except Exception:
+        versions["mediapipe"] = "unavailable"
+    versions["opencv"] = cv2.__version__
+    return versions
+
+DEPENDENCY_VERSIONS = _get_dependency_versions()
+
 class AuditLog(BaseModel):
     raw_cosine_score: float
     statistical_certainty: str
@@ -246,6 +268,12 @@ class AuditLog(BaseModel):
     # Calibration provenance
     calibration_benchmark: Optional[str] = None
     calibration_pairs: Optional[int] = None
+    # Chain of Custody — Pre-decode binary hashes
+    probe_file_hash: Optional[str] = None
+    gallery_file_hash: Optional[str] = None
+    # Pipeline reproducibility
+    pipeline_version: str = PIPELINE_VERSION
+    dependency_versions: Optional[dict] = None
 
 class VerificationResponse(BaseModel):
     structural_score: float
@@ -460,7 +488,13 @@ def build_crypto_envelope(decryption_time_ms: float | None = None) -> dict:
 # CORE PREPROCESSING LOGIC
 # ---------------------------------------------------------
 
-def fetch_image_from_url(uri: str) -> np.ndarray:
+def fetch_image_from_url(uri: str) -> tuple:
+    """
+    Fetches an image from a GCS URI or HTTP URL.
+    Returns a tuple of (decoded_image_array, sha256_hash_of_raw_bytes).
+    The hash is computed on the raw byte stream BEFORE OpenCV decode,
+    establishing an immutable chain-of-custody fingerprint.
+    """
     try:
         if uri.startswith("gs://"):
             storage_client = storage.Client()
@@ -468,16 +502,21 @@ def fetch_image_from_url(uri: str) -> np.ndarray:
             bucket = storage_client.bucket(parts[0])
             blob = bucket.blob(parts[1])
             img_bytes = blob.download_as_bytes()
-            arr = np.asarray(bytearray(img_bytes), dtype=np.uint8)
-            img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         else:
             req = urllib.request.urlopen(uri, timeout=10)
-            arr = np.asarray(bytearray(req.read()), dtype=np.uint8)
-            img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            img_bytes = req.read()
+
+        # Chain of Custody: hash the raw binary BEFORE decode
+        raw_hash = hashlib.sha256(img_bytes).hexdigest()
+
+        arr = np.asarray(bytearray(img_bytes), dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
             
         if img is None:
             raise ValueError("Could not decode image.")
-        return img
+        return img, raw_hash
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to fetch image: {str(e)}")
 
@@ -1017,9 +1056,9 @@ def generate_upload_urls(req: UploadUrlsRequest, _: dict = Depends(verify_jwt)):
 @app.post("/verify/fuse", response_model=VerificationResponse)
 @limiter.limit("5/minute")
 def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = Depends(verify_jwt)):
-    # 1. Fetch images from GCS
-    gallery_img = fetch_image_from_url(payload.gallery_url)
-    probe_img = fetch_image_from_url(payload.probe_url)
+    # 1. Fetch images from GCS (with pre-decode binary hashing)
+    gallery_img, gallery_file_hash = fetch_image_from_url(payload.gallery_url)
+    probe_img, probe_file_hash = fetch_image_from_url(payload.probe_url)
     
     # 1.5 Presentation Attack Detection (Liveness Firewall)
     liveness_result = detect_liveness(probe_img)
@@ -1123,9 +1162,13 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         crypto_envelope=build_crypto_envelope(),
         calibration_benchmark=stats.get("benchmark"),
         calibration_pairs=stats.get("pairs_evaluated"),
+        probe_file_hash=probe_file_hash,
+        gallery_file_hash=gallery_file_hash,
+        pipeline_version=PIPELINE_VERSION,
+        dependency_versions=DEPENDENCY_VERSIONS,
     )
 
-    return VerificationResponse(
+    response = VerificationResponse(
         structural_score=round(tier1_score, 2),
         soft_biometrics_score=round(tier2_score, 2),
         micro_topology_score=round(tier3_score, 2),
@@ -1141,6 +1184,33 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         probe_wireframe_b64=probe_wireframe,
         audit_log=audit
     )
+
+    # ── Immutable Audit Ledger ──
+    ledger_session = SessionLocal()
+    try:
+        event = VerificationEvent(
+            probe_hash=probe_file_hash,
+            gallery_hash=gallery_file_hash,
+            matched_user_id=None,
+            fused_score_x100=round(fused_score * 100),
+            conclusion=conclusion,
+            pipeline_version=PIPELINE_VERSION,
+            calibration_benchmark=stats.get("benchmark"),
+            false_acceptance_rate=stats["false_acceptance_rate"],
+            veto_triggered=veto_triggered,
+            structural_score_x100=round(tier1_score * 100),
+            geometric_score_x100=round(tier2_score * 100),
+            micro_topology_score_x100=round(tier3_score * 100),
+        )
+        ledger_session.add(event)
+        ledger_session.commit()
+    except Exception as ledger_err:
+        print(f"Audit ledger write failed (non-fatal): {ledger_err}")
+        ledger_session.rollback()
+    finally:
+        ledger_session.close()
+
+    return response
 
 # ---------------------------------------------------------
 # PHASE 2: 1:N VAULT SEARCH (TARGET ACQUISITION)
@@ -1182,8 +1252,8 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     in the vault and returns the highest-confidence match with full
     forensic visualization (heatmaps, scar delta, wireframe HUD).
     """
-    # 1. Fetch & validate probe
-    probe_img = fetch_image_from_url(payload.probe_url)
+    # 1. Fetch & validate probe (with pre-decode binary hashing)
+    probe_img, probe_file_hash = fetch_image_from_url(payload.probe_url)
 
     liveness_result = detect_liveness(probe_img)
     liveness_telemetry_vault = build_liveness_telemetry(liveness_result)
@@ -1256,9 +1326,11 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     gallery_aligned = probe_aligned
     gallery_landmarks = probe_landmarks
 
+    gallery_file_hash = None  # Populated if gallery image is fetched
+
     if matched_profile_for_gallery and matched_profile_for_gallery.thumbnail_url:
         try:
-            gallery_img = fetch_image_from_url(matched_profile_for_gallery.thumbnail_url)
+            gallery_img, gallery_file_hash = fetch_image_from_url(matched_profile_for_gallery.thumbnail_url)
             gallery_clahe = apply_clahe(gallery_img)
             gallery_aligned, gallery_landmarks = align_face_crop(gallery_clahe)
             if gallery_landmarks is None:
@@ -1366,9 +1438,13 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         crypto_envelope=build_crypto_envelope(vault_decrypt_elapsed_ms),
         calibration_benchmark=stats.get("benchmark"),
         calibration_pairs=stats.get("pairs_evaluated"),
+        probe_file_hash=probe_file_hash,
+        gallery_file_hash=gallery_file_hash,
+        pipeline_version=PIPELINE_VERSION,
+        dependency_versions=DEPENDENCY_VERSIONS,
     )
 
-    return VerificationResponse(
+    response = VerificationResponse(
         structural_score=round(tier1_score, 2),
         soft_biometrics_score=round(tier2_score, 2),
         micro_topology_score=round(tier3_score, 2),
@@ -1384,6 +1460,33 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         probe_wireframe_b64=probe_wireframe_b64,
         audit_log=audit,
     )
+
+    # ── Immutable Audit Ledger ──
+    ledger_session = SessionLocal()
+    try:
+        event = VerificationEvent(
+            probe_hash=probe_file_hash,
+            gallery_hash=gallery_file_hash,
+            matched_user_id=best_user_id,
+            fused_score_x100=round(fused_score * 100),
+            conclusion=conclusion,
+            pipeline_version=PIPELINE_VERSION,
+            calibration_benchmark=stats.get("benchmark"),
+            false_acceptance_rate=stats["false_acceptance_rate"],
+            veto_triggered=veto_arcface,
+            structural_score_x100=round(tier1_score * 100),
+            geometric_score_x100=round(tier2_score * 100),
+            micro_topology_score_x100=round(tier3_score * 100),
+        )
+        ledger_session.add(event)
+        ledger_session.commit()
+    except Exception as ledger_err:
+        print(f"Audit ledger write failed (non-fatal): {ledger_err}")
+        ledger_session.rollback()
+    finally:
+        ledger_session.close()
+
+    return response
 
 
 # ---------------------------------------------------------

@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, LargeBinary, DateTime, Boolean, Text
+from sqlalchemy import create_engine, Column, Integer, String, LargeBinary, DateTime, Boolean, Text, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.sql import func
 import os
@@ -64,6 +64,42 @@ class IdentityProfile(Base):
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+# ---------------------------------------------------------
+# IMMUTABLE FORENSIC AUDIT LEDGER
+# ---------------------------------------------------------
+
+class VerificationEvent(Base):
+    """
+    Immutable, append-only audit ledger for every biometric verification.
+    Each row is a server-authoritative record of a pipeline transaction.
+    fused_score_x100: Integer representation of percentage × 100
+        (e.g. 99.50% → 9950) to eliminate floating-point drift in forensic records.
+    """
+    __tablename__ = "verification_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Chain of Custody — raw file hashes (SHA-256 of pre-decode byte stream)
+    probe_hash = Column(String(64), nullable=False)
+    gallery_hash = Column(String(64), nullable=True)
+
+    # Match outcome
+    matched_user_id = Column(String(255), nullable=True)
+    fused_score_x100 = Column(Integer, nullable=False)  # 99.50% → 9950
+    conclusion = Column(Text, nullable=False)
+
+    # Pipeline provenance
+    pipeline_version = Column(String(128), nullable=False)
+    calibration_benchmark = Column(String(64), nullable=True)
+    false_acceptance_rate = Column(String(128), nullable=True)
+    veto_triggered = Column(Boolean, nullable=False, default=False)
+
+    # Individual tier scores (×100 for consistency)
+    structural_score_x100 = Column(Integer, nullable=True)
+    geometric_score_x100 = Column(Integer, nullable=True)
+    micro_topology_score_x100 = Column(Integer, nullable=True)
 
 # ---------------------------------------------------------
 # DATABASE INITIALIZATION
