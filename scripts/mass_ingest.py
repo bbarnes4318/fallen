@@ -122,8 +122,8 @@ def upload_face_to_gcs(aligned_img, filename: str) -> str:
     bucket = client.bucket(GCS_BUCKET)
     blob = bucket.blob(blob_path)
     blob.upload_from_string(buf.tobytes(), content_type="image/jpeg")
-    # Return the authenticated GCS URI — the backend can sign or proxy this
-    return f"https://storage.googleapis.com/{GCS_BUCKET}/{blob_path}"
+    # Return gs:// URI — backend's fetch_image_from_url handles authenticated GCS reads
+    return f"gs://{GCS_BUCKET}/{blob_path}"
 
 
 def process_single_image(filepath: str):
