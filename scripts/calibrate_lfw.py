@@ -1,20 +1,19 @@
 """
 LFW Benchmark Calibration Script for AurumShield
 =================================================
-Downloads the official LFW pairs.txt from UMass Amherst and evaluates
+Fetches the official LFW dataset via Hugging Face Datasets CDN and evaluates
 the full biometric pipeline (ArcFace cosine, geometric L2, LBP chi-squared)
-against 6,000 standardized face pairs (3,000 genuine + 3,000 impostor).
+against all standardized face pairs.
 
 Outputs:
-  - calibration_data/lfw_calibration.json  (committed to repo)
-  - gs://hoppwhistle-facial-uploads/calibration/lfw_calibration.json  (GCS backup)
+  - calibration_data/lfw_calibration.json  (local backup)
+  - gs://hoppwhistle-facial-uploads/calibration/lfw_calibration.json  (GCS)
 
 Usage (Cloud Run Job):
   python calibrate_lfw.py
 
 Prerequisites:
-  - Network access to vis-www.cs.umass.edu (LFW pairs.txt)
-  - Network access to LFW image mirror
+  - Network access to huggingface.co CDN
   - ArcFace model available (DeepFace)
   - MediaPipe face mesh
 """
@@ -34,7 +33,7 @@ import mediapipe as mp
 from skimage.feature import local_binary_pattern
 from deepface import DeepFace
 from sklearn.metrics import roc_curve
-from sklearn.datasets import fetch_lfw_pairs
+from datasets import load_dataset
 from scipy.optimize import brentq
 from scipy.interpolate import interp1d
 from tqdm import tqdm
@@ -220,24 +219,55 @@ def chi_squared_distance(h1: np.ndarray, h2: np.ndarray) -> float:
 def run_calibration():
     """
     Main calibration procedure.
-    1. Fetch LFW pairs via sklearn (handles mirrors + caching)
-    2. Process all pairs through the full pipeline
-    3. Compute ROC, EER, FAR at specific thresholds
-    4. Output calibration JSON
+    1. Fetch LFW dataset via Hugging Face Datasets CDN
+    2. Build genuine + impostor pairs from the dataset
+    3. Process all pairs through the full pipeline
+    4. Compute ROC, EER, FAR at specific thresholds
+    5. Output calibration JSON
     """
-    # 1. Fetch LFW pairs using sklearn's built-in downloader
-    # This downloads from the official LFW source with fallback mirrors
-    print("Fetching LFW pairs via sklearn (this downloads the dataset)...")
-    lfw_train = fetch_lfw_pairs(subset='train', color=True, resize=1.0)
-    lfw_test = fetch_lfw_pairs(subset='test', color=True, resize=1.0)
+    # 1. Fetch LFW dataset from Hugging Face CDN
+    print("Fetching LFW dataset via Hugging Face Datasets CDN...")
+    ds = load_dataset("logasja/lfw", split="train", trust_remote_code=True)
+    print(f"Loaded {len(ds)} LFW images from Hugging Face.")
 
-    # Combine train + test for full 6,000 pair evaluation
-    all_pairs = np.concatenate([lfw_train.pairs, lfw_test.pairs], axis=0)
-    all_labels = np.concatenate([lfw_train.target, lfw_test.target], axis=0)
+    # 2. Index images by person label for pair construction
+    from collections import defaultdict
+    person_images = defaultdict(list)
+    for row in ds:
+        label = row["label"]
+        img = row["image"]  # PIL Image
+        person_images[label].append(np.array(img))  # Convert PIL to numpy RGB
 
-    print(f"Loaded {len(all_pairs)} pairs ({np.sum(all_labels == 1)} genuine, {np.sum(all_labels == 0)} impostor)")
+    # Build genuine pairs: same person, different images
+    genuine_pairs = []
+    for label, images in person_images.items():
+        if len(images) >= 2:
+            for i in range(len(images)):
+                for j in range(i + 1, len(images)):
+                    genuine_pairs.append((images[i], images[j], 1))
 
-    # 2. Process all pairs
+    # Build impostor pairs: different persons (sample to balance)
+    person_labels = [l for l, imgs in person_images.items() if len(imgs) >= 1]
+    import random
+    random.seed(42)
+    impostor_pairs = []
+    target_impostor = len(genuine_pairs)  # Match genuine count for balance
+    attempts = 0
+    while len(impostor_pairs) < target_impostor and attempts < target_impostor * 10:
+        l1, l2 = random.sample(person_labels, 2)
+        img1 = random.choice(person_images[l1])
+        img2 = random.choice(person_images[l2])
+        impostor_pairs.append((img1, img2, 0))
+        attempts += 1
+
+    all_pairs_data = genuine_pairs + impostor_pairs
+    random.shuffle(all_pairs_data)
+
+    n_genuine = len(genuine_pairs)
+    n_impostor = len(impostor_pairs)
+    print(f"Built {len(all_pairs_data)} pairs ({n_genuine} genuine, {n_impostor} impostor)")
+
+    # 3. Process all pairs
     labels = []       # 1 = genuine, 0 = impostor
     cosine_scores = []
     l2_scores = []
@@ -247,15 +277,8 @@ def run_calibration():
     skipped = 0
 
     print("\n═══ Processing All Pairs ═══")
-    for i in tqdm(range(len(all_pairs)), desc="Pairs"):
-        pair = all_pairs[i]
-        label = all_labels[i]
-
-        # pair shape: (2, H, W, 3) — two RGB images
-        img1_rgb = (pair[0] * 255).astype(np.uint8) if pair[0].max() <= 1.0 else pair[0].astype(np.uint8)
-        img2_rgb = (pair[1] * 255).astype(np.uint8) if pair[1].max() <= 1.0 else pair[1].astype(np.uint8)
-
-        # Convert RGB to BGR for OpenCV pipeline
+    for img1_rgb, img2_rgb, label in tqdm(all_pairs_data, desc="Pairs"):
+        # Convert RGB (from PIL) to BGR for OpenCV pipeline
         img1 = cv2.cvtColor(img1_rgb, cv2.COLOR_RGB2BGR)
         img2 = cv2.cvtColor(img2_rgb, cv2.COLOR_RGB2BGR)
 
@@ -271,7 +294,7 @@ def run_calibration():
         labels.append(int(label))
         processed += 1
 
-    print(f"\nProcessed: {processed}/{len(all_pairs)} pairs ({skipped} skipped)")
+    print(f"\nProcessed: {processed}/{len(all_pairs_data)} pairs ({skipped} skipped)")
 
     if processed < 100:
         print("FATAL: Too few pairs processed. Calibration aborted.")
@@ -318,7 +341,7 @@ def run_calibration():
     # 8. Build calibration output
     calibration = {
         "benchmark": "LFW",
-        "source": "sklearn.datasets.fetch_lfw_pairs (official UMass LFW mirror)",
+        "source": "huggingface.co/datasets/logasja/lfw (official LFW mirror)",
         "pairs_evaluated": processed,
         "pairs_skipped": skipped,
         "genuine_pairs": int(np.sum(labels_arr == 1)),

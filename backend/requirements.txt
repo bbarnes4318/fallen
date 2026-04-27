@@ -22,3 +22,4 @@ slowapi==0.1.9
 tqdm==4.67.1
 scikit-learn
 Pillow
+datasets
