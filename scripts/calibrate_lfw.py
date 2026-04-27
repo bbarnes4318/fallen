@@ -51,7 +51,7 @@ except ImportError:
 # ── Constants ──
 LFW_PAIRS_URL = "http://vis-www.cs.umass.edu/lfw/pairs.txt"
 LFW_BASE_URL = "http://vis-www.cs.umass.edu/lfw/images"
-GCS_BUCKET = "hoppwhistle-facial-uploads"
+GCS_BUCKET = os.getenv("BUCKET_NAME", "hoppwhistle-facial-uploads")
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration_data")
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, "lfw_calibration.json")
 

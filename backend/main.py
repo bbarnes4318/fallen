@@ -267,18 +267,46 @@ class VerificationResponse(BaseModel):
 # STATISTICAL CONFIDENCE ENGINE (CALIBRATION-DRIVEN)
 # ---------------------------------------------------------
 
-# Load empirical calibration data at startup
+# Load empirical calibration data at startup from GCS
 CALIBRATION = None
-_cal_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration_data", "lfw_calibration.json")
-try:
+
+def _load_calibration():
+    """Attempt to load calibration JSON from GCS, fallback to local file."""
     import json as _json
-    with open(_cal_path, "r") as _f:
-        CALIBRATION = _json.load(_f)
-    print(f"Calibration loaded: {CALIBRATION['benchmark']} ({CALIBRATION['pairs_evaluated']} pairs)")
-except FileNotFoundError:
-    print("WARNING: No calibration data found at calibration_data/lfw_calibration.json. FAR will be reported as UNCALIBRATED.")
-except Exception as _e:
-    print(f"WARNING: Failed to load calibration data: {_e}. FAR will be reported as UNCALIBRATED.")
+
+    bucket_name = os.getenv("BUCKET_NAME", "hoppwhistle-facial-uploads")
+    gcs_path = "calibration/lfw_calibration.json"
+
+    # Try GCS first
+    try:
+        gcs_client = storage.Client()
+        bucket = gcs_client.bucket(bucket_name)
+        blob = bucket.blob(gcs_path)
+        if blob.exists():
+            content = blob.download_as_text()
+            cal = _json.loads(content)
+            print(f"Calibration loaded from GCS: {cal['benchmark']} ({cal['pairs_evaluated']} pairs)")
+            return cal
+        else:
+            print(f"No calibration blob at gs://{bucket_name}/{gcs_path}")
+    except Exception as e:
+        print(f"GCS calibration load failed: {e}")
+
+    # Fallback to local file (for dev environments)
+    _local_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration_data", "lfw_calibration.json")
+    try:
+        with open(_local_path, "r") as _f:
+            cal = _json.load(_f)
+        print(f"Calibration loaded from local file: {cal['benchmark']} ({cal['pairs_evaluated']} pairs)")
+        return cal
+    except FileNotFoundError:
+        print("WARNING: No calibration data found (GCS or local). FAR will be reported as UNCALIBRATED.")
+    except Exception as _e:
+        print(f"WARNING: Failed to load calibration data: {_e}. FAR will be reported as UNCALIBRATED.")
+
+    return None
+
+CALIBRATION = _load_calibration()
 
 def calculate_statistical_confidence(cosine_score: float) -> dict:
     """
