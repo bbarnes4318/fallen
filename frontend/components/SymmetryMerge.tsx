@@ -58,7 +58,8 @@ function drawPane(
   pan: { x: number; y: number },
   borderColor?: string,
   baseOpacity?: number,
-  overlayOpacity?: number
+  overlayOpacity?: number,
+  xrayFilter?: boolean
 ) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -78,13 +79,28 @@ function drawPane(
   const oy = (ch - dh) / 2 + pan.y;
 
   ctx.clearRect(0, 0, cw, ch);
+
+  // X-RAY forensic filter: high-contrast inverted grayscale when no overlay present
+  if (xrayFilter && !overlayImg) {
+    ctx.filter = 'contrast(1.8) grayscale(1) invert(0.85) brightness(1.2)';
+  }
+
   ctx.save();
   ctx.translate(ox, oy);
   ctx.scale(scale, scale);
 
-  // Base image with configurable opacity (X-RAY dims this)
+  // Base image with configurable opacity (X-RAY dims this when overlay is present)
   ctx.globalAlpha = baseOpacity ?? 1.0;
   ctx.drawImage(baseImg, 0, 0, iw, ih);
+
+  // Reset filter before drawing overlay so it renders correctly
+  if (xrayFilter && !overlayImg) {
+    ctx.restore();
+    ctx.save();
+    ctx.translate(ox, oy);
+    ctx.scale(scale, scale);
+    ctx.filter = 'none';
+  }
 
   // Overlay with configurable opacity (X-RAY boosts this)
   if (overlayImg) {
@@ -95,12 +111,14 @@ function drawPane(
 
   if (borderColor) {
     ctx.globalAlpha = 1;
+    ctx.filter = 'none';
     ctx.strokeStyle = borderColor;
     ctx.lineWidth = 3 / scale;
     ctx.strokeRect(0, 0, iw, ih);
   }
 
   ctx.restore();
+  ctx.filter = 'none';
 }
 
 /**
@@ -141,17 +159,19 @@ export default function SymmetryMerge({
 
   const imagesReady = !!galleryImg && !!probeImg;
 
-  // ── LEFT PANE = PROBE (clean reference in delta mode) ──
+  // ── LEFT PANE = PROBE (+ delta overlay in delta mode, + wireframe in mesh mode) ──
   const getLeftOverlay = useCallback((): HTMLImageElement | null => {
     if (mode === 'mesh' && pWireImg) return pWireImg;
+    if (mode === 'delta' && deltaImg) return deltaImg;
     return null;
-  }, [mode, pWireImg]);
+  }, [mode, pWireImg, deltaImg]);
 
-  // ── RIGHT PANE = GALLERY (mesh overlay only; delta replaces base) ──
+  // ── RIGHT PANE = GALLERY (+ delta overlay in delta mode, + wireframe in mesh mode) ──
   const getRightOverlay = useCallback((): HTMLImageElement | null => {
     if (mode === 'mesh' && gWireImg) return gWireImg;
+    if (mode === 'delta' && deltaImg) return deltaImg;
     return null;
-  }, [mode, gWireImg]);
+  }, [mode, gWireImg, deltaImg]);
 
   const getBorderColor = (): string | undefined => {
     if (mode === 'delta') return 'rgba(180, 0, 30, 0.5)';
@@ -159,24 +179,20 @@ export default function SymmetryMerge({
     return undefined;
   };
 
-  // X-RAY opacity values
+  // X-RAY opacity values — active when overlays are present
   const hasOverlay = mode === 'mesh' || mode === 'delta';
   const baseOpacity = isXrayMode && hasOverlay ? 0.1 : 1.0;
-  const overlayOpacity = isXrayMode && hasOverlay ? 1.0 : 0.85;
+  const overlayOpacity = isXrayMode && hasOverlay ? 1.0 : (mode === 'delta' ? 0.7 : 0.85);
 
-  // Draw dual panes — LEFT = PROBE, RIGHT = GALLERY (or DELTA map)
+  // Draw dual panes — LEFT = PROBE, RIGHT = GALLERY (both get delta overlay in delta mode)
   useEffect(() => {
     if (!imagesReady || mode === 'overlap') return;
 
     if (leftCanvasRef.current && probeImg) {
-      drawPane(leftCanvasRef.current, probeImg, getLeftOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity);
+      drawPane(leftCanvasRef.current, probeImg, getLeftOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode);
     }
-    if (rightCanvasRef.current) {
-      // In delta mode, render the delta map as the sole base image (no gallery underneath)
-      const rightBase = (mode === 'delta' && deltaImg) ? deltaImg : galleryImg;
-      if (rightBase) {
-        drawPane(rightCanvasRef.current, rightBase, getRightOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity);
-      }
+    if (rightCanvasRef.current && galleryImg) {
+      drawPane(rightCanvasRef.current, galleryImg, getRightOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode);
     }
   });
 
@@ -185,10 +201,10 @@ export default function SymmetryMerge({
     if (!imagesReady || mode !== 'overlap') return;
 
     if (overlapLeftRef.current && probeImg) {
-      drawPane(overlapLeftRef.current, probeImg, null, zoom, pan);
+      drawPane(overlapLeftRef.current, probeImg, null, zoom, pan, undefined, undefined, undefined, isXrayMode);
     }
     if (overlapRightRef.current && galleryImg) {
-      drawPane(overlapRightRef.current, galleryImg, null, zoom, pan);
+      drawPane(overlapRightRef.current, galleryImg, null, zoom, pan, undefined, undefined, undefined, isXrayMode);
     }
   });
 
@@ -303,11 +319,16 @@ export default function SymmetryMerge({
             <canvas ref={overlapLeftRef} className="w-full h-full" />
           </div>
 
-          {/* Slider handle */}
+          {/* Slider handle — minimal line with small edge chevrons */}
           <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: `${overlapPos}%`, transform: 'translateX(-50%)' }}>
-            <div className="w-[1px] h-full bg-[#D4AF37]/20" />
-            <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 rounded-full border border-[#D4AF37]/50 bg-[#0A0A0B]/80 flex items-center justify-center backdrop-blur-sm">
-              <svg className="w-2 h-2 text-[#D4AF37]/70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 9l4-4 4 4M16 15l-4 4-4-4"></path></svg>
+            <div className="w-[2px] h-full bg-[#D4AF37]/40 shadow-[0_0_6px_rgba(212,175,55,0.3)]" />
+            {/* Top chevron */}
+            <div className="absolute top-3 left-1/2 -translate-x-1/2">
+              <svg className="w-3 h-3 text-[#D4AF37]/50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"></path></svg>
+            </div>
+            {/* Bottom chevron */}
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2">
+              <svg className="w-3 h-3 text-[#D4AF37]/50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path></svg>
             </div>
           </div>
 
@@ -324,7 +345,7 @@ export default function SymmetryMerge({
             {...commonPaneEvents}
           >
             <canvas ref={leftCanvasRef} className="block w-full h-full" />
-            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? 'PROBE (REF)' : 'PROBE (A)'}</div>
+            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">PROBE + DELTA</span> : 'PROBE (A)'}</div>
           </div>
 
           {/* Right Pane: Gallery */}
@@ -333,7 +354,7 @@ export default function SymmetryMerge({
             {...commonPaneEvents}
           >
             <canvas ref={rightCanvasRef} className="block w-full h-full" />
-            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">DELTA MAP</span> : 'GALLERY (B)'}</div>
+            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">GALLERY + DELTA</span> : 'GALLERY (B)'}</div>
           </div>
         </div>
       )}
@@ -345,7 +366,7 @@ export default function SymmetryMerge({
           {mode === 'mesh' && <span className="text-[#D4AF37]">3DMM WIREFRAME HUD</span>}
           {mode === 'delta' && <span className="text-red-500">BIOLOGICAL TOPOGRAPHY DELTA</span>}
           {mode === 'overlap' && <span className="text-[#D4AF37]">DRAG TO COMPARE OVERLAP</span>}
-          {isXrayMode && hasOverlay && <span className="ml-2 text-[#D4AF37] animate-pulse">· X-RAY ACTIVE</span>}
+          {isXrayMode && <span className="ml-2 text-[#D4AF37] animate-pulse">· X-RAY ACTIVE</span>}
         </span>
         <span>SYNCHRONIZED · {Math.round(zoom * 100)}%</span>
       </div>

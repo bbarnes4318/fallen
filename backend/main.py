@@ -1871,11 +1871,9 @@ def vault_network(_: dict = Depends(verify_jwt)):
     """
     Phase 3: Sovereign Identity Graph.
     Returns the pre-computed network topology JSON from GCS.
-    The graph is generated asynchronously by scripts/generate_identity_graph.py
-    (Cloud Run Job) to avoid O(N^2) KMS decryption and cosine computation
-    at request time.
+    Streams raw JSON bytes directly to avoid parse/re-serialize overhead.
     """
-    import json as _json
+    from fastapi.responses import Response
     bucket_name = os.getenv("BUCKET_NAME", "hoppwhistle-facial-uploads")
     try:
         storage_client = storage.Client()
@@ -1890,10 +1888,8 @@ def vault_network(_: dict = Depends(verify_jwt)):
                 "detail": "Identity graph has not been generated yet. Run the generate_identity_graph Cloud Run Job."
             }
 
-        content = blob.download_as_text()
-        graph_data = _json.loads(content)
-        graph_data["status"] = "READY"
-        return graph_data
+        content = blob.download_as_bytes()
+        return Response(content=content, media_type="application/json")
     except Exception as e:
         print(f"Failed to fetch network graph from GCS: {e}")
         return {

@@ -148,11 +148,16 @@ export default function IdentityGraph() {
       return;
     }
 
-    const fetchGraph = async () => {
+    const fetchWithRetry = async (attempt = 0): Promise<void> => {
+      const MAX_RETRIES = 3;
       try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 60000); // 60s timeout
         const res = await fetch(`${getApiUrl()}/vault/network`, {
           headers: { 'Authorization': `Bearer ${token}` },
+          signal: controller.signal,
         });
+        clearTimeout(timeout);
         if (res.ok) {
           const data = await res.json();
           if (data.nodes && data.nodes.length > 0) {
@@ -160,16 +165,23 @@ export default function IdentityGraph() {
           } else {
             setGraphData(DUMMY_GRAPH);
           }
+        } else if (attempt < MAX_RETRIES) {
+          await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+          return fetchWithRetry(attempt + 1);
         } else {
           setGraphData(DUMMY_GRAPH);
         }
       } catch {
+        if (attempt < MAX_RETRIES) {
+          await new Promise(r => setTimeout(r, 3000 * (attempt + 1)));
+          return fetchWithRetry(attempt + 1);
+        }
         setGraphData(DUMMY_GRAPH);
       } finally {
         setLoading(false);
       }
     };
-    fetchGraph();
+    fetchWithRetry();
   }, []);
 
   // Pre-load all node thumbnails when graph data arrives

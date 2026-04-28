@@ -705,7 +705,7 @@ export default function Home() {
                   NEW RUN
                 </button>
               </div>
-              <div className="flex-1 min-h-0 bg-[#0d0d0e] border border-[#1f1f1f] rounded-lg p-2">
+              <div className={`flex-1 min-h-0 bg-[#0d0d0e] border rounded-lg p-2 ${results.veto_triggered ? 'border-red-900/50 shadow-[0_0_20px_rgba(180,0,30,0.15)]' : 'border-[#D4AF37]/30 shadow-[0_0_20px_rgba(212,175,55,0.08)]'}`}>
                 <SymmetryMerge
                   galleryImageSrc={results.gallery_aligned_b64}
                   probeImageSrc={results.probe_aligned_b64}
@@ -717,92 +717,105 @@ export default function Home() {
               </div>
             </div>
 
-            {/* ── RIGHT PANEL (30%): Intelligence Panel ── */}
-            <div className="w-[30%] flex flex-col gap-1.5 min-h-0 overflow-y-auto overflow-x-hidden shrink-0 pr-0.5">
+            {/* ── RIGHT PANEL (30%): Intelligence Panel — Premium Redesign ── */}
+            <div className="w-[30%] flex flex-col gap-2 min-h-0 overflow-y-auto overflow-x-hidden shrink-0 pr-0.5">
 
-              {/* Tier 1 */}
-              <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg p-2.5">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-gray-500 text-[9px] tracking-wider">TIER 1: STRUCTURAL</h3>
-                  <div className="relative group/t1">
-                    <span className="text-[9px] text-gray-600 border border-[#333] rounded px-1 cursor-help hover:text-[#D4AF37] hover:border-[#D4AF37]/50 transition-colors">?</span>
-                    <div className="pointer-events-none absolute right-0 bottom-full mb-1.5 w-52 opacity-0 group-hover/t1:opacity-100 transition-opacity z-50">
-                      <div className="bg-[#111] border border-[#333] rounded px-2.5 py-2 text-[9px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">512-D ArcFace CNN embedding cosine similarity. NIST FRVT-validated deep neural identity discriminator. Primary biometric signal.</div>
-                    </div>
+              {/* ═══ FUSED IDENTITY — Hero Score ═══ */}
+              <div className={`relative overflow-hidden rounded-lg p-4 border-2 ${results.veto_triggered ? 'border-red-700/60 bg-gradient-to-br from-[#1a0505] to-[#0d0d0e]' : 'border-[#D4AF37]/50 bg-gradient-to-br from-[#1a170d] to-[#0d0d0e]'}`}>
+                <div className={`absolute -top-6 -right-6 w-24 h-24 rounded-full ${results.veto_triggered ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
+                <div className={`absolute -bottom-4 -left-4 w-16 h-16 rounded-full ${results.veto_triggered ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
+                <div className="relative z-10">
+                  <div className={`text-[8px] tracking-[0.3em] mb-1 ${results.veto_triggered ? 'text-red-400/70' : 'text-[#D4AF37]/70'}`}>FUSED IDENTITY SCORE</div>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className={`text-4xl font-bold tabular-nums ${results.veto_triggered ? 'text-red-400' : 'text-[#D4AF37]'}`}>{results.fused_identity_score}</span>
+                    <span className={`text-lg font-bold ${results.veto_triggered ? 'text-red-400/60' : 'text-[#D4AF37]/60'}`}>%</span>
                   </div>
+                  {/* Score bar */}
+                  <div className="mt-2 h-1.5 w-full bg-[#111] rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-700 ${results.fused_identity_score > 80 ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' : results.fused_identity_score > 60 ? 'bg-gradient-to-r from-amber-600 to-amber-400' : 'bg-gradient-to-r from-red-700 to-red-500'}`}
+                      style={{ width: `${Math.min(100, results.fused_identity_score)}%` }}
+                    />
+                  </div>
+                  <div className={`text-[8px] mt-1.5 ${results.veto_triggered ? 'text-red-400/50' : 'text-[#D4AF37]/50'}`}>60% ArcFace · 25% Geometric · 15% LBP χ²</div>
                 </div>
-                <div className="text-xl text-white font-bold mt-0.5">{results.structural_score}%</div>
               </div>
 
-              {/* Tier 2 */}
-              <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg p-2.5">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-gray-500 text-[9px] tracking-wider">TIER 2: GEOMETRIC</h3>
-                  <div className="relative group/t2">
-                    <span className="text-[9px] text-gray-600 border border-[#333] rounded px-1 cursor-help hover:text-[#D4AF37] hover:border-[#D4AF37]/50 transition-colors">?</span>
-                    <div className="pointer-events-none absolute right-0 bottom-full mb-1.5 w-52 opacity-0 group-hover/t2:opacity-100 transition-opacity z-50">
-                      <div className="bg-[#111] border border-[#333] rounded px-2.5 py-2 text-[9px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">12-D anthropometric facial ratio vector. Euclidean (L2) distance between scale-invariant proportions: nose-chin, mouth width, jaw symmetry, brow height. Independent geometric verification.</div>
-                    </div>
+              {/* ═══ TIER BREAKDOWN ═══ */}
+              <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg overflow-hidden">
+                {/* Tier 1: Structural */}
+                <div className="p-2.5 border-b border-[#1a1a1a]">
+                  <div className="flex items-baseline justify-between">
+                    <h3 className="text-gray-400 text-[9px] tracking-wider font-bold">STRUCTURAL</h3>
+                    <span className={`text-lg font-bold tabular-nums ${results.structural_score > 80 ? 'text-emerald-400' : results.structural_score > 60 ? 'text-amber-400' : 'text-red-400'}`}>{results.structural_score}%</span>
                   </div>
+                  <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${results.structural_score > 80 ? 'bg-emerald-500/70' : results.structural_score > 60 ? 'bg-amber-500/70' : 'bg-red-500/70'}`}
+                      style={{ width: `${Math.min(100, results.structural_score)}%` }}
+                    />
+                  </div>
+                  <p className="text-[8px] text-gray-600 mt-1 leading-relaxed">512-D ArcFace CNN cosine similarity — primary identity discriminator</p>
                 </div>
-                <div className="text-xl text-white font-bold mt-0.5">{results.soft_biometrics_score}%</div>
+
+                {/* Tier 2: Geometric */}
+                <div className="p-2.5 border-b border-[#1a1a1a]">
+                  <div className="flex items-baseline justify-between">
+                    <h3 className="text-gray-400 text-[9px] tracking-wider font-bold">GEOMETRIC</h3>
+                    <span className={`text-lg font-bold tabular-nums ${results.soft_biometrics_score > 80 ? 'text-emerald-400' : results.soft_biometrics_score > 60 ? 'text-amber-400' : 'text-red-400'}`}>{results.soft_biometrics_score}%</span>
+                  </div>
+                  <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${results.soft_biometrics_score > 80 ? 'bg-emerald-500/70' : results.soft_biometrics_score > 60 ? 'bg-amber-500/70' : 'bg-red-500/70'}`}
+                      style={{ width: `${Math.min(100, results.soft_biometrics_score)}%` }}
+                    />
+                  </div>
+                  <p className="text-[8px] text-gray-600 mt-1 leading-relaxed">12-D facial ratio L2 distance — nose, jaw, brow proportions</p>
+                </div>
+
+                {/* Tier 3: Micro-Topology */}
+                <div className="p-2.5">
+                  <div className="flex items-baseline justify-between">
+                    <h3 className="text-gray-400 text-[9px] tracking-wider font-bold">MICRO-TOPOLOGY</h3>
+                    <span className={`text-lg font-bold tabular-nums ${results.micro_topology_score > 80 ? 'text-emerald-400' : results.micro_topology_score > 60 ? 'text-amber-400' : 'text-red-400'}`}>{results.micro_topology_score}%</span>
+                  </div>
+                  <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${results.micro_topology_score > 80 ? 'bg-emerald-500/70' : results.micro_topology_score > 60 ? 'bg-amber-500/70' : 'bg-red-500/70'}`}
+                      style={{ width: `${Math.min(100, results.micro_topology_score)}%` }}
+                    />
+                  </div>
+                  <p className="text-[8px] text-gray-600 mt-1 leading-relaxed">LBP texture χ² distance — pore density, wrinkles, scarring</p>
+                </div>
               </div>
 
-              {/* Tier 3 */}
-              <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg p-2.5">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-gray-500 text-[9px] tracking-wider">TIER 3: MICRO-TOPO</h3>
-                  <div className="relative group/t3">
-                    <span className="text-[9px] text-gray-600 border border-[#333] rounded px-1 cursor-help hover:text-[#D4AF37] hover:border-[#D4AF37]/50 transition-colors">?</span>
-                    <div className="pointer-events-none absolute right-0 bottom-full mb-1.5 w-52 opacity-0 group-hover/t3:opacity-100 transition-opacity z-50">
-                      <div className="bg-[#111] border border-[#333] rounded px-2.5 py-2 text-[9px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">Local Binary Pattern (LBP) texture histograms compared via chi-squared (χ²) distance. Captures epidermal micro-texture: pore density, fine wrinkles, scarring patterns.</div>
-                    </div>
-                  </div>
+              {/* ═══ CONCLUSION ═══ */}
+              <div className={`rounded-lg overflow-hidden border-2 ${results.veto_triggered ? 'border-red-700/60' : 'border-emerald-700/40'}`}>
+                <div className={`px-3 py-1 text-[8px] tracking-[0.2em] font-bold ${results.veto_triggered ? 'bg-red-900/40 text-red-300' : 'bg-emerald-900/30 text-emerald-300'}`}>
+                  {results.veto_triggered ? '⚠ ACE-V VETO TRIGGERED' : '✓ CONCLUSION'}
                 </div>
-                <div className="text-xl text-white font-bold mt-0.5">{results.micro_topology_score}%</div>
-              </div>
-
-              {/* Fused Score */}
-              <div className="border border-[#D4AF37]/40 bg-[#1a170d] rounded-lg p-2.5 relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-8 h-8 bg-[#D4AF37]/10 rounded-bl-full"></div>
-                <div className="flex items-center justify-between">
-                  <h3 className="text-[#D4AF37] text-[9px] tracking-wider">FUSED IDENTITY</h3>
-                  <div className="relative group/tf">
-                    <span className="text-[9px] text-[#D4AF37]/60 border border-[#D4AF37]/30 rounded px-1 cursor-help hover:text-[#D4AF37] hover:border-[#D4AF37]/50 transition-colors">?</span>
-                    <div className="pointer-events-none absolute right-0 bottom-full mb-1.5 w-52 opacity-0 group-hover/tf:opacity-100 transition-opacity z-50">
-                      <div className="bg-[#111] border border-[#333] rounded px-2.5 py-2 text-[9px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">Weighted fusion: 60% ArcFace + 25% Geometric L2 + 15% LBP χ². Capped by ArcFace veto protocol at cosine &lt; 0.40. Cannot exceed structural score on non-match.</div>
+                <div className={`px-3 py-2.5 ${results.veto_triggered ? 'bg-red-950/20' : 'bg-[#0d0d0e]'}`}>
+                  <p className={`text-[11px] leading-snug font-bold ${results.veto_triggered ? 'text-red-400' : 'text-gray-200'}`}>{results.conclusion}</p>
+                  {!results.veto_triggered && (
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></div>
+                      <span className="text-[8px] text-emerald-500/70 tracking-wider">NO DISCREPANCY DETECTED</span>
                     </div>
-                  </div>
-                </div>
-                <div className="text-2xl text-[#D4AF37] font-bold mt-0.5">{results.fused_identity_score}%</div>
-              </div>
-
-              {/* Conclusion */}
-              <div className={`border rounded-lg p-2.5 ${results.veto_triggered ? 'border-red-900 bg-red-950/30' : 'border-[#1f1f1f] bg-[#0d0d0e]'}`}>
-                <h3 className="text-gray-500 text-[9px] mb-1 tracking-wider">CONCLUSION</h3>
-                <p className={`text-[11px] leading-snug ${results.veto_triggered ? 'text-red-400 font-bold' : 'text-gray-200'}`}>{results.conclusion}</p>
-                <div className="mt-1.5">
-                  {results.veto_triggered ? (
-                    <div className="px-2 py-0.5 bg-red-900 text-red-100 text-[8px] tracking-widest border border-red-500 text-center rounded">ACE-V VETO</div>
-                  ) : (
-                    <div className="px-2 py-0.5 bg-[#0a0a0a] text-green-500 text-[8px] tracking-widest border border-green-900/50 text-center rounded">NO DISCREPANCY</div>
                   )}
                 </div>
               </div>
-
-
 
               {/* Export Dossier */}
               <button
                 onClick={generateForensicReport}
                 disabled={isExporting}
-                className={`w-full py-2 text-[9px] font-bold tracking-widest border rounded transition-all shrink-0 ${
+                className={`w-full py-2.5 text-[10px] font-bold tracking-[0.2em] border-2 rounded-lg transition-all shrink-0 ${
                   isExporting
                     ? 'border-[#333] bg-[#111] text-gray-500 cursor-wait'
-                    : 'border-[#D4AF37]/50 bg-[#0a0a0a] text-[#D4AF37] hover:bg-[#D4AF37]/10 hover:shadow-[0_0_15px_rgba(212,175,55,0.4)]'
+                    : 'border-[#D4AF37]/50 bg-[#0a0a0a] text-[#D4AF37] hover:bg-[#D4AF37]/10 hover:border-[#D4AF37] hover:shadow-[0_0_20px_rgba(212,175,55,0.4)]'
                 }`}
               >
-                {isExporting ? 'COMPILING...' : 'EXPORT DOSSIER'}
+                {isExporting ? 'COMPILING...' : '↓ EXPORT DOSSIER'}
               </button>
             </div>
             </div>
