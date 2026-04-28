@@ -92,10 +92,16 @@ def calculate_cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
 def sign_gcs_url(gs_uri: str, expiration_days: int = 7) -> str:
     """
     Converts a gs://bucket/path URI to a signed URL for browser access.
-    Falls back to the gs:// URI if signing fails.
+    Passes through https:// URLs unchanged (e.g., Wikimedia thumbnails).
+    Returns empty string if signing fails.
     """
-    if not gs_uri or not gs_uri.startswith("gs://"):
-        return gs_uri or ""
+    if not gs_uri:
+        return ""
+    # Already a public URL (Wikimedia crawler stores direct https:// links)
+    if gs_uri.startswith("https://") or gs_uri.startswith("http://"):
+        return gs_uri
+    if not gs_uri.startswith("gs://"):
+        return ""
     try:
         parts = gs_uri.replace("gs://", "").split("/", 1)
         bucket_name = parts[0]
@@ -111,7 +117,7 @@ def sign_gcs_url(gs_uri: str, expiration_days: int = 7) -> str:
         return url
     except Exception as e:
         print(f"[GRAPH] WARN: Failed to sign {gs_uri}: {e}")
-        return gs_uri
+        return ""
 
 
 # ---------------------------------------------------------
