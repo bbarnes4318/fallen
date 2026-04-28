@@ -1870,28 +1870,63 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
 def vault_network(_: dict = Depends(verify_jwt)):
     """
     Phase 3: Sovereign Identity Graph.
-    Returns the pre-computed network topology JSON from GCS.
-    Streams raw JSON bytes directly to avoid parse/re-serialize overhead.
+    Returns a signed URL to the pre-computed network topology JSON on GCS.
+    The frontend fetches the JSON directly from GCS, bypassing backend I/O.
     """
-    from fastapi.responses import Response
+    import datetime as _dt
     bucket_name = os.getenv("BUCKET_NAME", "hoppwhistle-facial-uploads")
+    blob_path = "topology/network_graph.json"
     try:
+        # Use IAM-based signing (same pattern as generate_identity_graph.py)
+        from google.auth import default as _auth_default
+        from google.auth.transport.requests import Request as _AuthRequest
+        from google.auth import iam as _iam
+        from google.oauth2 import service_account as _sa_creds
+        import requests as _requests
+
+        credentials, project = _auth_default()
+        credentials.refresh(_AuthRequest())
+
+        # Resolve SA email from metadata if needed
+        sa_email = getattr(credentials, "service_account_email", None)
+        if not sa_email or sa_email == "default":
+            r = _requests.get(
+                "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
+                headers={"Metadata-Flavor": "Google"}, timeout=5,
+            )
+            sa_email = r.text.strip()
+
+        signer = _iam.Signer(
+            request=_AuthRequest(),
+            credentials=credentials,
+            service_account_email=sa_email,
+        )
+
         storage_client = storage.Client()
         bucket = storage_client.bucket(bucket_name)
-        blob = bucket.blob("topology/network_graph.json")
+        blob = bucket.blob(blob_path)
 
         if not blob.exists():
             return {
                 "nodes": [],
                 "links": [],
                 "status": "PENDING_GENERATION",
-                "detail": "Identity graph has not been generated yet. Run the generate_identity_graph Cloud Run Job."
+                "detail": "Identity graph has not been generated yet."
             }
 
-        content = blob.download_as_bytes()
-        return Response(content=content, media_type="application/json")
+        signed_url = blob.generate_signed_url(
+            version="v4",
+            expiration=_dt.timedelta(hours=1),
+            method="GET",
+            credentials=_sa_creds.Credentials(
+                signer=signer,
+                service_account_email=sa_email,
+                token_uri="https://oauth2.googleapis.com/token",
+            ),
+        )
+        return {"graph_url": signed_url, "status": "READY"}
     except Exception as e:
-        print(f"Failed to fetch network graph from GCS: {e}")
+        print(f"Failed to generate graph URL: {e}")
         return {
             "nodes": [],
             "links": [],

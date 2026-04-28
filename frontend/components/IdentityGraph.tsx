@@ -152,16 +152,30 @@ export default function IdentityGraph() {
       const MAX_RETRIES = 3;
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 60000); // 60s timeout
+        const timeout = setTimeout(() => controller.abort(), 30000); // 30s for signed URL
         const res = await fetch(`${getApiUrl()}/vault/network`, {
           headers: { 'Authorization': `Bearer ${token}` },
           signal: controller.signal,
         });
         clearTimeout(timeout);
         if (res.ok) {
-          const data = await res.json();
-          if (data.nodes && data.nodes.length > 0) {
-            setGraphData(data);
+          const meta = await res.json();
+          if (meta.graph_url) {
+            // Two-step: fetch actual graph JSON directly from GCS
+            const gcsRes = await fetch(meta.graph_url);
+            if (gcsRes.ok) {
+              const data = await gcsRes.json();
+              if (data.nodes && data.nodes.length > 0) {
+                setGraphData(data);
+              } else {
+                setGraphData(DUMMY_GRAPH);
+              }
+            } else {
+              setGraphData(DUMMY_GRAPH);
+            }
+          } else if (meta.nodes && meta.nodes.length > 0) {
+            // Legacy: direct inline data
+            setGraphData(meta);
           } else {
             setGraphData(DUMMY_GRAPH);
           }
