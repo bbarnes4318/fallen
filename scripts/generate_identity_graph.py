@@ -107,15 +107,32 @@ def _get_signing_infra():
 
     signing_creds = None
     if isinstance(credentials, compute_engine.Credentials):
+        # Cloud Run's default creds return 'default' as service_account_email.
+        # Fetch the actual email from the metadata server.
+        import requests as _req
+        sa_email = credentials.service_account_email
+        if sa_email == "default" or not sa_email:
+            try:
+                resp = _req.get(
+                    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
+                    headers={"Metadata-Flavor": "Google"},
+                    timeout=5,
+                )
+                sa_email = resp.text.strip()
+            except Exception:
+                sa_email = "facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com"
+        
+        print(f"[GRAPH] Using service account for signing: {sa_email}")
+        
         from google.auth import iam
         signer = iam.Signer(
             request=auth_requests.Request(),
             credentials=credentials,
-            service_account_email=credentials.service_account_email,
+            service_account_email=sa_email,
         )
         signing_creds = google.oauth2.service_account.Credentials(
             signer=signer,
-            service_account_email=credentials.service_account_email,
+            service_account_email=sa_email,
             token_uri="https://oauth2.googleapis.com/token",
         )
 
