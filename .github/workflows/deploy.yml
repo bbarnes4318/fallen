@@ -209,6 +209,22 @@ jobs:
             --set-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance \
             --set-env-vars="BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=Fv966468!Sec5677,DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance"
 
+      - name: Deploy Gallery Re-Upload Job
+        run: |
+          gcloud run jobs deploy gallery-reupload-job \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }} \
+            --image=${{ env.BACKEND_IMAGE }}:${{ github.sha }} \
+            --command="python" \
+            --args="scripts/gallery_reupload.py" \
+            --service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com \
+            --memory=4Gi \
+            --cpu=2 \
+            --task-timeout=1800 \
+            --max-retries=1 \
+            --set-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance \
+            --set-env-vars="BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=Fv966468!Sec5677,DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance"
+
       - name: Deploy Frontend to Cloud Run
         id: deploy-frontend
         uses: google-github-actions/deploy-cloudrun@v2
