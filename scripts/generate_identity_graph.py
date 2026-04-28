@@ -31,6 +31,7 @@ import time
 import datetime
 import numpy as np
 from google.cloud import storage, kms
+import google.oauth2.service_account
 from cryptography.fernet import Fernet
 
 # Add parent directory to path for models import
@@ -89,32 +90,74 @@ def calculate_cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
     return float(dot_product / (norm_a * norm_b))
 
 
+# ── Cached signing infrastructure (built once, reused for all URLs) ──
+_signing_cache = {}
+
+def _get_signing_infra():
+    """Build and cache signing credentials + client for Cloud Run IAM signing."""
+    if _signing_cache:
+        return _signing_cache
+
+    import google.auth
+    from google.auth.transport import requests as auth_requests
+    from google.auth import compute_engine
+
+    credentials, project = google.auth.default()
+    client = storage.Client(credentials=credentials, project=project)
+
+    signing_creds = None
+    if isinstance(credentials, compute_engine.Credentials):
+        from google.auth import iam
+        signer = iam.Signer(
+            request=auth_requests.Request(),
+            credentials=credentials,
+            service_account_email=credentials.service_account_email,
+        )
+        signing_creds = google.oauth2.service_account.Credentials(
+            signer=signer,
+            service_account_email=credentials.service_account_email,
+            token_uri="https://oauth2.googleapis.com/token",
+        )
+
+    _signing_cache["client"] = client
+    _signing_cache["signing_creds"] = signing_creds
+    return _signing_cache
+
+
 def sign_gcs_url(gs_uri: str, expiration_days: int = 7) -> str:
     """
     Converts a gs://bucket/path URI to a signed URL for browser access.
+    Uses IAM signBlob API for Cloud Run (compute engine creds can't sign directly).
     Passes through https:// URLs unchanged (e.g., Wikimedia thumbnails).
     Returns empty string if signing fails.
     """
     if not gs_uri:
         return ""
-    # Already a public URL (Wikimedia crawler stores direct https:// links)
     if gs_uri.startswith("https://") or gs_uri.startswith("http://"):
         return gs_uri
     if not gs_uri.startswith("gs://"):
         return ""
     try:
+        infra = _get_signing_infra()
+        client = infra["client"]
+        signing_creds = infra["signing_creds"]
+
         parts = gs_uri.replace("gs://", "").split("/", 1)
         bucket_name = parts[0]
         blob_path = parts[1] if len(parts) > 1 else ""
-        client = storage.Client()
+
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(blob_path)
-        url = blob.generate_signed_url(
-            version="v4",
-            expiration=datetime.timedelta(days=expiration_days),
-            method="GET",
-        )
-        return url
+
+        sign_kwargs = {
+            "version": "v4",
+            "expiration": datetime.timedelta(days=expiration_days),
+            "method": "GET",
+        }
+        if signing_creds:
+            sign_kwargs["credentials"] = signing_creds
+
+        return blob.generate_signed_url(**sign_kwargs)
     except Exception as e:
         print(f"[GRAPH] WARN: Failed to sign {gs_uri}: {e}")
         return ""
