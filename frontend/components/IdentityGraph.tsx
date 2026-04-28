@@ -165,11 +165,13 @@ export default function IdentityGraph() {
           } else {
             setGraphData(DUMMY_GRAPH);
           }
+          setLoading(false);
         } else if (attempt < MAX_RETRIES) {
           await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
           return fetchWithRetry(attempt + 1);
         } else {
           setGraphData(DUMMY_GRAPH);
+          setLoading(false);
         }
       } catch {
         if (attempt < MAX_RETRIES) {
@@ -177,7 +179,6 @@ export default function IdentityGraph() {
           return fetchWithRetry(attempt + 1);
         }
         setGraphData(DUMMY_GRAPH);
-      } finally {
         setLoading(false);
       }
     };
