@@ -156,7 +156,7 @@ def generate_graph():
                 decrypted.append({
                     "user_id": profile.user_id,
                     "person_name": profile.person_name,
-                    "thumbnail_url": profile.thumbnail_url,
+                    "thumbnail_url": profile.thumbnail_url or profile.image_url,
                     "embedding": vec,
                 })
             except Exception as e:
