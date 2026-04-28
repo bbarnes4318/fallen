@@ -730,8 +730,8 @@ def extract_arcface_embedding(image: np.ndarray) -> np.ndarray:
     cosine for Tier 1 structural identity matching.
 
     IMPORTANT: The input image should already be aligned and cropped by
-    align_face_crop(). We pass detector_backend='skip' because face detection
-    and alignment have already been performed by the MediaPipe pipeline.
+    align_face_crop(). We pass detector_backend='opencv' to allow DeepFace
+    to perform its strict 5-point affine transformation on the canonical crop.
 
     Returns a 512-D numpy array (ArcFace latent space).
     """
@@ -742,7 +742,7 @@ def extract_arcface_embedding(image: np.ndarray) -> np.ndarray:
         img_path=rgb_image,
         model_name="ArcFace",
         enforce_detection=False,
-        detector_backend="skip",
+        detector_backend="opencv",
     )
     embedding = np.array(result[0]["embedding"], dtype=np.float64)
     return embedding  # 512-D vector
