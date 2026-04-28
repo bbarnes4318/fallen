@@ -289,6 +289,11 @@ class VerificationResponse(BaseModel):
     scar_delta_b64: str
     gallery_wireframe_b64: str
     probe_wireframe_b64: str
+    # Tier 4: Mark Correspondence
+    mark_correspondence_score: Optional[float] = None
+    marks_detected_gallery: int = 0
+    marks_detected_probe: int = 0
+    marks_matched: int = 0
     audit_log: Optional[AuditLog] = None
 
 # ---------------------------------------------------------
@@ -878,11 +883,211 @@ def generate_landmark_attention_map(image: np.ndarray, landmarks: list) -> str:
     b64_str = base64.b64encode(buffer).decode('utf-8')
     return f"data:image/png;base64,{b64_str}"
 
-def generate_scar_delta_map(img_gallery: np.ndarray, img_probe: np.ndarray) -> str:
+# ---------------------------------------------------------
+# TIER 4: MARK CORRESPONDENCE ENGINE
+# ---------------------------------------------------------
+# Detects discrete facial anomalies (scars, moles, birthmarks)
+# and matches them between gallery and probe using spatial +
+# descriptor similarity via Hungarian optimal bipartite matching.
+
+# MediaPipe landmark indices for masking facial features
+# (eyes, brows, nose interior, lips) — we only want skin surface
+_LEFT_EYE_IDX = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]
+_RIGHT_EYE_IDX = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]
+_LEFT_BROW_IDX = [70, 63, 105, 66, 107, 55, 65, 52, 53, 46]
+_RIGHT_BROW_IDX = [300, 293, 334, 296, 336, 285, 295, 282, 283, 276]
+_NOSE_IDX = [1, 2, 98, 327, 168, 6, 197, 195, 5, 4, 45, 220, 115, 48, 64, 102, 49, 131, 134, 236, 196, 3, 51, 281, 275, 440, 344, 278, 294, 331, 279, 360, 363, 456, 420, 399, 412, 351]
+_LIPS_IDX = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95, 185, 40, 39, 37, 0, 267, 269, 270, 409, 415, 310, 311, 312, 13, 82, 81, 80, 191, 78]
+
+def _build_skin_mask(shape: tuple, landmarks, margin: int = 5) -> np.ndarray:
+    """
+    Build a binary mask that covers the face skin surface,
+    EXCLUDING eyes, eyebrows, nose interior, and lips.
+    """
+    h, w = shape[:2]
+    # Start with full face mask
+    skin_mask = np.ones((h, w), dtype=np.uint8) * 255
+
+    # Build exclusion polygons from landmark groups
+    for idx_group in [_LEFT_EYE_IDX, _RIGHT_EYE_IDX, _LEFT_BROW_IDX, _RIGHT_BROW_IDX, _NOSE_IDX, _LIPS_IDX]:
+        pts = []
+        for idx in idx_group:
+            if idx < len(landmarks):
+                lm = landmarks[idx]
+                pts.append([int(lm.x * w), int(lm.y * h)])
+        if len(pts) >= 3:
+            hull = cv2.convexHull(np.array(pts, dtype=np.int32))
+            # Inflate slightly to ensure full coverage
+            M = cv2.moments(hull)
+            if M["m00"] > 0:
+                cx_h = int(M["m10"] / M["m00"])
+                cy_h = int(M["m01"] / M["m00"])
+                scale = 1.15  # 15% inflation
+                inflated = ((hull - [cx_h, cy_h]) * scale + [cx_h, cy_h]).astype(np.int32)
+                cv2.fillConvexPoly(skin_mask, inflated, 0)
+
+    return skin_mask
+
+
+def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> list:
+    """
+    Detects discrete facial anomalies (scars, moles, birthmarks) on
+    the skin surface of an aligned 256×256 face crop.
+
+    Returns a list of mark descriptors:
+        [{"centroid": (cx, cy), "area": float, "intensity": float, "circularity": float}, ...]
+
+    Centroids are normalized to [0,1] relative to crop dimensions.
+    """
+    h, w = aligned_crop.shape[:2]
+    gray = cv2.cvtColor(aligned_crop, cv2.COLOR_BGR2GRAY)
+
+    # Build skin mask excluding major facial features
+    skin_mask = _build_skin_mask(aligned_crop.shape, landmarks)
+
+    # Adaptive threshold to detect dark anomalies on skin
+    thresh = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV, blockSize=15, C=5
+    )
+
+    # Apply skin mask — only keep marks on skin surface
+    masked = cv2.bitwise_and(thresh, skin_mask)
+
+    # Morphological opening to remove speckle noise
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    cleaned = cv2.morphologyEx(masked, cv2.MORPH_OPEN, kernel)
+
+    # Find contours
+    contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    marks = []
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        # Filter by area: min 8px² (noise), max 500px² (shadows/large regions)
+        if area < 8 or area > 500:
+            continue
+
+        perimeter = cv2.arcLength(cnt, True)
+        circularity = (4 * np.pi * area / (perimeter * perimeter)) if perimeter > 0 else 0
+
+        # Centroid
+        M = cv2.moments(cnt)
+        if M["m00"] == 0:
+            continue
+        cx = M["m10"] / M["m00"]
+        cy = M["m01"] / M["m00"]
+
+        # Mean intensity of the mark region
+        mark_mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.drawContours(mark_mask, [cnt], -1, 255, -1)
+        mean_intensity = float(cv2.mean(gray, mask=mark_mask)[0])
+
+        marks.append({
+            "centroid": (cx / w, cy / h),  # normalized [0,1]
+            "area": area,
+            "intensity": mean_intensity,
+            "circularity": circularity,
+            "contour": cnt,  # keep for visualization
+        })
+
+    return marks
+
+
+def compute_mark_correspondence(marks_gallery: list, marks_probe: list) -> dict:
+    """
+    Computes the Mark Correspondence Score (MCS) between two sets of
+    detected facial marks using Hungarian optimal bipartite matching.
+
+    Returns:
+        {
+            "score": float (0-100) or None if insufficient marks,
+            "matched": int,
+            "total_gallery": int,
+            "total_probe": int,
+            "matches": [(gallery_idx, probe_idx, distance), ...]
+        }
+    """
+    from scipy.optimize import linear_sum_assignment
+
+    n_gal = len(marks_gallery)
+    n_pro = len(marks_probe)
+
+    # Minimum mark threshold — need at least 3 marks on each face
+    if n_gal < 3 or n_pro < 3:
+        return {
+            "score": None,
+            "matched": 0,
+            "total_gallery": n_gal,
+            "total_probe": n_pro,
+            "matches": [],
+        }
+
+    # Build NxM cost matrix using composite distance
+    W_SPATIAL = 0.50
+    W_AREA = 0.20
+    W_INTENSITY = 0.15
+    W_CIRCULARITY = 0.15
+
+    cost_matrix = np.zeros((n_gal, n_pro))
+    for i, mg in enumerate(marks_gallery):
+        for j, mp in enumerate(marks_probe):
+            # Spatial distance (normalized coordinates, max possible ~1.41)
+            d_spatial = np.sqrt(
+                (mg["centroid"][0] - mp["centroid"][0]) ** 2 +
+                (mg["centroid"][1] - mp["centroid"][1]) ** 2
+            )
+            # Area ratio distance (0-1)
+            d_area = abs(mg["area"] - mp["area"]) / max(mg["area"], mp["area"])
+            # Intensity distance (0-1)
+            d_intensity = abs(mg["intensity"] - mp["intensity"]) / 255.0
+            # Circularity distance (0-1)
+            d_circularity = abs(mg["circularity"] - mp["circularity"])
+
+            cost = (W_SPATIAL * d_spatial +
+                    W_AREA * d_area +
+                    W_INTENSITY * d_intensity +
+                    W_CIRCULARITY * d_circularity)
+            cost_matrix[i, j] = cost
+
+    # Hungarian optimal matching
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+
+    # Accept matches below threshold
+    MATCH_THRESHOLD = 0.35
+    matches = []
+    for r, c in zip(row_ind, col_ind):
+        if cost_matrix[r, c] < MATCH_THRESHOLD:
+            matches.append((int(r), int(c), float(cost_matrix[r, c])))
+
+    matched_count = len(matches)
+    total = max(n_gal, n_pro)
+    score = (matched_count / total) * 100.0 if total > 0 else 0.0
+
+    return {
+        "score": round(score, 2),
+        "matched": matched_count,
+        "total_gallery": n_gal,
+        "total_probe": n_pro,
+        "matches": matches,
+    }
+
+
+def generate_scar_delta_map(
+    img_gallery: np.ndarray,
+    img_probe: np.ndarray,
+    marks_gallery: list = None,
+    marks_probe: list = None,
+    mark_matches: list = None,
+) -> str:
     """
     Biological Topography Delta — Scar Mapper.
     Isolates persistent micro-topology (scars, pores, creases) that appears
     consistently across both the gallery and probe aligned face crops.
+
+    Now also visualizes detected marks:
+      - Green circles: matched marks (present in both faces)
+      - Yellow circles: unmatched marks (only in one face)
 
     ALGORITHM:
     1. Convert both images to grayscale.
@@ -894,8 +1099,11 @@ def generate_scar_delta_map(img_gallery: np.ndarray, img_probe: np.ndarray) -> s
     5. Dilate slightly for UI readability.
     6. Overlay in neon crimson (BGR: 30, 0, 180) on a darkened, desaturated
        version of the gallery image.
-    7. Base64 encode and return as a data URI.
+    7. Draw mark detection circles if mark data is provided.
+    8. Base64 encode and return as a data URI.
     """
+    h, w = img_gallery.shape[:2]
+
     # 1. Grayscale conversion
     gray_gallery = cv2.cvtColor(img_gallery, cv2.COLOR_BGR2GRAY)
     gray_probe = cv2.cvtColor(img_probe, cv2.COLOR_BGR2GRAY)
@@ -926,7 +1134,23 @@ def generate_scar_delta_map(img_gallery: np.ndarray, img_probe: np.ndarray) -> s
     # Paint neon crimson (BGR: 30, 0, 180) where scars are detected
     canvas[true_scars > 0] = (30, 0, 180)
 
-    # 7. Encode to base64 data URI
+    # 7. Overlay detected mark circles (from Tier 4 engine)
+    if marks_gallery and mark_matches is not None:
+        matched_gallery_indices = {m[0] for m in mark_matches} if mark_matches else set()
+
+        for i, mark in enumerate(marks_gallery):
+            cx = int(mark["centroid"][0] * w)
+            cy = int(mark["centroid"][1] * h)
+            radius = max(4, int(np.sqrt(mark["area"]) * 0.8))
+
+            if i in matched_gallery_indices:
+                # Green circle — matched mark (confirmed in both faces)
+                cv2.circle(canvas, (cx, cy), radius, (0, 220, 80), 2, cv2.LINE_AA)
+            else:
+                # Yellow circle — unmatched mark (only in gallery)
+                cv2.circle(canvas, (cx, cy), radius, (0, 200, 220), 1, cv2.LINE_AA)
+
+    # 8. Encode to base64 data URI
     _, buffer = cv2.imencode('.png', canvas)
     b64_str = base64.b64encode(buffer).decode('utf-8')
     return f"data:image/png;base64,{b64_str}"
@@ -1191,10 +1415,26 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     
     # FUSED SCORE: Use empirical weights from LFW calibration if available
     _fw = CALIBRATION["fusion"]["optimal_weights"] if CALIBRATION else None
-    _w1 = _fw["structural"] if _fw else 0.60
-    _w2 = _fw["geometric"] if _fw else 0.25
-    _w3 = _fw["micro_topology"] if _fw else 0.15
-    fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3)
+
+    # 7.5 TIER 4: Mark Correspondence (Scar/Mole/Birthmark Detection)
+    marks_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
+    marks_probe = detect_facial_marks(probe_aligned, probe_landmarks)
+    mark_result = compute_mark_correspondence(marks_gallery, marks_probe)
+    tier4_score = mark_result["score"]  # None if insufficient marks
+
+    if tier4_score is not None:
+        # 4-tier fusion: redistribute weight to include mark correspondence
+        _w1 = _fw["structural"] * 0.917 if _fw else 0.55  # 0.60 * 0.917 ≈ 0.55
+        _w2 = _fw["geometric"] * 0.80 if _fw else 0.20    # 0.25 * 0.80 = 0.20
+        _w3 = _fw["micro_topology"] * 0.667 if _fw else 0.10  # 0.15 * 0.667 ≈ 0.10
+        _w4 = 0.15
+        fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3) + (tier4_score * _w4)
+    else:
+        # 3-tier fusion (insufficient marks for Tier 4)
+        _w1 = _fw["structural"] if _fw else 0.60
+        _w2 = _fw["geometric"] if _fw else 0.25
+        _w3 = _fw["micro_topology"] if _fw else 0.15
+        fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3)
     
     if veto_triggered:
         fused_score = min(fused_score, tier1_score)  # Cap — never inflate a non-match
@@ -1216,8 +1456,13 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     _, pro_buf = cv2.imencode('.png', probe_aligned)
     probe_aligned_b64 = f"data:image/png;base64,{base64.b64encode(pro_buf).decode('utf-8')}"
 
-    # Biological Topography Delta (Scar Mapper)
-    scar_delta = generate_scar_delta_map(gallery_aligned, probe_aligned)
+    # Biological Topography Delta (Scar Mapper — now with mark visualization)
+    scar_delta = generate_scar_delta_map(
+        gallery_aligned, probe_aligned,
+        marks_gallery=marks_gallery,
+        marks_probe=marks_probe,
+        mark_matches=mark_result["matches"],
+    )
 
     # 3DMM Wireframe HUD (Geometric Mesh Overlay)
     gallery_wireframe = generate_wireframe_hud(gallery_aligned, gallery_landmarks)
@@ -1261,6 +1506,10 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         scar_delta_b64=scar_delta,
         gallery_wireframe_b64=gallery_wireframe,
         probe_wireframe_b64=probe_wireframe,
+        mark_correspondence_score=tier4_score,
+        marks_detected_gallery=mark_result["total_gallery"],
+        marks_detected_probe=mark_result["total_probe"],
+        marks_matched=mark_result["matched"],
         audit_log=audit
     )
 
@@ -1289,6 +1538,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             structural_score_x100=round(tier1_score * 100),
             geometric_score_x100=round(tier2_score * 100),
             micro_topology_score_x100=round(tier3_score * 100),
+            mark_correspondence_x100=round(tier4_score * 100) if tier4_score is not None else None,
             receipt_url=receipt_url,
         )
         ledger_session.add(event)
@@ -1455,10 +1705,24 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
 
     # 9. Fused score: Use empirical weights from LFW calibration if available
     _fw = CALIBRATION["fusion"]["optimal_weights"] if CALIBRATION else None
-    _w1 = _fw["structural"] if _fw else 0.60
-    _w2 = _fw["geometric"] if _fw else 0.25
-    _w3 = _fw["micro_topology"] if _fw else 0.15
-    fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3)
+
+    # 9.5 TIER 4: Mark Correspondence (Scar/Mole/Birthmark Detection)
+    marks_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
+    marks_probe = detect_facial_marks(probe_aligned, probe_landmarks)
+    mark_result = compute_mark_correspondence(marks_gallery, marks_probe)
+    tier4_score = mark_result["score"]  # None if insufficient marks
+
+    if tier4_score is not None:
+        _w1 = _fw["structural"] * 0.917 if _fw else 0.55
+        _w2 = _fw["geometric"] * 0.80 if _fw else 0.20
+        _w3 = _fw["micro_topology"] * 0.667 if _fw else 0.10
+        _w4 = 0.15
+        fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3) + (tier4_score * _w4)
+    else:
+        _w1 = _fw["structural"] if _fw else 0.60
+        _w2 = _fw["geometric"] if _fw else 0.25
+        _w3 = _fw["micro_topology"] if _fw else 0.15
+        fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3)
 
     # 10. ArcFace Veto — hard fail if cosine < 0.40
     veto_arcface = best_score < 0.40
@@ -1483,7 +1747,12 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     _, pro_buf = cv2.imencode('.png', probe_aligned)
     probe_aligned_b64 = f"data:image/png;base64,{base64.b64encode(pro_buf).decode('utf-8')}"
 
-    scar_delta = generate_scar_delta_map(gallery_aligned, probe_aligned)
+    scar_delta = generate_scar_delta_map(
+        gallery_aligned, probe_aligned,
+        marks_gallery=marks_gallery,
+        marks_probe=marks_probe,
+        mark_matches=mark_result["matches"],
+    )
 
     # Wireframe HUD
     gallery_wireframe_b64 = ""
@@ -1547,6 +1816,10 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         scar_delta_b64=scar_delta,
         gallery_wireframe_b64=gallery_wireframe_b64,
         probe_wireframe_b64=probe_wireframe_b64,
+        mark_correspondence_score=tier4_score,
+        marks_detected_gallery=mark_result["total_gallery"],
+        marks_detected_probe=mark_result["total_probe"],
+        marks_matched=mark_result["matched"],
         audit_log=audit,
     )
 
@@ -1575,6 +1848,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             structural_score_x100=round(tier1_score * 100),
             geometric_score_x100=round(tier2_score * 100),
             micro_topology_score_x100=round(tier3_score * 100),
+            mark_correspondence_x100=round(tier4_score * 100) if tier4_score is not None else None,
             receipt_url=receipt_url,
         )
         ledger_session.add(event)

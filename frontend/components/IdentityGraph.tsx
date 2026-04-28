@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
@@ -10,6 +10,7 @@ interface GraphNode {
   id: string;
   name: string;
   group: number;
+  thumbnail?: string;
   x?: number;
   y?: number;
 }
@@ -98,6 +99,28 @@ export default function IdentityGraph() {
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
   const [loading, setLoading] = useState(true);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [showLegend, setShowLegend] = useState(true);
+
+  // ── Image cache for thumbnail rendering on canvas ──
+  const imageCache = useRef<Map<string, HTMLImageElement | null>>(new Map());
+
+  const loadImage = useCallback((url: string): HTMLImageElement | null => {
+    if (!url) return null;
+    if (imageCache.current.has(url)) return imageCache.current.get(url) || null;
+
+    // Mark as loading (null = pending)
+    imageCache.current.set(url, null);
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      imageCache.current.set(url, img);
+    };
+    img.onerror = () => {
+      imageCache.current.set(url, null);
+    };
+    img.src = url;
+    return null;
+  }, []);
 
   // ── Responsive sizing ──
   useEffect(() => {
@@ -149,8 +172,23 @@ export default function IdentityGraph() {
     fetchGraph();
   }, []);
 
+  // Pre-load all node thumbnails when graph data arrives
+  useEffect(() => {
+    graphData.nodes.forEach((node) => {
+      if (node.thumbnail) loadImage(node.thumbnail);
+    });
+  }, [graphData, loadImage]);
+
 
   const connections = selectedNode ? getNodeConnections(selectedNode.id, graphData.links) : [];
+
+  // Build thumbnail lookup for dossier panel
+  const nodeMap = useRef<Map<string, GraphNode>>(new Map());
+  useEffect(() => {
+    const m = new Map<string, GraphNode>();
+    graphData.nodes.forEach((n) => m.set(n.id, n));
+    nodeMap.current = m;
+  }, [graphData]);
 
   // ── Loading State ──
   if (loading) {
@@ -178,36 +216,69 @@ export default function IdentityGraph() {
           const x = (node.x as number) ?? 0;
           const y = (node.y as number) ?? 0;
           const isGold = node.group === 2;
-          const radius = isGold ? 6 : 4;
-          if (isGold) { ctx.shadowColor = '#D4AF37'; ctx.shadowBlur = 12; }
-          ctx.beginPath();
-          ctx.arc(x, y, radius, 0, 2 * Math.PI);
-          ctx.fillStyle = isGold ? '#D4AF37' : '#666666';
-          ctx.fill();
-          ctx.strokeStyle = isGold ? '#D4AF37' : '#444444';
-          ctx.lineWidth = 1;
-          ctx.stroke();
-          ctx.shadowColor = 'transparent';
-          ctx.shadowBlur = 0;
-          ctx.font = '3px Courier New';
-          ctx.fillStyle = isGold ? '#D4AF37' : '#888888';
+          const radius = 12;
+          const thumbUrl = node.thumbnail as string;
+
+          // Try to get cached image
+          const img = thumbUrl ? loadImage(thumbUrl) : null;
+
+          if (img) {
+            // ── Render circular face thumbnail ──
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, 2 * Math.PI);
+            ctx.closePath();
+            ctx.clip();
+            ctx.drawImage(img, x - radius, y - radius, radius * 2, radius * 2);
+            ctx.restore();
+
+            // Ring border
+            ctx.beginPath();
+            ctx.arc(x, y, radius + 1, 0, 2 * Math.PI);
+            ctx.strokeStyle = isGold ? '#D4AF37' : '#555555';
+            ctx.lineWidth = isGold ? 2.5 : 1.5;
+            if (isGold) {
+              ctx.shadowColor = '#D4AF37';
+              ctx.shadowBlur = 10;
+            }
+            ctx.stroke();
+            ctx.shadowColor = 'transparent';
+            ctx.shadowBlur = 0;
+          } else {
+            // ── Fallback: colored dot (when no thumbnail) ──
+            const dotRadius = isGold ? 7 : 5;
+            if (isGold) { ctx.shadowColor = '#D4AF37'; ctx.shadowBlur = 12; }
+            ctx.beginPath();
+            ctx.arc(x, y, dotRadius, 0, 2 * Math.PI);
+            ctx.fillStyle = isGold ? '#D4AF37' : '#666666';
+            ctx.fill();
+            ctx.strokeStyle = isGold ? '#D4AF37' : '#444444';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.shadowColor = 'transparent';
+            ctx.shadowBlur = 0;
+          }
+
+          // Name label
+          ctx.font = '3.5px Courier New';
+          ctx.fillStyle = isGold ? '#D4AF37' : '#999999';
           ctx.textAlign = 'left';
           ctx.textBaseline = 'middle';
-          ctx.fillText((node.name as string) ?? (node.id as string), x + radius + 3, y);
+          ctx.fillText((node.name as string) ?? (node.id as string), x + radius + 4, y);
         }}
         nodePointerAreaPaint={(node: Record<string, unknown>, color: string, ctx: CanvasRenderingContext2D) => {
           const x = (node.x as number) ?? 0;
           const y = (node.y as number) ?? 0;
           ctx.beginPath();
-          ctx.arc(x, y, 8, 0, 2 * Math.PI);
+          ctx.arc(x, y, 14, 0, 2 * Math.PI);
           ctx.fillStyle = color;
           ctx.fill();
         }}
-        linkColor={(link: Record<string, unknown>) => ((link.value as number) > 95 ? '#660000' : '#333333')}
-        linkWidth={(link: Record<string, unknown>) => ((link.value as number) > 95 ? 1.5 : 0.5)}
+        linkColor={(link: Record<string, unknown>) => ((link.value as number) > 95 ? '#881111' : '#2a2a2a')}
+        linkWidth={(link: Record<string, unknown>) => ((link.value as number) > 95 ? 1.8 : 0.4)}
         linkDirectionalParticles={1}
         linkDirectionalParticleWidth={(link: Record<string, unknown>) => (link.value as number) > 95 ? 2 : 0}
-        linkDirectionalParticleColor={() => '#660000'}
+        linkDirectionalParticleColor={() => '#881111'}
         onNodeClick={(node: Record<string, unknown>) => setSelectedNode(node as unknown as GraphNode)}
         cooldownTicks={100}
         d3AlphaDecay={0.02}
@@ -227,6 +298,70 @@ export default function IdentityGraph() {
       <div className="absolute bottom-3 left-3 w-5 h-5 border-b border-l border-[#D4AF37]/30 pointer-events-none" />
       <div className="absolute bottom-3 right-3 w-5 h-5 border-b border-r border-[#D4AF37]/30 pointer-events-none" />
 
+      {/* ── Contextual Legend Panel ── */}
+      {showLegend && (
+        <div className="absolute top-5 left-5 z-10 pointer-events-auto">
+          <div className="bg-[#0a0a0b]/95 border border-[#1f1f1f] rounded-lg p-4 max-w-[280px] backdrop-blur-sm">
+            <div className="flex justify-between items-start mb-3">
+              <p className="text-[9px] text-[#D4AF37] tracking-[0.25em] font-mono font-bold">
+                BIOMETRIC SIMILARITY NETWORK
+              </p>
+              <button
+                onClick={() => setShowLegend(false)}
+                className="text-gray-600 hover:text-gray-400 text-xs ml-2 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-[10px] text-gray-500 leading-relaxed mb-3 font-mono">
+              Each node represents an identity in the encrypted vault. Links indicate
+              &gt;90% ArcFace cosine similarity between 512-D biometric embeddings.
+            </p>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full border-2 border-[#D4AF37] bg-[#D4AF37]/20 shrink-0" />
+                <span className="text-[9px] text-gray-400 font-mono">
+                  ANOMALY — High connectivity (potential duplicate/alias)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full border border-[#555] bg-[#333]/30 shrink-0" />
+                <span className="text-[9px] text-gray-400 font-mono">
+                  STANDARD — Normal connectivity pattern
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-0.5 bg-[#881111] shrink-0" />
+                <span className="text-[9px] text-gray-400 font-mono">
+                  CRITICAL — &gt;95% match (near-identical)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-px bg-[#2a2a2a] shrink-0" />
+                <span className="text-[9px] text-gray-400 font-mono">
+                  STRONG — 90–95% match
+                </span>
+              </div>
+            </div>
+            <div className="mt-3 pt-2 border-t border-[#1a1a1a]">
+              <p className="text-[8px] text-gray-600 font-mono">
+                Click any node to inspect identity dossier
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Show legend button if hidden */}
+      {!showLegend && (
+        <button
+          onClick={() => setShowLegend(true)}
+          className="absolute top-5 left-5 z-10 text-[9px] text-gray-600 hover:text-[#D4AF37] font-mono tracking-widest border border-[#1f1f1f] hover:border-[#D4AF37]/30 bg-[#0a0a0b]/80 px-3 py-1.5 rounded transition-colors"
+        >
+          ◈ LEGEND
+        </button>
+      )}
+
       {/* ── Status Bar ── */}
       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-[9px] text-gray-600 font-mono tracking-widest pointer-events-none">
         NODES: {graphData.nodes.length} &nbsp;│&nbsp; EDGES: {graphData.links.length} &nbsp;│&nbsp; SOVEREIGN IDENTITY GRAPH
@@ -234,20 +369,38 @@ export default function IdentityGraph() {
 
       {/* ── Entity Dossier Side Panel ── */}
       <div
-        className={`absolute top-0 right-0 h-full w-72 bg-[#0a0a0b] border-l-2 border-[#D4AF37]/40 transition-transform duration-300 ease-out z-20 flex flex-col font-mono ${
+        className={`absolute top-0 right-0 h-full w-80 bg-[#0a0a0b] border-l-2 border-[#D4AF37]/40 transition-transform duration-300 ease-out z-20 flex flex-col font-mono ${
           selectedNode ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
         {selectedNode && (
           <>
-            {/* Header */}
+            {/* Header with face thumbnail */}
             <div className="shrink-0 p-4 border-b border-[#1a1a1a]">
               <div className="flex justify-between items-start">
-                <div>
-                  <p className="text-[9px] text-gray-600 tracking-widest mb-1">ENTITY DOSSIER</p>
-                  <h2 className="text-[#D4AF37] text-lg font-bold tracking-wider">
-                    {selectedNode.name}
-                  </h2>
+                <div className="flex items-center gap-3">
+                  {/* Large face thumbnail */}
+                  {selectedNode.thumbnail ? (
+                    <div className="w-16 h-16 rounded-lg overflow-hidden border-2 border-[#D4AF37]/50 shrink-0">
+                      <img
+                        src={selectedNode.thumbnail}
+                        alt={selectedNode.name}
+                        className="w-full h-full object-cover"
+                        crossOrigin="anonymous"
+                      />
+                    </div>
+                  ) : (
+                    <div className="w-16 h-16 rounded-lg border border-[#333] bg-[#111] flex items-center justify-center shrink-0">
+                      <span className="text-gray-600 text-lg">◆</span>
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-[9px] text-gray-600 tracking-widest mb-1">ENTITY DOSSIER</p>
+                    <h2 className="text-[#D4AF37] text-sm font-bold tracking-wider leading-tight">
+                      {selectedNode.name}
+                    </h2>
+                    <p className="text-[8px] text-gray-600 mt-0.5 break-all">{selectedNode.id}</p>
+                  </div>
                 </div>
                 <button
                   onClick={() => setSelectedNode(null)}
@@ -270,35 +423,60 @@ export default function IdentityGraph() {
               </div>
             </div>
 
-            {/* Connections List */}
+            {/* Connections List with thumbnails */}
             <div className="flex-1 overflow-y-auto p-4">
               <p className="text-[9px] text-gray-600 tracking-widest mb-3">VERIFIED BIOMETRIC LINKS</p>
               <div className="space-y-2">
                 {connections
                   .sort((a, b) => b.score - a.score)
-                  .map((conn) => (
-                  <div
-                    key={conn.entity}
-                    className={`flex justify-between items-center p-2.5 rounded border ${
-                      conn.score > 95
-                        ? 'border-red-900/60 bg-red-950/20'
-                        : conn.score > 85
-                        ? 'border-[#D4AF37]/30 bg-[#D4AF37]/5'
-                        : 'border-[#1f1f1f] bg-[#0d0d0e]'
-                    }`}
-                  >
-                    <span className="text-xs text-gray-300 tracking-wider">{conn.entity}</span>
-                    <span className={`text-xs font-bold tracking-wider ${
-                      conn.score > 95
-                        ? 'text-red-400'
-                        : conn.score > 85
-                        ? 'text-[#D4AF37]'
-                        : 'text-gray-400'
-                    }`}>
-                      {conn.score.toFixed(1)}%
-                    </span>
-                  </div>
-                ))}
+                  .map((conn) => {
+                    const connNode = nodeMap.current.get(conn.entity);
+                    return (
+                      <div
+                        key={conn.entity}
+                        className={`flex items-center gap-2.5 p-2 rounded border cursor-pointer hover:opacity-80 transition-opacity ${
+                          conn.score > 95
+                            ? 'border-red-900/60 bg-red-950/20'
+                            : conn.score > 85
+                            ? 'border-[#D4AF37]/30 bg-[#D4AF37]/5'
+                            : 'border-[#1f1f1f] bg-[#0d0d0e]'
+                        }`}
+                        onClick={() => {
+                          if (connNode) setSelectedNode(connNode);
+                        }}
+                      >
+                        {/* Connected entity thumbnail */}
+                        {connNode?.thumbnail ? (
+                          <div className="w-8 h-8 rounded overflow-hidden border border-[#333] shrink-0">
+                            <img
+                              src={connNode.thumbnail}
+                              alt={connNode.name}
+                              className="w-full h-full object-cover"
+                              crossOrigin="anonymous"
+                            />
+                          </div>
+                        ) : (
+                          <div className="w-8 h-8 rounded border border-[#222] bg-[#111] flex items-center justify-center shrink-0">
+                            <span className="text-gray-700 text-[8px]">◆</span>
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[10px] text-gray-300 tracking-wider truncate">
+                            {connNode?.name || conn.entity}
+                          </p>
+                        </div>
+                        <span className={`text-xs font-bold tracking-wider shrink-0 ${
+                          conn.score > 95
+                            ? 'text-red-400'
+                            : conn.score > 85
+                            ? 'text-[#D4AF37]'
+                            : 'text-gray-400'
+                        }`}>
+                          {conn.score.toFixed(1)}%
+                        </span>
+                      </div>
+                    );
+                  })}
               </div>
             </div>
 

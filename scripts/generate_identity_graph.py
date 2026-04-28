@@ -28,6 +28,7 @@ import sys
 import json
 import struct
 import time
+import datetime
 import numpy as np
 from google.cloud import storage, kms
 from cryptography.fernet import Fernet
@@ -88,6 +89,31 @@ def calculate_cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
     return float(dot_product / (norm_a * norm_b))
 
 
+def sign_gcs_url(gs_uri: str, expiration_days: int = 7) -> str:
+    """
+    Converts a gs://bucket/path URI to a signed URL for browser access.
+    Falls back to the gs:// URI if signing fails.
+    """
+    if not gs_uri or not gs_uri.startswith("gs://"):
+        return gs_uri or ""
+    try:
+        parts = gs_uri.replace("gs://", "").split("/", 1)
+        bucket_name = parts[0]
+        blob_path = parts[1] if len(parts) > 1 else ""
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_path)
+        url = blob.generate_signed_url(
+            version="v4",
+            expiration=datetime.timedelta(days=expiration_days),
+            method="GET",
+        )
+        return url
+    except Exception as e:
+        print(f"[GRAPH] WARN: Failed to sign {gs_uri}: {e}")
+        return gs_uri
+
+
 # ---------------------------------------------------------
 # MAIN EXECUTION
 # ---------------------------------------------------------
@@ -124,6 +150,7 @@ def generate_graph():
                 decrypted.append({
                     "user_id": profile.user_id,
                     "person_name": profile.person_name,
+                    "thumbnail_url": profile.thumbnail_url,
                     "embedding": vec,
                 })
             except Exception as e:
@@ -133,12 +160,23 @@ def generate_graph():
         decrypt_elapsed = (time.perf_counter() - decrypt_start) * 1000
         print(f"[GRAPH] Decrypted {len(decrypted)}/{len(profiles)} embeddings in {decrypt_elapsed:.0f}ms")
 
-        # 2. Build nodes
+        # 2. Generate signed URLs for thumbnails (batch)
+        print(f"[GRAPH] Generating signed thumbnail URLs...")
+        thumbnail_map = {}
+        for d in decrypted:
+            if d["thumbnail_url"]:
+                thumbnail_map[d["user_id"]] = sign_gcs_url(d["thumbnail_url"])
+            else:
+                thumbnail_map[d["user_id"]] = ""
+        print(f"[GRAPH] Signed {len(thumbnail_map)} thumbnail URLs")
+
+        # 3. Build nodes
         nodes = [
             {
                 "id": d["user_id"],
                 "name": d["person_name"] or d["user_id"],
                 "group": 1,
+                "thumbnail": thumbnail_map.get(d["user_id"], ""),
             }
             for d in decrypted
         ]
