@@ -160,6 +160,13 @@ gcloud projects add-iam-policy-binding $PROJECT_ID `
     --role="roles/cloudsql.client" `
     2>&1
 
+# Cloud KMS: Encrypt/Decrypt for envelope encryption (restricted to facial-dek key)
+gcloud projects add-iam-policy-binding $PROJECT_ID `
+    --member="serviceAccount:${SA_EMAIL}" `
+    --role="roles/cloudkms.cryptoKeyEncrypterDecrypter" `
+    --condition="expression=resource.name.startsWith('projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek'),title=facial-kms-dek-only,description=Restrict KMS access to facial-dek key only" `
+    2>&1
+
 # Cloud Run: Invoker (for authenticated invocations)
 gcloud projects add-iam-policy-binding $PROJECT_ID `
     --member="serviceAccount:${SA_EMAIL}" `
