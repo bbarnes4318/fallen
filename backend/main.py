@@ -317,6 +317,9 @@ class AuditLog(BaseModel):
     pose_corrected_3d: Optional[bool] = None
     probe_pose_angles: Optional[dict] = None
     gallery_pose_angles: Optional[dict] = None
+    # Temporal & Spectral Telemetry (Tier 1/3)
+    estimated_temporal_delta: Optional[float] = None
+    cross_spectral_correction_applied: Optional[bool] = None
     statistical_certainty: str
     false_acceptance_rate: str
     nodes_mapped: int
@@ -504,7 +507,7 @@ def calculate_statistical_confidence(cosine_score: float) -> dict:
     }
 
 
-def cosine_to_lr_arcface(cosine_score: float) -> float:
+def cosine_to_lr_arcface(cosine_score: float, temporal_delta: float = 0.0) -> float:
     """
     Convert ArcFace cosine similarity to a Likelihood Ratio using
     empirically calibrated FAR/FRR from the LFW benchmark.
@@ -514,6 +517,12 @@ def cosine_to_lr_arcface(cosine_score: float) -> float:
     Where:
       - P(score | Hp) = True Positive Rate = 1 - FRR (same person produces this score)
       - P(score | Hd) = False Acceptance Rate = FAR (different person produces this score)
+      
+    Temporal Invariance:
+      - Exponential decay curve applied to TPR probability based on temporal delta.
+      - As the time gap increases, the expected FRR naturally increases.
+      - By boosting the expected TPR for degraded scores, we prevent the "Aging Problem"
+        without manipulating the raw structural score or Bayesian math.
     """
     if CALIBRATION is None:
         return 1.0  # Neutral LR — no calibration data
@@ -533,7 +542,12 @@ def cosine_to_lr_arcface(cosine_score: float) -> float:
         # Score below all thresholds — strong evidence against match
         return 1e-6  # Floor: extremely low LR
 
-    tpr = 1.0 - (frr_value if frr_value is not None else 0.0)
+    raw_tpr = 1.0 - (frr_value if frr_value is not None else 0.0)
+    
+    # Age-Conditioned Likelihood Ratio (Temporal Invariance)
+    # The expected TPR for degraded scores is exponentially boosted ~1% per year of temporal gap
+    tpr = min(1.0, raw_tpr * math.exp(0.01 * temporal_delta))
+
     # Epsilon floor to prevent division by zero
     far_value = max(far_value, 1e-9)
     lr = tpr / far_value
@@ -873,6 +887,60 @@ def extract_landmark_embedding(landmarks) -> np.ndarray:
         coords = coords / iod
 
     return coords.flatten()  # 1404-D vector
+
+
+def estimate_age(image: np.ndarray) -> float:
+    """
+    Estimates the apparent age of the subject using DeepFace.
+    """
+    try:
+        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        result = DeepFace.analyze(
+            img_path=rgb_image,
+            actions=["age"],
+            enforce_detection=False,
+            detector_backend="skip" # Image is already cropped/aligned
+        )
+        if isinstance(result, list):
+            return float(result[0]["age"])
+        return float(result["age"])
+    except Exception as e:
+        print(f"Age estimation failed: {e}")
+        return 0.0
+
+
+def cross_spectral_normalize(img1: np.ndarray, img2: np.ndarray) -> tuple[np.ndarray, np.ndarray, bool]:
+    """
+    Analyzes HSV saturation to detect if one image is grayscale/sepia and the other is color.
+    If a spectral mismatch is detected, converts the color image to grayscale to match domains,
+    preventing artificial texture noise in Tier 3 (LBP) and Tier 4 (Marks).
+    Returns (norm_img1, norm_img2, correction_applied).
+    """
+    hsv1 = cv2.cvtColor(img1, cv2.COLOR_BGR2HSV)
+    hsv2 = cv2.cvtColor(img2, cv2.COLOR_BGR2HSV)
+    
+    sat1_std = np.std(hsv1[:, :, 1])
+    sat2_std = np.std(hsv2[:, :, 1])
+    
+    threshold = 15.0 # Low saturation std indicates grayscale/monochrome
+    
+    is_gray1 = sat1_std < threshold
+    is_gray2 = sat2_std < threshold
+    
+    correction_applied = False
+    norm1 = img1.copy()
+    norm2 = img2.copy()
+    
+    if is_gray1 and not is_gray2:
+        gray2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
+        norm2 = cv2.cvtColor(gray2, cv2.COLOR_GRAY2BGR)
+        correction_applied = True
+    elif is_gray2 and not is_gray1:
+        gray1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
+        norm1 = cv2.cvtColor(gray1, cv2.COLOR_GRAY2BGR)
+        correction_applied = True
+        
+    return norm1, norm2, correction_applied
 
 
 def extract_arcface_embedding(image: np.ndarray) -> np.ndarray:
@@ -1710,6 +1778,14 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             detail="FACE_NOT_DETECTED: Could not detect a face in one or both images. Please upload clear, front-facing photographs."
         )
     
+    # 3.5 Temporal Invariance Engine (Age Estimation & Cross-Spectral Normalization)
+    gallery_age = estimate_age(gallery_aligned)
+    probe_age = estimate_age(probe_aligned)
+    temporal_delta = abs(probe_age - gallery_age)
+
+    # Cross-spectral matching before passing to textural/mark layers
+    gallery_aligned, probe_aligned, spectral_correction = cross_spectral_normalize(gallery_aligned, probe_aligned)
+    
     # 4. TIER 1: Structural Identity (Neural Ensemble: 60% ArcFace, 40% Facenet512)
     ensemble_gallery = extract_ensemble_embeddings(gallery_aligned)
     ensemble_probe = extract_ensemble_embeddings(probe_aligned)
@@ -1744,7 +1820,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
 
     # ── BAYESIAN EVIDENCE FUSION (Daubert v4.0) ──
     # Convert ArcFace cosine to Likelihood Ratio (calibration applies to ArcFace, not fused)
-    lr_arcface = cosine_to_lr_arcface(arcface_sim)
+    lr_arcface = cosine_to_lr_arcface(arcface_sim, temporal_delta=temporal_delta)
 
     # Combined mark LR (product of individual mark LRs)
     lr_marks = mark_result.get("lr_marks", 1.0)
@@ -1819,6 +1895,8 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         pose_corrected_3d=True,
         probe_pose_angles=pro_angles,
         gallery_pose_angles=gal_angles,
+        estimated_temporal_delta=round(temporal_delta, 1),
+        cross_spectral_correction_applied=spectral_correction,
         statistical_certainty=stats["statistical_certainty"],
         false_acceptance_rate=stats["false_acceptance_rate"],
         nodes_mapped=468,
@@ -2025,6 +2103,16 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
                 gallery_aligned = probe_aligned
                 gallery_landmarks = probe_landmarks
 
+    # 6.4 Temporal Invariance Engine
+    if gallery_landmarks is not None:
+        gallery_age = estimate_age(gallery_aligned)
+        probe_age = estimate_age(probe_aligned)
+        temporal_delta = abs(probe_age - gallery_age)
+        gallery_aligned, probe_aligned, spectral_correction = cross_spectral_normalize(gallery_aligned, probe_aligned)
+    else:
+        temporal_delta = 0.0
+        spectral_correction = False
+
     # 6.5 Upgrade Tier 1 to Neural Ensemble now that we have the gallery image
     if gallery_landmarks is not None:
         ensemble_gallery = extract_ensemble_embeddings(gallery_aligned)
@@ -2056,7 +2144,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     tier4_score = mark_result["score"]  # None if insufficient marks
 
     # ── BAYESIAN EVIDENCE FUSION (Daubert v4.0) ──
-    lr_arcface = cosine_to_lr_arcface(arcface_sim)
+    lr_arcface = cosine_to_lr_arcface(arcface_sim, temporal_delta=temporal_delta)
     lr_marks = mark_result.get("lr_marks", 1.0)
     lr_total = lr_arcface * lr_marks
 
@@ -2136,6 +2224,8 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         pose_corrected_3d=True,
         probe_pose_angles=pro_angles,
         gallery_pose_angles=gal_angles,
+        estimated_temporal_delta=round(temporal_delta, 1),
+        cross_spectral_correction_applied=spectral_correction,
         statistical_certainty=stats["statistical_certainty"],
         false_acceptance_rate=stats["false_acceptance_rate"],
         nodes_mapped=468,

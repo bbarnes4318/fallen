@@ -112,6 +112,10 @@ class VerificationEvent(Base):
     probe_pose_angles = Column(Text, nullable=True)     # JSON string of pitch, yaw, roll
     gallery_pose_angles = Column(Text, nullable=True)   # JSON string of pitch, yaw, roll
 
+    # Temporal & Spectral Telemetry (Tier 1/3)
+    estimated_temporal_delta = Column(Float, nullable=True)
+    cross_spectral_correction_applied = Column(Boolean, nullable=True, default=False)
+
     # Tier 4: Mark Correspondence (×100 for integer consistency)
     mark_correspondence_x100 = Column(Integer, nullable=True)
 
