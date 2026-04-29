@@ -50,17 +50,20 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Preload Tier 1 Neural Ensemble models at module init to avoid per-request cold start
+print("Starting Tier 1 Neural Ensemble model preload...", flush=True)
 try:
     DeepFace.build_model("ArcFace")
     DeepFace.build_model("Facenet512")
-    print("Tier 1 Neural Ensemble models (ArcFace, Facenet512) preloaded successfully.")
+    print("Tier 1 Neural Ensemble models (ArcFace, Facenet512) preloaded successfully.", flush=True)
 except Exception as e:
-    print(f"Warning: Model preload failed (will retry on first request): {e}")
+    print(f"Warning: Model preload failed (will retry on first request): {e}", flush=True)
 
 @app.on_event("startup")
 def on_startup():
+    print("Starting database initialization (init_db)...", flush=True)
     init_db()
-    print("Hydrating FAISS Vault Index...")
+    print("Database initialization complete.", flush=True)
+    print("Hydrating FAISS Vault Index...", flush=True)
     session = SessionLocal()
     try:
         profiles = session.query(IdentityProfile).all()
@@ -69,8 +72,8 @@ def on_startup():
                 emb = decrypt_embedding(p.encrypted_facial_embedding)
                 vault_index.add_identity(p.user_id, emb)
             except Exception as e:
-                print(f"Failed to load embedding for {p.user_id}: {e}")
-        print(f"FAISS index hydrated with {vault_index.index.ntotal} records.")
+                print(f"Failed to load embedding for {p.user_id}: {e}", flush=True)
+        print(f"FAISS index hydrated with {vault_index.index.ntotal} records.", flush=True)
     finally:
         session.close()
 

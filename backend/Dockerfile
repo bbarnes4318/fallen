@@ -26,6 +26,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
+# Pre-download DeepFace models to ~/.deepface/weights so they are baked into the image
+# This prevents Cloud Run from timing out during container startup
+RUN TF_USE_LEGACY_KERAS=1 python -c "from deepface import DeepFace; DeepFace.build_model('ArcFace'); DeepFace.build_model('Facenet512')"
+
 # Copy the rest of the application code
 COPY . .
 
@@ -33,4 +37,4 @@ COPY . .
 EXPOSE 8080
 
 # Command to run the FastAPI application using Uvicorn
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}
