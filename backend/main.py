@@ -341,11 +341,14 @@ def _load_calibration():
 
 CALIBRATION = _load_calibration()
 
-def calculate_statistical_confidence(cosine_score: float) -> dict:
+def calculate_statistical_confidence(cosine_score: float, marks_matched: int = 0) -> dict:
     """
     Convert ArcFace cosine similarity to FAR and statistical certainty
     using empirically calibrated thresholds from the LFW benchmark.
     If no calibration data is available, honestly reports UNCALIBRATED.
+
+    marks_matched: number of confirmed scar/mole/birthmark correspondences.
+    Each matching mark applies an exponential FAR reduction (÷ 10^marks).
     """
     if CALIBRATION is None:
         return {
@@ -368,6 +371,10 @@ def calculate_statistical_confidence(cosine_score: float) -> dict:
             far_value = thresholds[t]["far"]
             frr_value = thresholds[t]["frr"]
             matched_threshold = t
+
+    # Exponential FAR Reduction: each confirmed mark divides FAR by 10
+    if far_value is not None and far_value > 0 and marks_matched > 0:
+        far_value = far_value / (10 ** marks_matched)
 
     if far_value is None or far_value <= 0:
         # Score is below all calibrated thresholds
@@ -1422,19 +1429,19 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     mark_result = compute_mark_correspondence(marks_gallery, marks_probe)
     tier4_score = mark_result["score"]  # None if insufficient marks
 
-    if tier4_score is not None:
-        # 4-tier fusion: redistribute weight to include mark correspondence
-        _w1 = _fw["structural"] * 0.917 if _fw else 0.55  # 0.60 * 0.917 ≈ 0.55
-        _w2 = _fw["geometric"] * 0.80 if _fw else 0.20    # 0.25 * 0.80 = 0.20
-        _w3 = _fw["micro_topology"] * 0.667 if _fw else 0.10  # 0.15 * 0.667 ≈ 0.10
-        _w4 = 0.15
-        fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3) + (tier4_score * _w4)
+    # Base 3-tier fusion (weights are NEVER redistributed)
+    _w1 = _fw["structural"] if _fw else 0.60
+    _w2 = _fw["geometric"] if _fw else 0.25
+    _w3 = _fw["micro_topology"] if _fw else 0.15
+    base_fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3)
+
+    # Error Margin Reduction: confirmed marks reduce the gap to 100%
+    if tier4_score is not None and mark_result["matched"] > 0:
+        error_margin = 100.0 - base_fused_score
+        boost_factor = min(mark_result["matched"] * 0.15, 0.90)
+        fused_score = base_fused_score + (error_margin * boost_factor)
     else:
-        # 3-tier fusion (insufficient marks for Tier 4)
-        _w1 = _fw["structural"] if _fw else 0.60
-        _w2 = _fw["geometric"] if _fw else 0.25
-        _w3 = _fw["micro_topology"] if _fw else 0.15
-        fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3)
+        fused_score = base_fused_score
     
     if veto_triggered:
         fused_score = min(fused_score, tier1_score)  # Cap — never inflate a non-match
@@ -1469,7 +1476,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     probe_wireframe = generate_wireframe_hud(probe_aligned, probe_landmarks)
 
     # Statistical confidence from Tier-1 raw cosine
-    stats = calculate_statistical_confidence(structural_sim)
+    stats = calculate_statistical_confidence(structural_sim, marks_matched=mark_result["matched"])
 
     # Deep Forensic Telemetry (hash of 512-D ArcFace vector)
     probe_vector_hash = compute_vector_hash(embed_probe)
@@ -1712,17 +1719,19 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     mark_result = compute_mark_correspondence(marks_gallery, marks_probe)
     tier4_score = mark_result["score"]  # None if insufficient marks
 
-    if tier4_score is not None:
-        _w1 = _fw["structural"] * 0.917 if _fw else 0.55
-        _w2 = _fw["geometric"] * 0.80 if _fw else 0.20
-        _w3 = _fw["micro_topology"] * 0.667 if _fw else 0.10
-        _w4 = 0.15
-        fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3) + (tier4_score * _w4)
+    # Base 3-tier fusion (weights are NEVER redistributed)
+    _w1 = _fw["structural"] if _fw else 0.60
+    _w2 = _fw["geometric"] if _fw else 0.25
+    _w3 = _fw["micro_topology"] if _fw else 0.15
+    base_fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3)
+
+    # Error Margin Reduction: confirmed marks reduce the gap to 100%
+    if tier4_score is not None and mark_result["matched"] > 0:
+        error_margin = 100.0 - base_fused_score
+        boost_factor = min(mark_result["matched"] * 0.15, 0.90)
+        fused_score = base_fused_score + (error_margin * boost_factor)
     else:
-        _w1 = _fw["structural"] if _fw else 0.60
-        _w2 = _fw["geometric"] if _fw else 0.25
-        _w3 = _fw["micro_topology"] if _fw else 0.15
-        fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3)
+        fused_score = base_fused_score
 
     # 10. ArcFace Veto — hard fail if cosine < 0.40
     veto_arcface = best_score < 0.40
@@ -1763,7 +1772,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         probe_wireframe_b64 = generate_wireframe_hud(probe_aligned, probe_landmarks)
 
     # Statistical confidence & attribution from vault match
-    stats = calculate_statistical_confidence(best_score)
+    stats = calculate_statistical_confidence(best_score, marks_matched=mark_result["matched"])
     matched_profile = None
     attr_session = SessionLocal()
     try:
