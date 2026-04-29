@@ -717,15 +717,15 @@ export default function Home() {
               </div>
             </div>
 
-            {/* ── RIGHT PANEL (30%): Intelligence Panel — Premium Redesign ── */}
+            {/* ── RIGHT PANEL (30%): Intelligence Panel — Human-Readable ── */}
             <div className="w-[30%] flex flex-col gap-2 min-h-0 overflow-y-auto overflow-x-hidden shrink-0 pr-0.5">
 
-              {/* ═══ FUSED IDENTITY — Hero Score ═══ */}
+              {/* ═══ OVERALL MATCH — Hero Score ═══ */}
               <div className={`relative overflow-hidden rounded-lg p-4 border-2 ${results.veto_triggered ? 'border-red-700/60 bg-gradient-to-br from-[#1a0505] to-[#0d0d0e]' : 'border-[#D4AF37]/50 bg-gradient-to-br from-[#1a170d] to-[#0d0d0e]'}`}>
                 <div className={`absolute -top-6 -right-6 w-24 h-24 rounded-full ${results.veto_triggered ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
                 <div className={`absolute -bottom-4 -left-4 w-16 h-16 rounded-full ${results.veto_triggered ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
                 <div className="relative z-10">
-                  <div className={`text-[8px] tracking-[0.3em] mb-1 ${results.veto_triggered ? 'text-red-400/70' : 'text-[#D4AF37]/70'}`}>FUSED IDENTITY SCORE</div>
+                  <div className={`text-[8px] tracking-[0.3em] mb-1 ${results.veto_triggered ? 'text-red-400/70' : 'text-[#D4AF37]/70'}`}>OVERALL MATCH SCORE</div>
                   <div className="flex items-baseline gap-1.5">
                     <span className={`text-4xl font-bold tabular-nums ${results.veto_triggered ? 'text-red-400' : 'text-[#D4AF37]'}`}>{results.fused_identity_score}</span>
                     <span className={`text-lg font-bold ${results.veto_triggered ? 'text-red-400/60' : 'text-[#D4AF37]/60'}`}>%</span>
@@ -737,16 +737,24 @@ export default function Home() {
                       style={{ width: `${Math.min(100, results.fused_identity_score)}%` }}
                     />
                   </div>
-                  <div className={`text-[8px] mt-1.5 ${results.veto_triggered ? 'text-red-400/50' : 'text-[#D4AF37]/50'}`}>60% ArcFace · 25% Geometric · 15% LBP χ²</div>
+                  {/* Human-readable interpretation */}
+                  <div className={`text-[10px] mt-2 font-medium ${results.veto_triggered ? 'text-red-300/80' : results.fused_identity_score > 80 ? 'text-emerald-300/80' : results.fused_identity_score > 60 ? 'text-amber-300/80' : 'text-red-300/80'}`}>
+                    {results.fused_identity_score > 85 ? 'Very strong facial similarity detected' : results.fused_identity_score > 70 ? 'Moderate facial similarity detected' : results.fused_identity_score > 50 ? 'Weak similarity — likely different people' : 'Very low similarity — different people'}
+                  </div>
+                  <div className={`text-[8px] mt-1 ${results.veto_triggered ? 'text-red-400/40' : 'text-[#D4AF37]/40'}`}>Combined from 3 independent analysis methods below</div>
                 </div>
               </div>
 
-              {/* ═══ TIER BREAKDOWN ═══ */}
+              {/* ═══ HOW WE SCORED THIS — Breakdown ═══ */}
               <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg overflow-hidden">
-                {/* Tier 1: Structural */}
+                <div className="px-2.5 py-1.5 border-b border-[#1a1a1a] bg-[#111]">
+                  <span className="text-[9px] text-gray-400 tracking-wider font-bold">HOW WE ANALYZED THIS</span>
+                </div>
+
+                {/* Tier 1: Face Shape & Identity */}
                 <div className="p-2.5 border-b border-[#1a1a1a]">
                   <div className="flex items-baseline justify-between">
-                    <h3 className="text-gray-400 text-[9px] tracking-wider font-bold">STRUCTURAL</h3>
+                    <h3 className="text-gray-300 text-[9px] tracking-wider font-bold">FACE RECOGNITION</h3>
                     <span className={`text-lg font-bold tabular-nums ${results.structural_score > 80 ? 'text-emerald-400' : results.structural_score > 60 ? 'text-amber-400' : 'text-red-400'}`}>{results.structural_score}%</span>
                   </div>
                   <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden">
@@ -755,13 +763,20 @@ export default function Home() {
                       style={{ width: `${Math.min(100, results.structural_score)}%` }}
                     />
                   </div>
-                  <p className="text-[8px] text-gray-600 mt-1 leading-relaxed">512-D ArcFace CNN cosine similarity — primary identity discriminator</p>
+                  <p className="text-[9px] text-gray-500 mt-1.5 leading-relaxed">Do these faces belong to the same person? This is the primary test — an AI model maps each face into a mathematical fingerprint and measures how similar they are.</p>
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <div className={`w-1 h-1 rounded-full ${results.structural_score > 80 ? 'bg-emerald-500' : results.structural_score > 60 ? 'bg-amber-500' : 'bg-red-500'}`}></div>
+                    <span className={`text-[8px] italic ${results.structural_score > 80 ? 'text-emerald-500/70' : results.structural_score > 60 ? 'text-amber-500/70' : 'text-red-500/70'}`}>
+                      {results.structural_score > 85 ? 'Strong match — very likely the same person' : results.structural_score > 70 ? 'Possible match — further review recommended' : results.structural_score > 50 ? 'Unlikely match — faces differ significantly' : 'No match — these are different people'}
+                    </span>
+                  </div>
+                  <div className="text-[7px] text-gray-700 mt-1 tracking-wide">60% of overall score · ArcFace 512-D CNN</div>
                 </div>
 
-                {/* Tier 2: Geometric */}
+                {/* Tier 2: Face Proportions */}
                 <div className="p-2.5 border-b border-[#1a1a1a]">
                   <div className="flex items-baseline justify-between">
-                    <h3 className="text-gray-400 text-[9px] tracking-wider font-bold">GEOMETRIC</h3>
+                    <h3 className="text-gray-300 text-[9px] tracking-wider font-bold">FACE PROPORTIONS</h3>
                     <span className={`text-lg font-bold tabular-nums ${results.soft_biometrics_score > 80 ? 'text-emerald-400' : results.soft_biometrics_score > 60 ? 'text-amber-400' : 'text-red-400'}`}>{results.soft_biometrics_score}%</span>
                   </div>
                   <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden">
@@ -770,13 +785,20 @@ export default function Home() {
                       style={{ width: `${Math.min(100, results.soft_biometrics_score)}%` }}
                     />
                   </div>
-                  <p className="text-[8px] text-gray-600 mt-1 leading-relaxed">12-D facial ratio L2 distance — nose, jaw, brow proportions</p>
+                  <p className="text-[9px] text-gray-500 mt-1.5 leading-relaxed">Are the facial measurements similar? Compares the distances between eyes, nose width, jawline angle, and brow spacing — like a ruler measuring each face.</p>
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <div className={`w-1 h-1 rounded-full ${results.soft_biometrics_score > 80 ? 'bg-emerald-500' : results.soft_biometrics_score > 60 ? 'bg-amber-500' : results.soft_biometrics_score > 0 ? 'bg-red-500' : 'bg-yellow-500'}`}></div>
+                    <span className={`text-[8px] italic ${results.soft_biometrics_score > 80 ? 'text-emerald-500/70' : results.soft_biometrics_score > 60 ? 'text-amber-500/70' : results.soft_biometrics_score > 0 ? 'text-red-500/70' : 'text-yellow-500/70'}`}>
+                      {results.soft_biometrics_score > 80 ? 'Proportions closely match' : results.soft_biometrics_score > 60 ? 'Proportions partially align' : results.soft_biometrics_score > 0 ? 'Proportions do not match' : 'Could not measure — face angle or quality too low'}
+                    </span>
+                  </div>
+                  <div className="text-[7px] text-gray-700 mt-1 tracking-wide">25% of overall score · 12-point landmark geometry</div>
                 </div>
 
-                {/* Tier 3: Micro-Topology */}
+                {/* Tier 3: Skin Texture */}
                 <div className="p-2.5">
                   <div className="flex items-baseline justify-between">
-                    <h3 className="text-gray-400 text-[9px] tracking-wider font-bold">MICRO-TOPOLOGY</h3>
+                    <h3 className="text-gray-300 text-[9px] tracking-wider font-bold">SKIN TEXTURE</h3>
                     <span className={`text-lg font-bold tabular-nums ${results.micro_topology_score > 80 ? 'text-emerald-400' : results.micro_topology_score > 60 ? 'text-amber-400' : 'text-red-400'}`}>{results.micro_topology_score}%</span>
                   </div>
                   <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden">
@@ -785,21 +807,38 @@ export default function Home() {
                       style={{ width: `${Math.min(100, results.micro_topology_score)}%` }}
                     />
                   </div>
-                  <p className="text-[8px] text-gray-600 mt-1 leading-relaxed">LBP texture χ² distance — pore density, wrinkles, scarring</p>
+                  <p className="text-[9px] text-gray-500 mt-1.5 leading-relaxed">Does the skin look similar? Analyzes pore patterns, wrinkle depth, scars, and surface texture. High scores can occur between people of similar age and ethnicity — this alone does not confirm identity.</p>
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <div className={`w-1 h-1 rounded-full ${results.micro_topology_score > 80 ? 'bg-emerald-500' : results.micro_topology_score > 60 ? 'bg-amber-500' : 'bg-red-500'}`}></div>
+                    <span className={`text-[8px] italic ${results.micro_topology_score > 80 ? 'text-emerald-500/70' : results.micro_topology_score > 60 ? 'text-amber-500/70' : 'text-red-500/70'}`}>
+                      {results.micro_topology_score > 80 ? 'Similar skin texture detected' : results.micro_topology_score > 60 ? 'Partial texture similarity' : 'Skin textures differ'}
+                    </span>
+                  </div>
+                  <div className="text-[7px] text-gray-700 mt-1 tracking-wide">15% of overall score · LBP texture analysis</div>
                 </div>
               </div>
 
-              {/* ═══ CONCLUSION ═══ */}
+              {/* ═══ VERDICT ═══ */}
               <div className={`rounded-lg overflow-hidden border-2 ${results.veto_triggered ? 'border-red-700/60' : 'border-emerald-700/40'}`}>
-                <div className={`px-3 py-1 text-[8px] tracking-[0.2em] font-bold ${results.veto_triggered ? 'bg-red-900/40 text-red-300' : 'bg-emerald-900/30 text-emerald-300'}`}>
-                  {results.veto_triggered ? '⚠ ACE-V VETO TRIGGERED' : '✓ CONCLUSION'}
+                <div className={`px-3 py-1.5 text-[9px] tracking-[0.15em] font-bold ${results.veto_triggered ? 'bg-red-900/40 text-red-300' : 'bg-emerald-900/30 text-emerald-300'}`}>
+                  {results.veto_triggered ? '✗ VERDICT: NOT A MATCH' : '✓ VERDICT: MATCH DETECTED'}
                 </div>
-                <div className={`px-3 py-2.5 ${results.veto_triggered ? 'bg-red-950/20' : 'bg-[#0d0d0e]'}`}>
-                  <p className={`text-[11px] leading-snug font-bold ${results.veto_triggered ? 'text-red-400' : 'text-gray-200'}`}>{results.conclusion}</p>
+                <div className={`px-3 py-3 ${results.veto_triggered ? 'bg-red-950/20' : 'bg-[#0d0d0e]'}`}>
+                  <p className={`text-[11px] leading-relaxed ${results.veto_triggered ? 'text-red-300/90' : 'text-gray-200'}`}>
+                    {results.veto_triggered
+                      ? 'The primary face recognition test scored below the minimum threshold. These are different people. The overall score is too low to support a match regardless of other factors.'
+                      : results.conclusion
+                    }
+                  </p>
+                  {results.veto_triggered && (
+                    <div className="mt-2 px-2 py-1.5 bg-red-950/30 rounded border border-red-900/30">
+                      <p className="text-[8px] text-red-400/70 leading-relaxed">The face recognition AI returned a similarity of {results.structural_score}%, which is below the 40% minimum required to consider a potential match. This is an automatic exclusion.</p>
+                    </div>
+                  )}
                   {!results.veto_triggered && (
-                    <div className="mt-1.5 flex items-center gap-1.5">
+                    <div className="mt-2 flex items-center gap-1.5">
                       <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></div>
-                      <span className="text-[8px] text-emerald-500/70 tracking-wider">NO DISCREPANCY DETECTED</span>
+                      <span className="text-[9px] text-emerald-500/70 tracking-wider">No discrepancies found across all 3 tests</span>
                     </div>
                   )}
                 </div>
@@ -815,7 +854,7 @@ export default function Home() {
                     : 'border-[#D4AF37]/50 bg-[#0a0a0a] text-[#D4AF37] hover:bg-[#D4AF37]/10 hover:border-[#D4AF37] hover:shadow-[0_0_20px_rgba(212,175,55,0.4)]'
                 }`}
               >
-                {isExporting ? 'COMPILING...' : '↓ EXPORT DOSSIER'}
+                {isExporting ? 'COMPILING...' : '↓ DOWNLOAD FULL REPORT'}
               </button>
             </div>
             </div>
