@@ -736,15 +736,21 @@ def extract_arcface_embedding(image: np.ndarray) -> np.ndarray:
     This is the TRUE identity discriminator — replaces MediaPipe geometric
     cosine for Tier 1 structural identity matching.
 
-    CRITICAL: The input image is ALREADY aligned by align_face_crop() using
-    MediaPipe 5-point landmarks. We use detector_backend='skip' so DeepFace
-    processes the pre-aligned crop directly WITHOUT re-running face detection.
+    CRITICAL: We use detector_backend='retinaface' — the ONLY backend that
+    reliably handles BOTH failure modes:
 
-    Using 'opencv' here causes catastrophic failure: OpenCV's Haar cascade
-    fails on tightly-cropped face images, and enforce_detection=False then
-    produces degenerate embeddings that are nearly identical across all
-    failed detections — creating mass false matches (99.5%+ cosine between
-    completely unrelated identities).
+    - 'skip' bypasses alignment entirely. Our align_face_crop() uses MediaPipe
+      landmarks which don't match ArcFace's training alignment → poor
+      discriminative power between different identities.
+
+    - 'opencv' (Haar cascade) fails on tightly-cropped face images. With
+      enforce_detection=False, failed detections produce degenerate embeddings
+      that are nearly identical across all subjects → mass false matches.
+
+    - 'retinaface' is a deep-learning face detector that successfully detects
+      faces even in pre-cropped images AND provides the 5 facial landmarks
+      needed for ArcFace-compatible affine alignment. This is the standard
+      recommended backend for ArcFace in the DeepFace library.
 
     Returns a 512-D numpy array (ArcFace latent space).
     """
@@ -755,7 +761,7 @@ def extract_arcface_embedding(image: np.ndarray) -> np.ndarray:
         img_path=rgb_image,
         model_name="ArcFace",
         enforce_detection=False,
-        detector_backend="skip",
+        detector_backend="retinaface",
     )
     embedding = np.array(result[0]["embedding"], dtype=np.float64)
     return embedding  # 512-D vector
