@@ -407,7 +407,7 @@ export default function IdentityGraph() {
       {/* ── Entity Dossier Side Panel ── */}
       <div
         className={`absolute top-0 right-0 h-full w-80 bg-[#0a0a0b] border-l-2 border-[#D4AF37]/40 transition-transform duration-300 ease-out z-20 flex flex-col font-mono ${
-          selectedNode ? 'translate-x-0' : 'translate-x-full'
+          selectedNode ? 'translate-x-0 pointer-events-auto' : 'translate-x-full pointer-events-none'
         }`}
       >
         {selectedNode && (
