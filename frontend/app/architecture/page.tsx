@@ -36,10 +36,10 @@ const TIERS = [
     color: C.green,
     borderColor: "rgba(61,220,132,0.3)",
     bgAccent: "rgba(61,220,132,0.06)",
-    metric: "512-D",
+    metric: "Deep",
     metricLabel: "Embedding Vector",
     method: "Cosine Similarity",
-    threshold: "0.40 Gatekeeper",
+    threshold: "Distance Threshold",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-5 h-5">
         <path d="M12 2a7 7 0 017 7v1a7 7 0 01-14 0V9a7 7 0 017-7z" />
@@ -48,12 +48,12 @@ const TIERS = [
         <circle cx="15" cy="10" r="1" fill="currentColor" />
       </svg>
     ),
-    body: "The primary gatekeeper. Each face is projected through a ResNet-100 ArcFace network into a 512-dimensional hypersphere. The cosine distance between two embeddings is the core structural similarity measure. Scores below the 0.40 threshold trigger an automatic exclusion — the biometric equivalent of an ACE-V elimination.",
+    body: "The primary gatekeeper. Each face is projected through a deep neural network into a multidimensional hypersphere. The cosine distance between two embeddings is the core structural similarity measure. Scores below a proprietary threshold trigger an automatic exclusion — the biometric equivalent of an ACE-V elimination.",
     details: [
-      "Model: ArcFace R100 (InsightFace), trained on MS1MV2 (5.8M images)",
-      "Embedding normalization: L2-normalized unit vectors on S^511",
-      "Distance metric: 1 − cos(θ) mapped to [0, 100] scale",
-      "Calibrated against LFW benchmark (13,233 subjects)",
+      "Model: Proprietary Neural Embedding Network",
+      "Embedding normalization: L2-normalized unit vectors",
+      "Distance metric: 1 − cos(θ) mapped to similarity scale",
+      "Calibrated against large-scale biometric benchmarks",
     ],
   },
   {
@@ -64,7 +64,7 @@ const TIERS = [
     color: C.cyan,
     borderColor: "rgba(74,200,219,0.3)",
     bgAccent: "rgba(74,200,219,0.06)",
-    metric: "12",
+    metric: "Key",
     metricLabel: "Facial Ratios",
     method: "L2 Distance",
     threshold: "Euclidean Norm",
@@ -76,12 +76,12 @@ const TIERS = [
         <line x1="3" y1="3" x2="21" y2="21" opacity="0.4" />
       </svg>
     ),
-    body: "Twelve anatomically-grounded facial ratios — inter-pupillary distance normalized against face width, nose length to face height, jaw width to cheekbone span — are extracted from 468 MediaPipe FaceMesh landmarks. All ratios are scale-invariant, immune to distance-from-camera artifacts. The L2 (Euclidean) distance between ratio vectors quantifies geometric divergence.",
+    body: "Anatomically-grounded facial ratios — inter-pupillary distance normalized against face width, nose length to face height, jaw width to cheekbone span — are extracted from dense facial landmarks. All ratios are scale-invariant, immune to distance-from-camera artifacts. The L2 (Euclidean) distance between ratio vectors quantifies geometric divergence.",
     details: [
-      "Landmark source: MediaPipe FaceMesh (468 canonical points)",
-      "Ratio set: 12 craniometric proportions (Procrustes-aligned)",
+      "Landmark source: Dense topometric mesh",
+      "Ratio set: Proprietary craniometric proportions (Procrustes-aligned)",
       "Invariance: scale, rotation, and translation normalized",
-      "Contributes 25% to weighted heuristic fusion",
+      "Contributes to weighted heuristic fusion",
     ],
   },
   {
@@ -110,10 +110,10 @@ const TIERS = [
     ),
     body: "Local Binary Patterns (LBP) extract micro-textural signatures from the skin surface — pore density, wrinkle topology, and pigmentation gradients. The Chi-Squared distance between LBP histograms captures differences invisible to neural embeddings: aging patterns, sun damage, and dermatological conditions that persist across years.",
     details: [
-      "Algorithm: Uniform Local Binary Patterns (P=8, R=1)",
-      "Histogram: 59-bin rotation-invariant LBP distribution",
-      "Distance: χ²(H₁, H₂) = Σ(hᵢ − gᵢ)² / (hᵢ + gᵢ)",
-      "Contributes 15% to weighted heuristic fusion",
+      "Algorithm: Uniform Local Binary Patterns",
+      "Histogram: Rotation-invariant LBP distribution",
+      "Distance: χ² divergence",
+      "Contributes to weighted heuristic fusion",
     ],
   },
   {
@@ -136,9 +136,9 @@ const TIERS = [
     ),
     body: "The crown of the pipeline. Scars, moles, birthmarks, and surgical marks are detected, localized in Procrustes-normalized face space, and matched via Hungarian optimization. Each matched mark pair produces an individual Likelihood Ratio by comparing observed delta vectors against the background population (H_d) and intra-person (H_p) distributions. The product of all mark LRs is fused with LR_arcface to yield a courtroom-admissible posterior probability.",
     details: [
-      "Population model: 5-D Multivariate Gaussian (μ, Σ) + Gaussian KDE",
-      "Calibration: 13,233 LFW subjects (500K+ marks, 388K intra-person deltas)",
-      "Mark features: Δx, Δy, Δarea, Δintensity, Δcircularity",
+      "Population model: Multivariate Statistical Distributions",
+      "Calibration: Institutional-scale calibration dataset",
+      "Mark features: Spatial, textural, and geometric deltas",
       "Fusion: LR_total = LR_arcface × Π(LR_markᵢ) → Posterior = LR/(LR+1)",
     ],
   },

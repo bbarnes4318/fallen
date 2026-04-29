@@ -35,7 +35,14 @@ from deepface import DeepFace
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 
 limiter = Limiter(key_func=get_remote_address)
-app = FastAPI(title="Biometric Facial Verification Pipeline")
+# Only enable interactive docs in local development mode
+is_development = os.getenv("ENVIRONMENT") == "development"
+app = FastAPI(
+    title="Biometric Facial Verification Pipeline",
+    docs_url="/docs" if is_development else None,
+    redoc_url="/redoc" if is_development else None,
+    openapi_url="/openapi.json" if is_development else None
+)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -68,8 +75,11 @@ app.add_middleware(
 # ---------------------------------------------------------
 # JWT ZERO-TRUST AUTHENTICATION
 # ---------------------------------------------------------
-JWT_SECRET = os.getenv("JWT_SECRET", "super-secret-key-change-in-production")
-OPERATOR_PASSWORD = os.getenv("OPERATOR_PASSWORD", "aurum-admin-99")
+JWT_SECRET = os.getenv("JWT_SECRET")
+OPERATOR_PASSWORD = os.getenv("OPERATOR_PASSWORD")
+
+if not JWT_SECRET or not OPERATOR_PASSWORD:
+    raise RuntimeError("CRITICAL SECRETS MISSING: JWT_SECRET and OPERATOR_PASSWORD must be set in the environment.")
 ALGORITHM = "HS256"
 
 security = HTTPBearer()
