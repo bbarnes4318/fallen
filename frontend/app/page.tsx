@@ -427,39 +427,318 @@ export default function Home() {
     }
   };
 
-  // ─── LOGIN SCREEN ─────────────────────────────────────
+  // ─── State for login overlay on landing page ─────────
+  const [showLoginOverlay, setShowLoginOverlay] = useState(false);
+
+  // ─── SOVEREIGN IDENTITY GATEWAY (Landing Page) ───────
   if (!token) {
     return (
-      <main className="h-screen w-screen overflow-hidden bg-[#0A0A0B] text-[#E0E0E0] flex items-center justify-center font-mono selection:bg-[#D4AF37] selection:text-black">
-        <div className="w-full max-w-sm p-8 bg-[#0d0d0e] border border-[#1f1f1f] rounded-xl shadow-2xl">
-          <div className="text-center mb-6">
-            <h1 className="text-xl font-bold tracking-widest text-white mb-1">
-              ZERO-TRUST <span className="text-[#D4AF37]">PORTAL</span>
-            </h1>
-            <p className="text-gray-500 text-[10px]">AWAITING OPERATOR CREDENTIALS</p>
-          </div>
-          
-          <form onSubmit={handleLogin} className="space-y-4">
-            <input 
-              type="password" 
-              value={password}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
-              placeholder="ENTER PASSPHRASE"
-              className="w-full bg-[#111] border border-[#333] text-white p-3 text-center text-sm tracking-widest focus:outline-none focus:border-[#D4AF37] transition-colors"
-            />
-            
-            {loginError && (
-              <div className="text-red-500 text-[10px] text-center">{loginError}</div>
-            )}
-            
-            <button 
-              type="submit"
-              className="w-full py-2.5 bg-[#D4AF37] text-black font-bold text-sm tracking-widest hover:bg-[#b5952f] transition-colors shadow-[0_0_15px_rgba(212,175,55,0.2)]"
+      <main className="min-h-screen w-screen bg-[#050A10] text-[#E0E0E0] selection:bg-[#D4AF37] selection:text-black overflow-y-auto overflow-x-hidden">
+
+        {/* ═══════════════════════════════════════════════
+            SECTION 1: HERO — Sovereign Identity Gateway
+            ═══════════════════════════════════════════════ */}
+        <section className="relative min-h-screen flex flex-col">
+
+          {/* ── Top Navigation Bar ── */}
+          <nav className="shrink-0 flex items-center justify-between px-8 py-5 relative z-20">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 border-2 border-[#D4AF37] flex items-center justify-center">
+                <div className="w-3 h-3 bg-[#D4AF37]"></div>
+              </div>
+              <div>
+                <span className="text-white font-bold text-sm tracking-[0.25em]">AURUM<span className="text-[#D4AF37]">SHIELD</span></span>
+                <span className="hidden sm:inline text-gray-600 text-[9px] ml-3 tracking-[0.15em]">BIOMETRIC INTELLIGENCE</span>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowLoginOverlay(true)}
+              className="px-5 py-2 text-[10px] tracking-[0.2em] font-bold text-gray-400 border border-[#1F2937] hover:border-[#D4AF37]/50 hover:text-[#D4AF37] bg-transparent transition-all"
             >
-              AUTHENTICATE
+              OPERATOR LOGIN
             </button>
-          </form>
-        </div>
+          </nav>
+
+          {/* ── Hero Content ── */}
+          <div className="flex-1 flex flex-col items-center justify-center px-6 text-center relative z-10 pb-16">
+            {/* Background radial glow */}
+            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-[#D4AF37]/[0.03] rounded-full blur-[120px]"></div>
+              <div className="absolute top-1/4 right-1/4 w-[300px] h-[300px] bg-[#D4AF37]/[0.02] rounded-full blur-[80px]"></div>
+            </div>
+
+            {/* Decorative corner brackets */}
+            <div className="absolute top-28 left-8 w-10 h-10 border-t border-l border-[#D4AF37]/20 pointer-events-none"></div>
+            <div className="absolute top-28 right-8 w-10 h-10 border-t border-r border-[#D4AF37]/20 pointer-events-none"></div>
+            <div className="absolute bottom-28 left-8 w-10 h-10 border-b border-l border-[#D4AF37]/20 pointer-events-none"></div>
+            <div className="absolute bottom-28 right-8 w-10 h-10 border-b border-r border-[#D4AF37]/20 pointer-events-none"></div>
+
+            <div className="relative z-10 max-w-3xl">
+              <div className="text-[#D4AF37]/60 text-[10px] tracking-[0.5em] font-mono mb-6 flex items-center justify-center gap-3">
+                <div className="w-8 h-[1px] bg-[#D4AF37]/30"></div>
+                SOVEREIGN FACIAL INTELLIGENCE
+                <div className="w-8 h-[1px] bg-[#D4AF37]/30"></div>
+              </div>
+
+              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-white leading-[1.1] tracking-tight mb-6" style={{ fontFamily: "'Inter', 'Helvetica Neue', sans-serif" }}>
+                Securely Match and Verify Identities{' '}
+                <span className="text-[#D4AF37]">in the Vault.</span>
+              </h1>
+
+              <p className="text-gray-400 text-base sm:text-lg leading-relaxed max-w-2xl mx-auto mb-10" style={{ fontFamily: "'Inter', 'Helvetica Neue', sans-serif" }}>
+                Search over 1 million secure facial records to find duplicate entries, verify an identity, or prevent fraud. Faster. More Accurate. Institutional Grade.
+              </p>
+
+              <button
+                onClick={() => setShowLoginOverlay(true)}
+                className="group relative px-12 py-4 bg-[#D4AF37] text-black font-bold text-base tracking-[0.3em] hover:bg-[#b5952f] transition-all shadow-[0_0_40px_rgba(212,175,55,0.25)] hover:shadow-[0_0_60px_rgba(212,175,55,0.4)] border-2 border-[#D4AF37]"
+              >
+                <span className="relative z-10">SCAN THE VAULT</span>
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent translate-x-[-200%] group-hover:translate-x-[200%] transition-transform duration-700"></div>
+              </button>
+
+              <p className="text-gray-600 text-[10px] tracking-[0.2em] font-mono mt-5">
+                256-BIT ENCRYPTION · SUB-SECOND MATCHING · FORENSIC-GRADE ACCURACY
+              </p>
+            </div>
+          </div>
+
+          {/* Scroll indicator */}
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 z-10">
+            <div className="w-[1px] h-8 bg-gradient-to-b from-transparent to-[#D4AF37]/40 animate-pulse"></div>
+          </div>
+        </section>
+
+
+        {/* ═══════════════════════════════════════════════
+            SECTION 2: TRUST HUD — Social Proof Band
+            ═══════════════════════════════════════════════ */}
+        <section className="border-y border-[#1F2937] bg-[#0A0E17]/80 py-10 px-6">
+          <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
+            {/* Metric 1 */}
+            <div className="flex items-center gap-4">
+              <div className="shrink-0 w-12 h-12 border border-[#D4AF37]/30 flex items-center justify-center bg-[#D4AF37]/5">
+                <svg className="w-5 h-5 text-[#D4AF37]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-white font-mono tracking-wider">1.2M+</div>
+                <div className="text-[10px] text-gray-500 tracking-[0.15em]">MATCHES VERIFIED</div>
+              </div>
+            </div>
+            {/* Metric 2 */}
+            <div className="flex items-center gap-4">
+              <div className="shrink-0 w-12 h-12 border border-[#D4AF37]/30 flex items-center justify-center bg-[#D4AF37]/5">
+                <svg className="w-5 h-5 text-[#D4AF37]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-white font-mono tracking-wider">&lt;0.001%</div>
+                <div className="text-[10px] text-gray-500 tracking-[0.15em]">FALSE POSITIVE RATE</div>
+              </div>
+            </div>
+            {/* Metric 3 */}
+            <div className="flex items-center gap-4">
+              <div className="shrink-0 w-12 h-12 border border-[#D4AF37]/30 flex items-center justify-center bg-[#D4AF37]/5">
+                <svg className="w-5 h-5 text-[#D4AF37]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-white font-mono tracking-wider">AES-256</div>
+                <div className="text-[10px] text-gray-500 tracking-[0.15em]">SOVEREIGN GCM ENCRYPTION</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+
+        {/* ═══════════════════════════════════════════════
+            SECTION 3: VAULT IN-ACTION — Feature Grid
+            ═══════════════════════════════════════════════ */}
+        <section className="py-20 px-6">
+          <div className="max-w-5xl mx-auto">
+            <div className="text-center mb-14">
+              <div className="text-[#D4AF37]/50 text-[10px] tracking-[0.4em] font-mono mb-3">HOW IT WORKS</div>
+              <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight" style={{ fontFamily: "'Inter', 'Helvetica Neue', sans-serif" }}>
+                Intelligence-Grade Biometric Verification
+              </h2>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Card 1: Fraud Prevention */}
+              <div className="border border-[#1F2937] bg-[#0A0E17] p-6 group hover:border-[#D4AF37]/30 transition-all">
+                <div className="mb-5 h-44 border border-[#1F2937] bg-[#050A10] flex items-center justify-center overflow-hidden relative">
+                  {/* Stylized comparison mockup */}
+                  <div className="flex items-center gap-4">
+                    <div className="w-24 h-28 border border-[#1F2937] bg-[#0d1117] flex flex-col items-center justify-center relative">
+                      <div className="w-12 h-14 rounded-sm bg-gradient-to-b from-[#1F2937] to-[#111] mb-1.5"></div>
+                      <div className="text-[7px] text-gray-600 tracking-wider">UPLOAD</div>
+                      <div className="absolute -top-1 -left-1 w-2 h-2 border-t border-l border-[#D4AF37]/40"></div>
+                      <div className="absolute -top-1 -right-1 w-2 h-2 border-t border-r border-[#D4AF37]/40"></div>
+                      <div className="absolute -bottom-1 -left-1 w-2 h-2 border-b border-l border-[#D4AF37]/40"></div>
+                      <div className="absolute -bottom-1 -right-1 w-2 h-2 border-b border-r border-[#D4AF37]/40"></div>
+                    </div>
+                    <div className="flex flex-col items-center gap-1">
+                      <div className="text-[8px] font-mono text-[#D4AF37]/80 tracking-wider">99.4%</div>
+                      <div className="flex items-center gap-1">
+                        <div className="w-4 h-[1px] bg-[#D4AF37]/50"></div>
+                        <svg className="w-3 h-3 text-[#D4AF37]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path></svg>
+                        <div className="w-4 h-[1px] bg-[#D4AF37]/50"></div>
+                      </div>
+                      <div className="text-[6px] text-red-400/80 tracking-wider font-mono">⚠ DUPLICATE</div>
+                    </div>
+                    <div className="w-24 h-28 border border-red-900/40 bg-[#0d1117] flex flex-col items-center justify-center relative">
+                      <div className="w-12 h-14 rounded-sm bg-gradient-to-b from-[#1F2937] to-[#111] mb-1.5"></div>
+                      <div className="text-[7px] text-gray-600 tracking-wider">VAULT MATCH</div>
+                      <div className="absolute -top-1 -left-1 w-2 h-2 border-t border-l border-red-500/40"></div>
+                      <div className="absolute -top-1 -right-1 w-2 h-2 border-t border-r border-red-500/40"></div>
+                      <div className="absolute -bottom-1 -left-1 w-2 h-2 border-b border-l border-red-500/40"></div>
+                      <div className="absolute -bottom-1 -right-1 w-2 h-2 border-b border-r border-red-500/40"></div>
+                    </div>
+                  </div>
+                  {/* Scan line animation */}
+                  <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                    <div className="absolute left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-[#D4AF37]/20 to-transparent top-0 animate-[scan_4s_ease-in-out_infinite]"></div>
+                  </div>
+                </div>
+                <h3 className="text-white font-bold text-lg tracking-wider mb-2" style={{ fontFamily: "'Inter', 'Helvetica Neue', sans-serif" }}>Fraud Prevention</h3>
+                <p className="text-gray-400 text-sm leading-relaxed">
+                  Spot duplicate IDs instantly. The network identified a 99.4% match in the vault that used a different legal name. Catch synthetic identities before they cause damage.
+                </p>
+              </div>
+
+              {/* Card 2: Verifiable Accuracy */}
+              <div className="border border-[#1F2937] bg-[#0A0E17] p-6 group hover:border-[#D4AF37]/30 transition-all">
+                <div className="mb-5 h-44 border border-[#1F2937] bg-[#050A10] flex items-center justify-center overflow-hidden relative">
+                  {/* Stylized mesh graphic */}
+                  <svg className="w-32 h-32 opacity-60" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    {/* Face outline */}
+                    <ellipse cx="60" cy="58" rx="35" ry="42" stroke="#D4AF37" strokeWidth="0.5" opacity="0.4"/>
+                    {/* Mesh grid lines */}
+                    <line x1="60" y1="16" x2="60" y2="100" stroke="#D4AF37" strokeWidth="0.3" opacity="0.2"/>
+                    <line x1="25" y1="58" x2="95" y2="58" stroke="#D4AF37" strokeWidth="0.3" opacity="0.2"/>
+                    {/* Eye regions */}
+                    <circle cx="45" cy="48" r="6" stroke="#D4AF37" strokeWidth="0.5" opacity="0.5"/>
+                    <circle cx="75" cy="48" r="6" stroke="#D4AF37" strokeWidth="0.5" opacity="0.5"/>
+                    <circle cx="45" cy="48" r="2" fill="#D4AF37" opacity="0.3"/>
+                    <circle cx="75" cy="48" r="2" fill="#D4AF37" opacity="0.3"/>
+                    {/* Nose */}
+                    <path d="M55 55 L60 68 L65 55" stroke="#D4AF37" strokeWidth="0.5" opacity="0.4" fill="none"/>
+                    {/* Mouth */}
+                    <path d="M48 75 Q60 82 72 75" stroke="#D4AF37" strokeWidth="0.5" opacity="0.4" fill="none"/>
+                    {/* Mesh connection points */}
+                    {[
+                      [40,30],[50,25],[60,23],[70,25],[80,30],
+                      [32,40],[88,40],[28,55],[92,55],[30,70],[90,70],
+                      [35,82],[45,88],[55,92],[65,92],[75,88],[85,82],
+                      [60,35],[50,40],[70,40],[42,60],[78,60],
+                      [48,70],[72,70],[55,80],[65,80],
+                    ].map(([cx, cy], i) => (
+                      <circle key={i} cx={cx} cy={cy} r="1.2" fill="#D4AF37" opacity="0.5"/>
+                    ))}
+                    {/* Connection lines */}
+                    {[
+                      [[40,30],[50,25]],[[50,25],[60,23]],[[60,23],[70,25]],[[70,25],[80,30]],
+                      [[40,30],[32,40]],[[80,30],[88,40]],[[32,40],[28,55]],[[88,40],[92,55]],
+                      [[28,55],[30,70]],[[92,55],[90,70]],[[30,70],[35,82]],[[90,70],[85,82]],
+                      [[35,82],[45,88]],[[45,88],[55,92]],[[55,92],[65,92]],[[65,92],[75,88]],[[75,88],[85,82]],
+                      [[50,40],[45,48]],[[70,40],[75,48]],[[42,60],[48,70]],[[78,60],[72,70]],
+                      [[55,80],[60,23]],[[65,80],[60,23]],
+                    ].map(([[x1,y1],[x2,y2]], i) => (
+                      <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#D4AF37" strokeWidth="0.3" opacity="0.25"/>
+                    ))}
+                  </svg>
+                  <div className="absolute bottom-3 right-3 text-[8px] font-mono text-[#D4AF37]/50 tracking-wider">468 NODES MAPPED</div>
+                </div>
+                <h3 className="text-white font-bold text-lg tracking-wider mb-2" style={{ fontFamily: "'Inter', 'Helvetica Neue', sans-serif" }}>Verifiable Accuracy</h3>
+                <p className="text-gray-400 text-sm leading-relaxed">
+                  Our system maps the micro-topology of the skin surface to establish unique biometric identity, not just a 2D face comparison. Scars, pore density, and wrinkle patterns are all analyzed.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+
+        {/* ═══════════════════════════════════════════════
+            SECTION 4: FOOTER — Minimal Institutional
+            ═══════════════════════════════════════════════ */}
+        <footer className="border-t border-[#1F2937] py-8 px-6">
+          <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-white font-bold text-sm tracking-[0.15em]">AURUM<span className="text-[#D4AF37]">SHIELD</span></span>
+              <span className="text-gray-700 text-xs">|</span>
+              <span className="text-gray-500 text-[10px] tracking-wider">Secure Facial Biometrics</span>
+            </div>
+            <div className="flex items-center gap-6">
+              <a href="#" className="text-gray-600 text-[10px] tracking-wider hover:text-gray-400 transition-colors">TERMS</a>
+              <a href="#" className="text-gray-600 text-[10px] tracking-wider hover:text-gray-400 transition-colors">PRIVACY</a>
+              <a href="#" className="text-gray-600 text-[10px] tracking-wider hover:text-gray-400 transition-colors">API DOCS</a>
+            </div>
+          </div>
+        </footer>
+
+
+        {/* ═══════════════════════════════════════════════
+            LOGIN OVERLAY — Triggered by "Operator Login"
+            ═══════════════════════════════════════════════ */}
+        {showLoginOverlay && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            {/* Backdrop */}
+            <div
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+              onClick={() => setShowLoginOverlay(false)}
+            ></div>
+            {/* Modal */}
+            <div className="relative w-full max-w-sm p-8 bg-[#0A0E17] border border-[#1F2937] shadow-[0_0_60px_rgba(0,0,0,0.8)]">
+              {/* Close button */}
+              <button
+                onClick={() => setShowLoginOverlay(false)}
+                className="absolute top-3 right-3 text-gray-600 hover:text-gray-300 transition-colors text-lg"
+              >
+                ✕
+              </button>
+              <div className="text-center mb-6">
+                <div className="w-12 h-12 mx-auto border-2 border-[#D4AF37]/40 flex items-center justify-center mb-4 bg-[#D4AF37]/5">
+                  <svg className="w-5 h-5 text-[#D4AF37]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                </div>
+                <h2 className="text-lg font-bold tracking-[0.25em] text-white mb-1">
+                  OPERATOR <span className="text-[#D4AF37]">LOGIN</span>
+                </h2>
+                <p className="text-gray-600 text-[10px] tracking-[0.15em]">AUTHENTICATED ACCESS REQUIRED</p>
+              </div>
+
+              <form onSubmit={(e) => { handleLogin(e); }} className="space-y-4">
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
+                  placeholder="ENTER PASSPHRASE"
+                  className="w-full bg-[#050A10] border border-[#1F2937] text-white p-3 text-center text-sm tracking-widest focus:outline-none focus:border-[#D4AF37] transition-colors font-mono"
+                  autoFocus
+                />
+
+                {loginError && (
+                  <div className="text-red-500 text-[10px] text-center tracking-wider">{loginError}</div>
+                )}
+
+                <button
+                  type="submit"
+                  className="w-full py-3 bg-[#D4AF37] text-black font-bold text-sm tracking-[0.25em] hover:bg-[#b5952f] transition-all shadow-[0_0_20px_rgba(212,175,55,0.2)] border border-[#D4AF37]"
+                >
+                  AUTHENTICATE
+                </button>
+              </form>
+
+              <p className="text-gray-700 text-[9px] text-center mt-4 tracking-wider">ZERO-TRUST · END-TO-END ENCRYPTED</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Keyframe for scan animation ── */}
+        <style jsx>{`
+          @keyframes scan {
+            0%, 100% { top: 0%; }
+            50% { top: 100%; }
+          }
+        `}</style>
       </main>
     );
   }
