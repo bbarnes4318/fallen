@@ -859,7 +859,7 @@ export default function Home() {
             </div>
             </div>
 
-            {/* ── Full-Width Forensic Audit Block ── */}
+            {/* ── Full-Width Technical Details Block ── */}
             <div className="shrink-0 w-full flex flex-col gap-2">
               <button
                 onClick={() => setAuditExpanded(!auditExpanded)}
@@ -874,74 +874,77 @@ export default function Home() {
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#D4AF37] opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-3 w-3 bg-[#D4AF37]"></span>
                   </span>
-                  ACCESS SECURE FORENSIC TELEMETRY &amp; AUDIT LOG
+                  VIEW DETAILED TECHNICAL BREAKDOWN
                 </span>
                 <span className="text-lg font-bold">{auditExpanded ? '−' : '+'}</span>
               </button>
 
-              {/* ── Forensic Terminal (3-column) ── */}
+              {/* ── Technical Details (3-column) ── */}
               {auditExpanded && results.audit_log && (
                 <div className="border border-[#1a1a0a] bg-[#000000] rounded p-2.5 font-mono text-[9px] leading-relaxed shadow-[inset_0_0_30px_rgba(0,0,0,0.5)]">
                   <div className="grid grid-cols-3 gap-4 mt-1">
 
-                    {/* Block 1: Statistical Certainty */}
+                    {/* Block 1: Confidence & Accuracy */}
                     <div className="border border-[#1a2a1a] rounded p-2 bg-[#010201]">
-                      <div className="text-green-500/80 tracking-[0.2em] mb-1.5 border-b border-green-900/30 pb-1 text-[8px]">▸ STATISTICAL CERTAINTY</div>
+                      <div className="text-green-500/80 tracking-[0.2em] mb-1 border-b border-green-900/30 pb-1 text-[8px]">▸ CONFIDENCE &amp; ACCURACY</div>
+                      <p className="text-[7px] text-gray-600 mb-1.5 leading-relaxed">How confident is the system in this result? Lower error rates mean higher reliability.</p>
                       <div className="space-y-0.5 pl-1">
-                        <div className="flex justify-between"><span className="text-gray-600">FALSE ACCEPTANCE RATE</span><span className={`font-bold ${results.audit_log.false_acceptance_rate === 'UNCALIBRATED' || results.audit_log.false_acceptance_rate === 'Inconclusive' ? 'text-yellow-400' : results.audit_log.false_acceptance_rate === 'DIFFERENT IDENTITIES' ? 'text-red-400' : 'text-green-400'}`}>{results.audit_log.false_acceptance_rate}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-600">CERTAINTY</span><span className={`font-bold ${results.audit_log.statistical_certainty === 'UNCALIBRATED' ? 'text-yellow-400' : results.audit_log.statistical_certainty.startsWith('<') || results.audit_log.statistical_certainty.startsWith('0%') ? 'text-red-400' : 'text-green-400'}`}>{results.audit_log.statistical_certainty}</span></div>
-                        <div className="flex justify-between group relative"><span className="text-gray-600">ANCHOR NODES</span><span className="text-white font-bold">{results.audit_log.nodes_mapped}/468</span><div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-50"><div className="bg-[#111] border border-[#333] rounded px-3 py-2 text-[8px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">MediaPipe mesh density. 6 anchor points used for alignment, 12 ratios for Tier 2.<div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#333]"></div></div></div></div>
-                        <div className="flex justify-between"><span className="text-gray-600">COSINE DISTANCE</span><span className="text-white font-bold">{results.audit_log.raw_cosine_score.toFixed(6)}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-500">Error Probability</span><span className={`font-bold ${results.audit_log.false_acceptance_rate === 'UNCALIBRATED' || results.audit_log.false_acceptance_rate === 'Inconclusive' ? 'text-yellow-400' : results.audit_log.false_acceptance_rate === 'DIFFERENT IDENTITIES' ? 'text-red-400' : 'text-green-400'}`}>{results.audit_log.false_acceptance_rate}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-500">Confidence Level</span><span className={`font-bold ${results.audit_log.statistical_certainty === 'UNCALIBRATED' ? 'text-yellow-400' : results.audit_log.statistical_certainty.startsWith('<') || results.audit_log.statistical_certainty.startsWith('0%') ? 'text-red-400' : 'text-green-400'}`}>{results.audit_log.statistical_certainty}</span></div>
+                        <div className="flex justify-between group relative"><span className="text-gray-500">Face Points Mapped</span><span className="text-white font-bold">{results.audit_log.nodes_mapped}/468</span><div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-50"><div className="bg-[#111] border border-[#333] rounded px-3 py-2 text-[8px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">The system maps up to 468 points on each face to measure geometry. More points = more accurate comparison.<div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#333]"></div></div></div></div>
+                        <div className="flex justify-between"><span className="text-gray-500">Raw Similarity Score</span><span className="text-white font-bold">{results.audit_log.raw_cosine_score.toFixed(6)}</span></div>
                         {results.audit_log.calibration_benchmark && (
-                          <div className="flex justify-between mt-0.5"><span className="text-gray-600">BENCHMARK</span><span className={`font-bold ${results.audit_log.calibration_benchmark === 'N/A' ? 'text-yellow-400' : 'text-green-400'}`}>{results.audit_log.calibration_benchmark}{results.audit_log.calibration_pairs ? ` (${results.audit_log.calibration_pairs.toLocaleString()} pairs)` : ''}</span></div>
+                          <div className="flex justify-between mt-0.5"><span className="text-gray-500">Tested Against</span><span className={`font-bold ${results.audit_log.calibration_benchmark === 'N/A' ? 'text-yellow-400' : 'text-green-400'}`}>{results.audit_log.calibration_benchmark}{results.audit_log.calibration_pairs ? ` (${results.audit_log.calibration_pairs.toLocaleString()} pairs)` : ''}</span></div>
                         )}
                       </div>
                     </div>
 
-                    {/* Block 2: Spatial Alignment & Liveness */}
+                    {/* Block 2: Image Quality & Authenticity */}
                     <div className="border border-[#2a1a1a] rounded p-2 bg-[#020101]">
-                      <div className="text-cyan-500/80 tracking-[0.2em] mb-1.5 border-b border-cyan-900/30 pb-1 text-[8px]">▸ SPATIAL ALIGNMENT &amp; LIVENESS</div>
+                      <div className="text-cyan-500/80 tracking-[0.2em] mb-1 border-b border-cyan-900/30 pb-1 text-[8px]">▸ IMAGE QUALITY &amp; AUTHENTICITY</div>
+                      <p className="text-[7px] text-gray-600 mb-1.5 leading-relaxed">How were the photos corrected for comparison, and are they real photographs?</p>
                       <div className="space-y-0.5 pl-1">
                         {results.audit_log.alignment_variance && (<>
-                          <div className="flex justify-between"><span className="text-gray-600">YAW CORRECTION</span><span className="text-cyan-300">{results.audit_log.alignment_variance.yaw}</span></div>
-                          <div className="flex justify-between"><span className="text-gray-600">PITCH CORRECTION</span><span className="text-cyan-300">{results.audit_log.alignment_variance.pitch}</span></div>
-                          <div className="flex justify-between"><span className="text-gray-600">ROLL CORRECTION</span><span className="text-cyan-300">{results.audit_log.alignment_variance.roll}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-500">Left-Right Correction</span><span className="text-cyan-300">{results.audit_log.alignment_variance.yaw}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-500">Up-Down Correction</span><span className="text-cyan-300">{results.audit_log.alignment_variance.pitch}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-500">Tilt Correction</span><span className="text-cyan-300">{results.audit_log.alignment_variance.roll}</span></div>
                         </>)}
                         {results.audit_log.liveness_check && (<>
-                          <div className="flex justify-between mt-1"><span className="text-gray-600">PAD METHOD</span><span className="text-cyan-300 font-bold">{results.audit_log.liveness_check.method}</span></div>
-                          <div className="flex justify-between"><span className="text-gray-600">SPOOF PROBABILITY</span><span className={`font-bold ${results.audit_log.liveness_check.status.includes('PASSED') || results.audit_log.liveness_check.status.includes('VERIFIED') || results.audit_log.liveness_check.status.includes('LIVE') ? 'text-green-400' : 'text-red-400'}`}>{results.audit_log.liveness_check.spoof_probability}</span></div>
-                          <div className="flex justify-between"><span className="text-gray-600">PAD STATUS</span><span className={`font-bold ${results.audit_log.liveness_check.status.includes('PASSED') || results.audit_log.liveness_check.status.includes('VERIFIED') || results.audit_log.liveness_check.status.includes('LIVE') ? 'text-green-400' : 'text-red-400'}`}>{results.audit_log.liveness_check.status}</span></div>
+                          <div className="flex justify-between mt-1"><span className="text-gray-500">Detection Method</span><span className="text-cyan-300 font-bold">{results.audit_log.liveness_check.method}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-500">Fake Photo Risk</span><span className={`font-bold ${results.audit_log.liveness_check.status.includes('PASSED') || results.audit_log.liveness_check.status.includes('VERIFIED') || results.audit_log.liveness_check.status.includes('LIVE') ? 'text-green-400' : 'text-red-400'}`}>{results.audit_log.liveness_check.spoof_probability}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-500">Authenticity</span><span className={`font-bold ${results.audit_log.liveness_check.status.includes('PASSED') || results.audit_log.liveness_check.status.includes('VERIFIED') || results.audit_log.liveness_check.status.includes('LIVE') ? 'text-green-400' : 'text-red-400'}`}>{results.audit_log.liveness_check.status}</span></div>
                           {results.audit_log.liveness_check.laplacian_variance != null && (
-                            <div className="flex justify-between"><span className="text-gray-600">LAPLACIAN σ²</span><span className="text-cyan-300">{results.audit_log.liveness_check.laplacian_variance}</span></div>
+                            <div className="flex justify-between"><span className="text-gray-500">Image Sharpness</span><span className="text-cyan-300">{results.audit_log.liveness_check.laplacian_variance}</span></div>
                           )}
                         </>)}
                       </div>
                     </div>
 
-                    {/* Block 3: Cryptographic Signature */}
+                    {/* Block 3: Security & Data Integrity */}
                     <div className="border border-[#1a1a2a] rounded p-2 bg-[#010102]">
-                      <div className="text-amber-500/80 tracking-[0.2em] mb-1.5 border-b border-amber-900/30 pb-1 text-[8px]">▸ CRYPTOGRAPHIC SIGNATURE</div>
+                      <div className="text-amber-500/80 tracking-[0.2em] mb-1 border-b border-amber-900/30 pb-1 text-[8px]">▸ SECURITY &amp; DATA INTEGRITY</div>
+                      <p className="text-[7px] text-gray-600 mb-1.5 leading-relaxed">Cryptographic proof that the biometric data was not tampered with during analysis.</p>
                       <div className="space-y-0.5 pl-1">
                         {results.audit_log.vector_hash && (
-                          <div><span className="text-gray-600">VECTOR SHA-256</span><div className="text-amber-300/80 text-[8px] break-all mt-0.5">{results.audit_log.vector_hash}</div></div>
+                          <div><span className="text-gray-500">Digital Fingerprint</span><div className="text-amber-300/80 text-[8px] break-all mt-0.5">{results.audit_log.vector_hash}</div></div>
                         )}
                         {results.audit_log.crypto_envelope && (<>
-                          <div className="flex justify-between mt-1"><span className="text-gray-600">ENCRYPTION</span><span className="text-amber-300">{results.audit_log.crypto_envelope.standard}</span></div>
-                          <div className="flex justify-between"><span className="text-gray-600">KMS LATENCY</span><span className="text-amber-300">{results.audit_log.crypto_envelope.decryption_time}</span></div>
+                          <div className="flex justify-between mt-1"><span className="text-gray-500">Encryption Standard</span><span className="text-amber-300">{results.audit_log.crypto_envelope.standard}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-500">Decryption Speed</span><span className="text-amber-300">{results.audit_log.crypto_envelope.decryption_time}</span></div>
                         </>)}
                         {results.audit_log.matched_user_id && (
-                          <div className="flex justify-between mt-1"><span className="text-gray-600">TARGET ID</span><span className="text-white">{results.audit_log.matched_user_id}</span></div>
+                          <div className="flex justify-between mt-1"><span className="text-gray-500">Matched Profile ID</span><span className="text-white">{results.audit_log.matched_user_id}</span></div>
                         )}
                         {results.audit_log.person_name && (
-                          <div className="flex justify-between"><span className="text-gray-600">PERSON</span><span className="text-white">{results.audit_log.person_name}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-500">Matched Name</span><span className="text-white">{results.audit_log.person_name}</span></div>
                         )}
                         {results.audit_log.license_short_name && (
-                          <div className="flex justify-between"><span className="text-gray-600">LICENSE</span><span className="text-gray-400">{results.audit_log.license_short_name}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-500">Image License</span><span className="text-gray-400">{results.audit_log.license_short_name}</span></div>
                         )}
                       </div>
                     </div>
                   </div>
-                  <div className="mt-2 pt-1.5 border-t border-[#1a1a0a] text-[7px] text-gray-700 tracking-widest text-center">AUDIT GENERATED AT {new Date().toISOString()}</div>
+                  <div className="mt-2 pt-1.5 border-t border-[#1a1a0a] text-[7px] text-gray-700 tracking-widest text-center">REPORT GENERATED AT {new Date().toISOString()}</div>
                 </div>
               )}
             </div>
