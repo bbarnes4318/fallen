@@ -736,9 +736,15 @@ def extract_arcface_embedding(image: np.ndarray) -> np.ndarray:
     This is the TRUE identity discriminator — replaces MediaPipe geometric
     cosine for Tier 1 structural identity matching.
 
-    IMPORTANT: The input image should already be aligned and cropped by
-    align_face_crop(). We pass detector_backend='opencv' to allow DeepFace
-    to perform its strict 5-point affine transformation on the canonical crop.
+    CRITICAL: The input image is ALREADY aligned by align_face_crop() using
+    MediaPipe 5-point landmarks. We use detector_backend='skip' so DeepFace
+    processes the pre-aligned crop directly WITHOUT re-running face detection.
+
+    Using 'opencv' here causes catastrophic failure: OpenCV's Haar cascade
+    fails on tightly-cropped face images, and enforce_detection=False then
+    produces degenerate embeddings that are nearly identical across all
+    failed detections — creating mass false matches (99.5%+ cosine between
+    completely unrelated identities).
 
     Returns a 512-D numpy array (ArcFace latent space).
     """
@@ -749,7 +755,7 @@ def extract_arcface_embedding(image: np.ndarray) -> np.ndarray:
         img_path=rgb_image,
         model_name="ArcFace",
         enforce_detection=False,
-        detector_backend="opencv",
+        detector_backend="skip",
     )
     embedding = np.array(result[0]["embedding"], dtype=np.float64)
     return embedding  # 512-D vector
