@@ -231,10 +231,14 @@ export default function IdentityGraph() {
     );
   }
 
+  // Ref for the force graph instance
+  const fgRef = useRef<any>(null);
+
   return (
     <div ref={containerRef} className="h-full w-full relative bg-[#050505] overflow-hidden">
       {/* ── Force Graph Canvas ── */}
       <ForceGraph2D
+        ref={fgRef}
         graphData={graphData}
         width={dimensions.width}
         height={dimensions.height}
@@ -307,9 +311,15 @@ export default function IdentityGraph() {
         linkDirectionalParticleWidth={(link: Record<string, unknown>) => (link.value as number) > 95 ? 2 : 0}
         linkDirectionalParticleColor={() => '#881111'}
         onNodeClick={(node: Record<string, unknown>) => setSelectedNode(node as unknown as GraphNode)}
-        cooldownTicks={100}
-        d3AlphaDecay={0.02}
-        d3VelocityDecay={0.3}
+        cooldownTicks={150}
+        d3AlphaDecay={0.015}
+        d3VelocityDecay={0.25}
+        d3Force="center"
+        onEngineStop={() => {
+          if (fgRef.current) {
+            fgRef.current.zoomToFit(400, 60);
+          }
+        }}
       />
 
       {/* ── Scanline Overlay ── */}
