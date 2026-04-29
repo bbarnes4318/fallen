@@ -1456,8 +1456,19 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         fused_score = base_fused_score
     
     if veto_triggered:
-        fused_score = min(fused_score, tier1_score)  # Cap — never inflate a non-match
-        conclusion = "Exclusion: Biometric Non-Match (ArcFace Cosine < 0.40)"
+        # Mark Override Protocol: If 3+ independent marks correspond,
+        # scar/mole evidence provides physical proof that can partially
+        # override an ArcFace failure (aging, surgery, extreme angle).
+        # The veto FLAG still fires for forensic transparency.
+        matched_marks = mark_result["matched"]
+        if matched_marks >= 3 and tier4_score is not None:
+            # Allow mark-boosted score through, scaled by mark confidence
+            mark_floor = min(tier4_score * 0.60, 85.0)  # Mark evidence alone caps at 85%
+            fused_score = max(mark_floor, min(fused_score, base_fused_score))
+            conclusion = f"Conditional Match: ArcFace Veto overridden by {matched_marks} confirmed mark correspondences"
+        else:
+            fused_score = min(fused_score, tier1_score)  # Cap — never inflate a non-match
+            conclusion = "Exclusion: Biometric Non-Match (ArcFace Cosine < 0.40)"
     elif fused_score > 90.0:
         conclusion = "Strongest Support for Common Source"
     elif fused_score > 75.0:
@@ -1750,8 +1761,15 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
 
     # 11. Conclusion
     if veto_arcface:
-        fused_score = min(fused_score, tier1_score)  # Cap — never inflate a non-match
-        conclusion = f"EXCLUSION — Biometric Non-Match: {best_user_id} (ArcFace: {best_score:.4f})"
+        # Mark Override Protocol: 3+ confirmed marks can partially override ArcFace veto
+        matched_marks = mark_result["matched"]
+        if matched_marks >= 3 and tier4_score is not None:
+            mark_floor = min(tier4_score * 0.60, 85.0)
+            fused_score = max(mark_floor, min(fused_score, base_fused_score))
+            conclusion = f"CONDITIONAL MATCH — ArcFace veto overridden by {matched_marks} mark correspondences: {best_user_id}"
+        else:
+            fused_score = min(fused_score, tier1_score)  # Cap — never inflate a non-match
+            conclusion = f"EXCLUSION — Biometric Non-Match: {best_user_id} (ArcFace: {best_score:.4f})"
     elif fused_score > 90.0:
         conclusion = f"TARGET ACQUIRED — Strongest match: {best_user_id} (Fused: {fused_score:.1f}%)"
     elif fused_score > 75.0:
