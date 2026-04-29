@@ -110,6 +110,9 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
   const [targetA, setTargetA] = useState<GraphNode | null>(null);  // Gallery
   const [targetB, setTargetB] = useState<GraphNode | null>(null);  // Probe
 
+  // Ref for the force graph instance (must be before any conditional returns)
+  const fgRef = useRef<any>(null);
+
   // ── Image cache for thumbnail rendering on canvas ──
   const imageCache = useRef<Map<string, HTMLImageElement | null>>(new Map());
 
@@ -240,8 +243,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
     );
   }
 
-  // Ref for the force graph instance
-  const fgRef = useRef<any>(null);
+
 
   return (
     <div ref={containerRef} className="h-full w-full relative bg-[#050505] overflow-hidden">
