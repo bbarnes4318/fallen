@@ -104,6 +104,13 @@ class VerificationEvent(Base):
     # Tier 4: Mark Correspondence (×100 for integer consistency)
     mark_correspondence_x100 = Column(Integer, nullable=True)
 
+    # Bayesian Likelihood Ratio Audit Trail (Daubert v3.0)
+    # Stored as Float for precision — these are scientific measurements, not financial values
+    lr_arcface = Column(Float, nullable=True)
+    lr_marks_product = Column(Float, nullable=True)
+    lr_total = Column(Float, nullable=True)
+    posterior_probability = Column(Float, nullable=True)
+
     # Composite forensic receipt (GCS URI of stitched PNG)
     receipt_url = Column(Text, nullable=True)
 

@@ -1,4 +1,5 @@
 import os
+import pickle
 os.environ["TF_USE_LEGACY_KERAS"] = "1"  # Force Keras 2 — required for DeepFace/ArcFace
 
 import cv2
@@ -228,7 +229,7 @@ class VerificationRequest(BaseModel):
 # ---------------------------------------------------------
 # PIPELINE VERSION PINNING (Daubert Reproducibility)
 # ---------------------------------------------------------
-PIPELINE_VERSION = "AurumShield Daubert-Compliant v2.0"
+PIPELINE_VERSION = "AurumShield Daubert-Compliant v3.0 (Bayesian LR)"
 
 def _get_dependency_versions() -> dict:
     """Snapshot the exact versions of critical biometric libraries."""
@@ -274,6 +275,12 @@ class AuditLog(BaseModel):
     # Pipeline reproducibility
     pipeline_version: str = PIPELINE_VERSION
     dependency_versions: Optional[dict] = None
+    # Bayesian Likelihood Ratio Audit Trail (Daubert v3.0)
+    lr_arcface: Optional[float] = None
+    lr_marks: Optional[float] = None
+    lr_total: Optional[float] = None
+    posterior_probability: Optional[float] = None
+    mark_lrs: Optional[list] = None  # Individual LR per matched mark
 
 class VerificationResponse(BaseModel):
     structural_score: float
@@ -341,14 +348,55 @@ def _load_calibration():
 
 CALIBRATION = _load_calibration()
 
-def calculate_statistical_confidence(cosine_score: float, marks_matched: int = 0) -> dict:
+# ---------------------------------------------------------
+# TIER 4 BAYESIAN CALIBRATION DATA
+# ---------------------------------------------------------
+TIER4_CALIBRATION = None
+
+def _load_tier4_calibration():
+    """Load the Tier 4 population model from local file or GCS."""
+    import json as _json
+    bucket_name = os.getenv("BUCKET_NAME", "hoppwhistle-facial-uploads")
+    gcs_path = "calibration/tier4_population_model.pkl"
+
+    # Try local file first (faster)
+    local_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration_data", "tier4_population_model.pkl")
+    try:
+        with open(local_path, "rb") as f:
+            cal = pickle.load(f)
+        print(f"Tier 4 Bayesian model loaded from local: {cal.get('total_marks', '?')} population marks")
+        return cal
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"WARNING: Failed to load local Tier 4 model: {e}")
+
+    # Fallback to GCS
+    try:
+        gcs_client = storage.Client()
+        bucket = gcs_client.bucket(bucket_name)
+        blob = bucket.blob(gcs_path)
+        if blob.exists():
+            pkl_bytes = blob.download_as_bytes()
+            cal = pickle.loads(pkl_bytes)
+            print(f"Tier 4 Bayesian model loaded from GCS: {cal.get('total_marks', '?')} population marks")
+            return cal
+    except Exception as e:
+        print(f"GCS Tier 4 model load failed: {e}")
+
+    print("WARNING: No Tier 4 Bayesian calibration data found. Mark LR will be unavailable.")
+    return None
+
+TIER4_CALIBRATION = _load_tier4_calibration()
+
+def calculate_statistical_confidence(cosine_score: float) -> dict:
     """
     Convert ArcFace cosine similarity to FAR and statistical certainty
     using empirically calibrated thresholds from the LFW benchmark.
     If no calibration data is available, honestly reports UNCALIBRATED.
 
-    marks_matched: number of confirmed scar/mole/birthmark correspondences.
-    Each matching mark applies an exponential FAR reduction (÷ 10^marks).
+    NOTE (v3.0): The heuristic '10^marks FAR reduction' has been removed.
+    Mark evidence is now fused via proper Bayesian Likelihood Ratios.
     """
     if CALIBRATION is None:
         return {
@@ -359,7 +407,6 @@ def calculate_statistical_confidence(cosine_score: float, marks_matched: int = 0
         }
 
     thresholds = CALIBRATION["arcface"]["thresholds"]
-    # Find the highest threshold the score exceeds
     sorted_thresh = sorted(thresholds.keys(), key=float)
 
     far_value = None
@@ -372,12 +419,7 @@ def calculate_statistical_confidence(cosine_score: float, marks_matched: int = 0
             frr_value = thresholds[t]["frr"]
             matched_threshold = t
 
-    # Exponential FAR Reduction: each confirmed mark divides FAR by 10
-    if far_value is not None and far_value > 0 and marks_matched > 0:
-        far_value = far_value / (10 ** marks_matched)
-
     if far_value is None or far_value <= 0:
-        # Score is below all calibrated thresholds
         far_str = "DIFFERENT IDENTITIES"
         certainty = "0% — Non-Match"
     elif far_value < 1e-7:
@@ -393,6 +435,42 @@ def calculate_statistical_confidence(cosine_score: float, marks_matched: int = 0
         "benchmark": CALIBRATION.get("benchmark", "LFW"),
         "pairs_evaluated": CALIBRATION.get("pairs_evaluated", 0),
     }
+
+
+def cosine_to_lr_arcface(cosine_score: float) -> float:
+    """
+    Convert ArcFace cosine similarity to a Likelihood Ratio using
+    empirically calibrated FAR/FRR from the LFW benchmark.
+
+    LR = P(score | Hp) / P(score | Hd) = (1 - FRR) / FAR
+
+    Where:
+      - P(score | Hp) = True Positive Rate = 1 - FRR (same person produces this score)
+      - P(score | Hd) = False Acceptance Rate = FAR (different person produces this score)
+    """
+    if CALIBRATION is None:
+        return 1.0  # Neutral LR — no calibration data
+
+    thresholds = CALIBRATION["arcface"]["thresholds"]
+    sorted_thresh = sorted(thresholds.keys(), key=float)
+
+    far_value = None
+    frr_value = None
+
+    for t in sorted_thresh:
+        if cosine_score >= float(t):
+            far_value = thresholds[t]["far"]
+            frr_value = thresholds[t]["frr"]
+
+    if far_value is None or far_value <= 0:
+        # Score below all thresholds — strong evidence against match
+        return 1e-6  # Floor: extremely low LR
+
+    tpr = 1.0 - (frr_value if frr_value is not None else 0.0)
+    # Epsilon floor to prevent division by zero
+    far_value = max(far_value, 1e-9)
+    lr = tpr / far_value
+    return lr
 
 
 # ---------------------------------------------------------
@@ -1015,69 +1093,134 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> list:
 
 def compute_mark_correspondence(marks_gallery: list, marks_probe: list) -> dict:
     """
-    Computes the Mark Correspondence Score (MCS) between two sets of
-    detected facial marks using Hungarian optimal bipartite matching.
+    Bayesian Likelihood Ratio Mark Correspondence Engine (Daubert v3.0).
+
+    Evaluates the LR for every potential mark match:
+      - Numerator P(E|Hp): Multivariate Gaussian PDF at observed delta vector
+      - Denominator P(E|Hd): KDE spatial density × morphological PDFs
+
+    Uses Hungarian optimal matching on -log(LR) to maximize the joint LR.
 
     Returns:
         {
-            "score": float (0-100) or None if insufficient marks,
+            "score": float (0-100) — posterior-derived percentage, or None,
             "matched": int,
             "total_gallery": int,
             "total_probe": int,
-            "matches": [(gallery_idx, probe_idx, distance), ...]
+            "matches": [(gallery_idx, probe_idx, individual_lr), ...],
+            "lr_marks": float — product of all individual mark LRs,
+            "mark_lrs": [float, ...] — individual LR per matched mark,
         }
     """
     from scipy.optimize import linear_sum_assignment
+    from scipy.stats import multivariate_normal as mvn
 
     n_gal = len(marks_gallery)
     n_pro = len(marks_probe)
 
-    # Minimum mark threshold — need at least 3 marks on each face
-    if n_gal < 3 or n_pro < 3:
+    # Minimum mark threshold: 1 (the math filters noise via LR ≈ 1)
+    if n_gal < 1 or n_pro < 1:
         return {
-            "score": None,
-            "matched": 0,
-            "total_gallery": n_gal,
-            "total_probe": n_pro,
-            "matches": [],
+            "score": None, "matched": 0,
+            "total_gallery": n_gal, "total_probe": n_pro,
+            "matches": [], "lr_marks": 1.0, "mark_lrs": [],
         }
 
-    # Build NxM cost matrix using composite distance
-    W_SPATIAL = 0.50
-    W_AREA = 0.20
-    W_INTENSITY = 0.15
-    W_CIRCULARITY = 0.15
+    # If no Bayesian calibration data, fall back to neutral LR
+    if TIER4_CALIBRATION is None:
+        return {
+            "score": None, "matched": 0,
+            "total_gallery": n_gal, "total_probe": n_pro,
+            "matches": [], "lr_marks": 1.0, "mark_lrs": [],
+        }
 
-    cost_matrix = np.zeros((n_gal, n_pro))
+    # Unpack calibration models
+    spatial_kde = TIER4_CALIBRATION["spatial_kde"]
+    area_dist = TIER4_CALIBRATION["area_distribution"]
+    int_dist = TIER4_CALIBRATION["intensity_distribution"]
+    circ_dist = TIER4_CALIBRATION["circularity_distribution"]
+    delta_model = TIER4_CALIBRATION["intra_person_delta"]
+    EPSILON = TIER4_CALIBRATION.get("epsilon_floor", 1e-9)
+
+    delta_mean = np.array(delta_model["mean"])
+    delta_cov = np.array(delta_model["covariance"])
+
+    # Build NxM LR matrix
+    lr_matrix = np.ones((n_gal, n_pro))
+    neg_log_lr_matrix = np.full((n_gal, n_pro), 1e6)  # For Hungarian minimization
+
     for i, mg in enumerate(marks_gallery):
-        for j, mp in enumerate(marks_probe):
-            # Spatial distance (normalized coordinates, max possible ~1.41)
-            d_spatial = np.sqrt(
-                (mg["centroid"][0] - mp["centroid"][0]) ** 2 +
-                (mg["centroid"][1] - mp["centroid"][1]) ** 2
-            )
-            # Area ratio distance (0-1)
-            d_area = abs(mg["area"] - mp["area"]) / max(mg["area"], mp["area"])
-            # Intensity distance (0-1)
-            d_intensity = abs(mg["intensity"] - mp["intensity"]) / 255.0
-            # Circularity distance (0-1)
-            d_circularity = abs(mg["circularity"] - mp["circularity"])
+        for j, mp_mark in enumerate(marks_probe):
+            # Delta vector: gallery - probe
+            delta_v = np.array([
+                mg["centroid"][0] - mp_mark["centroid"][0],
+                mg["centroid"][1] - mp_mark["centroid"][1],
+                mg["area"] - mp_mark["area"],
+                mg["intensity"] - mp_mark["intensity"],
+                mg["circularity"] - mp_mark["circularity"],
+            ])
 
-            cost = (W_SPATIAL * d_spatial +
-                    W_AREA * d_area +
-                    W_INTENSITY * d_intensity +
-                    W_CIRCULARITY * d_circularity)
-            cost_matrix[i, j] = cost
+            # Spatial proximity gate: skip pairs too far apart (> 20% of face)
+            spatial_dist = np.sqrt(delta_v[0]**2 + delta_v[1]**2)
+            if spatial_dist > 0.20:
+                continue
 
-    # Hungarian optimal matching
-    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+            # NUMERATOR: P(delta | Hp) — how likely is this delta for same person
+            try:
+                numerator = mvn.pdf(delta_v, mean=delta_mean, cov=delta_cov)
+            except Exception:
+                numerator = EPSILON
+            numerator = max(numerator, EPSILON)
 
-    # Accept matches below threshold
-    MATCH_THRESHOLD = 0.35
+            # DENOMINATOR: P(E | Hd) — population frequency of this mark
+            # Product of: spatial KDE × area PDF × intensity PDF × circularity PDF
+            try:
+                p_spatial = float(spatial_kde.evaluate(
+                    np.array([[mp_mark["centroid"][0]], [mp_mark["centroid"][1]]])
+                )[0])
+            except Exception:
+                p_spatial = EPSILON
+            p_spatial = max(p_spatial, EPSILON)
+
+            from scipy.stats import lognorm as _lognorm, norm as _norm
+            p_area = max(float(_lognorm.pdf(
+                mp_mark["area"],
+                area_dist["shape"], loc=area_dist["loc"], scale=area_dist["scale"]
+            )), EPSILON)
+            p_intensity = max(float(_norm.pdf(
+                mp_mark["intensity"],
+                loc=int_dist["mean"], scale=int_dist["std"]
+            )), EPSILON)
+            p_circularity = max(float(_norm.pdf(
+                mp_mark["circularity"],
+                loc=circ_dist["mean"], scale=circ_dist["std"]
+            )), EPSILON)
+
+            denominator = max(p_spatial * p_area * p_intensity * p_circularity, EPSILON)
+
+            # Individual Likelihood Ratio
+            lr = numerator / denominator
+            lr_matrix[i, j] = lr
+
+            # -log(LR) for Hungarian minimization (maximize LR → minimize -log LR)
+            neg_log_lr_matrix[i, j] = -np.log(max(lr, EPSILON))
+
+    # Hungarian optimal matching to maximize joint LR
+    row_ind, col_ind = linear_sum_assignment(neg_log_lr_matrix)
+
+    # Accept matches where LR > 1 (evidence supports same-source)
     matches = []
+    mark_lrs = []
     for r, c in zip(row_ind, col_ind):
-        if cost_matrix[r, c] < MATCH_THRESHOLD:
-            matches.append((int(r), int(c), float(cost_matrix[r, c])))
+        lr_val = float(lr_matrix[r, c])
+        if lr_val > 1.0:
+            matches.append((int(r), int(c), lr_val))
+            mark_lrs.append(lr_val)
+
+    # Combined LR = product of individual mark LRs
+    lr_marks = 1.0
+    for lr_val in mark_lrs:
+        lr_marks *= lr_val
 
     matched_count = len(matches)
     total = max(n_gal, n_pro)
@@ -1089,6 +1232,8 @@ def compute_mark_correspondence(marks_gallery: list, marks_probe: list) -> dict:
         "total_gallery": n_gal,
         "total_probe": n_pro,
         "matches": matches,
+        "lr_marks": lr_marks,
+        "mark_lrs": mark_lrs,
     }
 
 
@@ -1428,46 +1573,47 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     chi_squared = 0.5 * float(np.sum(((lbp_gal - lbp_pro) ** 2) / (lbp_gal + lbp_pro + 1e-10)))
     tier3_score = max(0.0, min(100.0, (1.0 - chi_squared) * 100))
     
-    # 7. Veto Protocol — ArcFace Hard Fail
-    # If ArcFace cosine < 0.40, these are definitively DIFFERENT people.
+    # 7. Veto Protocol — ArcFace Hard Fail (flag only — Bayesian math handles scoring)
     veto_triggered = structural_sim < 0.40
-    
-    # FUSED SCORE: Use empirical weights from LFW calibration if available
-    _fw = CALIBRATION["fusion"]["optimal_weights"] if CALIBRATION else None
 
-    # 7.5 TIER 4: Mark Correspondence (Scar/Mole/Birthmark Detection)
+    # 7.5 TIER 4: Mark Correspondence (Bayesian LR Engine)
     marks_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
     marks_probe = detect_facial_marks(probe_aligned, probe_landmarks)
     mark_result = compute_mark_correspondence(marks_gallery, marks_probe)
     tier4_score = mark_result["score"]  # None if insufficient marks
 
-    # Base 3-tier fusion (weights are NEVER redistributed)
+    # ── BAYESIAN EVIDENCE FUSION (Daubert v3.0) ──
+    # Convert ArcFace cosine to Likelihood Ratio
+    lr_arcface = cosine_to_lr_arcface(structural_sim)
+
+    # Combined mark LR (product of individual mark LRs)
+    lr_marks = mark_result.get("lr_marks", 1.0)
+
+    # Total LR = independent evidence product
+    lr_total = lr_arcface * lr_marks
+
+    # Posterior probability via Bayes' Theorem (neutral prior = 0.5)
+    # P(Hp|E) = (Prior × LR) / ((Prior × LR) + (1 - Prior))
+    # With Prior = 0.5: Posterior = LR / (LR + 1)
+    PRIOR = 0.5
+    posterior = (PRIOR * lr_total) / ((PRIOR * lr_total) + (1.0 - PRIOR))
+    fused_score = posterior * 100.0
+
+    # Retain tier scores for dashboard display
+    _fw = CALIBRATION["fusion"]["optimal_weights"] if CALIBRATION else None
     _w1 = _fw["structural"] if _fw else 0.60
     _w2 = _fw["geometric"] if _fw else 0.25
     _w3 = _fw["micro_topology"] if _fw else 0.15
     base_fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3)
 
-    # Error Margin Reduction: confirmed marks reduce the gap to 100%
-    if tier4_score is not None and mark_result["matched"] > 0:
-        error_margin = 100.0 - base_fused_score
-        boost_factor = min(mark_result["matched"] * 0.15, 0.90)
-        fused_score = base_fused_score + (error_margin * boost_factor)
-    else:
-        fused_score = base_fused_score
-    
     if veto_triggered:
-        # Mark Override Protocol: If 3+ independent marks correspond,
-        # scar/mole evidence provides physical proof that can partially
-        # override an ArcFace failure (aging, surgery, extreme angle).
-        # The veto FLAG still fires for forensic transparency.
+        # Bayesian override: if mark LR is strong enough, the posterior
+        # will naturally rise above threshold. The veto FLAG still fires
+        # for forensic transparency but doesn't artificially cap the score.
         matched_marks = mark_result["matched"]
-        if matched_marks >= 3 and tier4_score is not None:
-            # Allow mark-boosted score through, scaled by mark confidence
-            mark_floor = min(tier4_score * 0.60, 85.0)  # Mark evidence alone caps at 85%
-            fused_score = max(mark_floor, min(fused_score, base_fused_score))
-            conclusion = f"Conditional Match: ArcFace Veto overridden by {matched_marks} confirmed mark correspondences"
+        if lr_marks > 100.0 and matched_marks >= 1:
+            conclusion = f"Conditional Match: ArcFace Veto — {matched_marks} mark(s) yield LR={lr_marks:.1f}"
         else:
-            fused_score = min(fused_score, tier1_score)  # Cap — never inflate a non-match
             conclusion = "Exclusion: Biometric Non-Match (ArcFace Cosine < 0.40)"
     elif fused_score > 90.0:
         conclusion = "Strongest Support for Common Source"
@@ -1499,7 +1645,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     probe_wireframe = generate_wireframe_hud(probe_aligned, probe_landmarks)
 
     # Statistical confidence from Tier-1 raw cosine
-    stats = calculate_statistical_confidence(structural_sim, marks_matched=mark_result["matched"])
+    stats = calculate_statistical_confidence(structural_sim)
 
     # Deep Forensic Telemetry (hash of 512-D ArcFace vector)
     probe_vector_hash = compute_vector_hash(embed_probe)
@@ -1520,6 +1666,12 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         gallery_file_hash=gallery_file_hash,
         pipeline_version=PIPELINE_VERSION,
         dependency_versions=DEPENDENCY_VERSIONS,
+        # Bayesian LR Forensic Audit Trail
+        lr_arcface=round(lr_arcface, 6),
+        lr_marks=round(lr_marks, 6),
+        lr_total=round(lr_total, 6),
+        posterior_probability=round(posterior, 8),
+        mark_lrs=[round(lr, 4) for lr in mark_result.get("mark_lrs", [])],
     )
 
     response = VerificationResponse(
@@ -1733,49 +1885,45 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     chi_squared = 0.5 * float(np.sum(((lbp_gal - lbp_pro) ** 2) / (lbp_gal + lbp_pro + 1e-10)))
     tier3_score = max(0.0, min(100.0, (1.0 - chi_squared) * 100))
 
-    # 9. Fused score: Use empirical weights from LFW calibration if available
-    _fw = CALIBRATION["fusion"]["optimal_weights"] if CALIBRATION else None
-
-    # 9.5 TIER 4: Mark Correspondence (Scar/Mole/Birthmark Detection)
+    # 9. TIER 4: Mark Correspondence (Bayesian LR Engine)
     marks_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
     marks_probe = detect_facial_marks(probe_aligned, probe_landmarks)
     mark_result = compute_mark_correspondence(marks_gallery, marks_probe)
     tier4_score = mark_result["score"]  # None if insufficient marks
 
-    # Base 3-tier fusion (weights are NEVER redistributed)
+    # ── BAYESIAN EVIDENCE FUSION (Daubert v3.0) ──
+    lr_arcface = cosine_to_lr_arcface(best_score)
+    lr_marks = mark_result.get("lr_marks", 1.0)
+    lr_total = lr_arcface * lr_marks
+
+    # Posterior probability via Bayes' Theorem (neutral prior = 0.5)
+    PRIOR = 0.5
+    posterior = (PRIOR * lr_total) / ((PRIOR * lr_total) + (1.0 - PRIOR))
+    fused_score = posterior * 100.0
+
+    # Retain tier scores for dashboard display
+    _fw = CALIBRATION["fusion"]["optimal_weights"] if CALIBRATION else None
     _w1 = _fw["structural"] if _fw else 0.60
     _w2 = _fw["geometric"] if _fw else 0.25
     _w3 = _fw["micro_topology"] if _fw else 0.15
     base_fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3)
 
-    # Error Margin Reduction: confirmed marks reduce the gap to 100%
-    if tier4_score is not None and mark_result["matched"] > 0:
-        error_margin = 100.0 - base_fused_score
-        boost_factor = min(mark_result["matched"] * 0.15, 0.90)
-        fused_score = base_fused_score + (error_margin * boost_factor)
-    else:
-        fused_score = base_fused_score
-
-    # 10. ArcFace Veto — hard fail if cosine < 0.40
+    # 10. ArcFace Veto (flag only — Bayesian math handles scoring)
     veto_arcface = best_score < 0.40
 
     # 11. Conclusion
     if veto_arcface:
-        # Mark Override Protocol: 3+ confirmed marks can partially override ArcFace veto
         matched_marks = mark_result["matched"]
-        if matched_marks >= 3 and tier4_score is not None:
-            mark_floor = min(tier4_score * 0.60, 85.0)
-            fused_score = max(mark_floor, min(fused_score, base_fused_score))
-            conclusion = f"CONDITIONAL MATCH — ArcFace veto overridden by {matched_marks} mark correspondences: {best_user_id}"
+        if lr_marks > 100.0 and matched_marks >= 1:
+            conclusion = f"CONDITIONAL MATCH — ArcFace Veto, {matched_marks} mark(s) LR={lr_marks:.1f}: {best_user_id}"
         else:
-            fused_score = min(fused_score, tier1_score)  # Cap — never inflate a non-match
             conclusion = f"EXCLUSION — Biometric Non-Match: {best_user_id} (ArcFace: {best_score:.4f})"
     elif fused_score > 90.0:
-        conclusion = f"TARGET ACQUIRED — Strongest match: {best_user_id} (Fused: {fused_score:.1f}%)"
+        conclusion = f"TARGET ACQUIRED — Strongest match: {best_user_id} (Posterior: {fused_score:.1f}%)"
     elif fused_score > 75.0:
-        conclusion = f"TARGET ACQUIRED — Probable match: {best_user_id} (Fused: {fused_score:.1f}%)"
+        conclusion = f"TARGET ACQUIRED — Probable match: {best_user_id} (Posterior: {fused_score:.1f}%)"
     else:
-        conclusion = f"WEAK MATCH — Nearest candidate: {best_user_id} (Fused: {fused_score:.1f}%)"
+        conclusion = f"WEAK MATCH — Nearest candidate: {best_user_id} (Posterior: {fused_score:.1f}%)"
 
     # 11. Forensic visualizations (real landmark density maps)
     gallery_heatmap = generate_landmark_attention_map(gallery_aligned, gallery_landmarks)
@@ -1802,7 +1950,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         probe_wireframe_b64 = generate_wireframe_hud(probe_aligned, probe_landmarks)
 
     # Statistical confidence & attribution from vault match
-    stats = calculate_statistical_confidence(best_score, marks_matched=mark_result["matched"])
+    stats = calculate_statistical_confidence(best_score)
     matched_profile = None
     attr_session = SessionLocal()
     try:
@@ -1839,6 +1987,12 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         gallery_file_hash=gallery_file_hash,
         pipeline_version=PIPELINE_VERSION,
         dependency_versions=DEPENDENCY_VERSIONS,
+        # Bayesian LR Forensic Audit Trail
+        lr_arcface=round(lr_arcface, 6),
+        lr_marks=round(lr_marks, 6),
+        lr_total=round(lr_total, 6),
+        posterior_probability=round(posterior, 8),
+        mark_lrs=[round(lr, 4) for lr in mark_result.get("mark_lrs", [])],
     )
 
     response = VerificationResponse(

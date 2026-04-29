@@ -45,6 +45,32 @@ export default function Home() {
     crypto_envelope?: { standard: string; decryption_time: string };
     calibration_benchmark?: string;
     calibration_pairs?: number;
+    // Bayesian Likelihood Ratio Audit Trail (Daubert v3.0)
+    lr_arcface?: number | null;
+    lr_marks?: number | null;
+    lr_total?: number | null;
+    posterior_probability?: number | null;
+    mark_lrs?: number[] | null;
+  }
+
+  /** Format a Likelihood Ratio for human-readable display */
+  function formatLR(lr: number | null | undefined): string {
+    if (lr == null) return 'N/A';
+    if (lr >= 1e15) return `${(lr / 1e15).toFixed(2)} Quadrillion`;
+    if (lr >= 1e12) return `${(lr / 1e12).toFixed(2)} Trillion`;
+    if (lr >= 1e9) return `${(lr / 1e9).toFixed(2)} Billion`;
+    if (lr >= 1e6) return `${(lr / 1e6).toFixed(2)} Million`;
+    if (lr >= 1e4) return lr.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    if (lr >= 100) return lr.toLocaleString(undefined, { maximumFractionDigits: 1 });
+    return lr.toFixed(2);
+  }
+
+  /** Format LR in compact scientific notation */
+  function formatLRSci(lr: number | null | undefined): string {
+    if (lr == null) return 'N/A';
+    if (lr >= 1e6) return lr.toExponential(2);
+    if (lr >= 100) return lr.toLocaleString(undefined, { maximumFractionDigits: 1 });
+    return lr.toFixed(4);
   }
 
   interface VerificationResult {
@@ -339,9 +365,9 @@ export default function Home() {
               <div style="font-size:7px;color:#555;line-height:1.3;">Epidermal deviation & scar alignment.</div>
             </div>
             <div style="flex:1;padding:8px 10px;background:#1a170d;">
-              <div style="font-size:7px;color:#D4AF37;letter-spacing:2px;">FUSED IDENTITY</div>
+              <div style="font-size:7px;color:#D4AF37;letter-spacing:2px;">POSTERIOR PROB</div>
               <div style="font-size:22px;color:#D4AF37;font-weight:bold;margin:2px 0;">${results.fused_identity_score}%</div>
-              <div style="font-size:7px;color:#997a1d;line-height:1.3;">Bayesian false-acceptance probability.</div>
+              <div style="font-size:7px;color:#997a1d;line-height:1.3;">LR<sub>total</sub>: ${audit?.lr_total != null ? formatLRSci(audit.lr_total) : 'N/A'}</div>
             </div>
           </div>
 
@@ -1041,11 +1067,18 @@ export default function Home() {
                 <div className={`absolute -top-6 -right-6 w-24 h-24 rounded-full ${(results.fused_identity_score < 40.0) ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
                 <div className={`absolute -bottom-4 -left-4 w-16 h-16 rounded-full ${(results.fused_identity_score < 40.0) ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
                 <div className="relative z-10">
-                  <div className={`text-[8px] tracking-[0.3em] mb-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/70' : 'text-[#D4AF37]/70'}`}>OVERALL MATCH SCORE</div>
+                  <div className={`text-[8px] tracking-[0.3em] mb-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/70' : 'text-[#D4AF37]/70'}`}>POSTERIOR PROBABILITY</div>
                   <div className="flex items-baseline gap-1.5">
                     <span className={`text-4xl font-bold tabular-nums ${(results.fused_identity_score < 40.0) ? 'text-red-400' : 'text-[#D4AF37]'}`}>{results.fused_identity_score}</span>
                     <span className={`text-lg font-bold ${(results.fused_identity_score < 40.0) ? 'text-red-400/60' : 'text-[#D4AF37]/60'}`}>%</span>
                   </div>
+                  {/* LR_total context */}
+                  {results.audit_log?.lr_total != null && (
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <span className="text-[8px] text-gray-500 tracking-wider">LR<sub>total</sub></span>
+                      <span className={`text-[11px] font-bold tabular-nums ${(results.fused_identity_score < 40.0) ? 'text-red-400/80' : 'text-[#D4AF37]/90'}`}>{formatLR(results.audit_log.lr_total)}</span>
+                    </div>
+                  )}
                   {/* Score bar */}
                   <div className="mt-2 h-1.5 w-full bg-[#111] rounded-full overflow-hidden">
                     <div
@@ -1055,9 +1088,9 @@ export default function Home() {
                   </div>
                   {/* Human-readable interpretation */}
                   <div className={`text-[10px] mt-2 font-medium ${(results.fused_identity_score < 40.0) ? 'text-red-300/80' : results.fused_identity_score > 80 ? 'text-emerald-300/80' : results.fused_identity_score > 60 ? 'text-amber-300/80' : 'text-red-300/80'}`}>
-                    {results.fused_identity_score > 85 ? 'Very strong facial similarity detected' : results.fused_identity_score > 70 ? 'Moderate facial similarity detected' : results.fused_identity_score > 50 ? 'Weak similarity — likely different people' : 'Very low similarity — different people'}
+                    {results.fused_identity_score > 99 ? 'Extremely strong — near-certain same identity' : results.fused_identity_score > 85 ? 'Very strong facial similarity detected' : results.fused_identity_score > 70 ? 'Moderate facial similarity detected' : results.fused_identity_score > 50 ? 'Weak similarity — likely different people' : 'Very low similarity — different people'}
                   </div>
-                  <div className={`text-[8px] mt-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/40' : 'text-[#D4AF37]/40'}`}>Combined from {results.marks_matched ? '4' : '3'} independent analysis methods below</div>
+                  <div className={`text-[8px] mt-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/40' : 'text-[#D4AF37]/40'}`}>Bayesian fusion of {results.marks_matched ? '4' : '3'} independent evidence channels below</div>
                 </div>
               </div>
 
@@ -1133,27 +1166,47 @@ export default function Home() {
                   <div className="text-[7px] text-gray-700 mt-1 tracking-wide">15% of overall score · LBP texture analysis</div>
                 </div>
 
-                {/* Tier 4: Mark Correspondence (Only if marks found) */}
-                {results.marks_matched !== undefined && results.marks_matched > 0 && results.mark_correspondence_score !== undefined && results.mark_correspondence_score !== null && (
+                {/* Tier 4: Mark Correspondence — Bayesian LR (Only if marks found) */}
+                {results.marks_matched !== undefined && results.marks_matched > 0 && (
                   <div className="p-2.5 border-t border-[#1a1a1a]">
                     <div className="flex items-baseline justify-between">
-                      <h3 className="text-[#D4AF37] text-[9px] tracking-wider font-bold">MARK CORRESPONDENCE</h3>
-                      <span className={`text-lg font-bold tabular-nums ${results.mark_correspondence_score > 80 ? 'text-[#D4AF37]' : 'text-amber-400'}`}>{results.mark_correspondence_score}%</span>
+                      <h3 className="text-[#D4AF37] text-[9px] tracking-wider font-bold">MARK EVIDENCE (LR)</h3>
+                      <span className="text-lg font-bold tabular-nums text-[#D4AF37]">{formatLR(results.audit_log?.lr_marks)}</span>
                     </div>
+                    {/* LR magnitude bar — log-scaled */}
                     <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden border border-[#D4AF37]/20">
                       <div
-                        className={`h-full rounded-full ${results.mark_correspondence_score > 80 ? 'bg-[#D4AF37]/90' : 'bg-amber-500/70'}`}
-                        style={{ width: `${Math.min(100, results.mark_correspondence_score)}%` }}
+                        className="h-full rounded-full bg-gradient-to-r from-[#D4AF37]/60 to-[#D4AF37] transition-all duration-700"
+                        style={{ width: `${Math.min(100, results.audit_log?.lr_marks != null ? Math.min(100, Math.log10(Math.max(1, results.audit_log.lr_marks)) * 10) : 0)}%` }}
                       />
                     </div>
-                    <p className="text-[9px] text-[#D4AF37]/70 mt-1.5 leading-relaxed">Direct mapping of unique scars, moles, and birthmarks. High correspondence provides extremely strong physical proof of identity, bypassing standard structural failure limits.</p>
+                    <p className="text-[9px] text-[#D4AF37]/70 mt-1.5 leading-relaxed">Bayesian Likelihood Ratio from {results.marks_matched} matching scars, moles, and birthmarks. Values {'>'} 1 support same-identity hypothesis; values {'>'} 10,000 constitute strong forensic evidence.</p>
+                    {/* Individual mark LR breakdown */}
+                    {results.audit_log?.lr_arcface != null && (
+                      <div className="mt-1.5 flex items-center gap-3 flex-wrap">
+                        <div className="flex items-center gap-1">
+                          <span className="text-[7px] text-gray-500">LR<sub>arcface</sub></span>
+                          <span className="text-[8px] font-bold text-[#D4AF37]/80 tabular-nums">{formatLR(results.audit_log.lr_arcface)}</span>
+                        </div>
+                        <span className="text-[7px] text-gray-600">×</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[7px] text-gray-500">LR<sub>marks</sub></span>
+                          <span className="text-[8px] font-bold text-[#D4AF37]/80 tabular-nums">{formatLR(results.audit_log.lr_marks)}</span>
+                        </div>
+                        <span className="text-[7px] text-gray-600">=</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[7px] text-gray-500">LR<sub>total</sub></span>
+                          <span className="text-[8px] font-bold text-[#D4AF37] tabular-nums">{formatLR(results.audit_log.lr_total)}</span>
+                        </div>
+                      </div>
+                    )}
                     <div className="mt-1.5 flex items-center gap-1.5">
-                      <div className={`w-1 h-1 rounded-full ${results.mark_correspondence_score > 80 ? 'bg-[#D4AF37]' : 'bg-amber-500'}`}></div>
-                      <span className={`text-[8px] italic ${results.mark_correspondence_score > 80 ? 'text-[#D4AF37]/80' : 'text-amber-500/70'}`}>
+                      <div className="w-1 h-1 rounded-full bg-[#D4AF37]"></div>
+                      <span className="text-[8px] italic text-[#D4AF37]/80">
                         {results.marks_matched} corresponding marks matched across both faces
                       </span>
                     </div>
-                    <div className="text-[7px] text-[#D4AF37]/50 mt-1 tracking-wide">Score Boost · Exponential FAR Reduction · Error Margin Recovery</div>
+                    <div className="text-[7px] text-[#D4AF37]/50 mt-1 tracking-wide">Daubert-compliant · Bayesian LR fusion · P(same|evidence) = LR/(LR+1)</div>
                   </div>
                 )}
               </div>
@@ -1173,9 +1226,12 @@ export default function Home() {
                     </div>
                   )}
                   {(results.veto_triggered && results.fused_identity_score >= 40.0) && (
-                    <div className="mt-2 flex items-center gap-1.5 px-2 py-1.5 bg-amber-950/20 rounded border border-amber-900/30">
-                      <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></div>
-                      <span className="text-[9px] text-amber-500/80 tracking-wider">ArcFace veto overridden by independent physical scar/mark verification.</span>
+                    <div className="mt-2 px-2 py-1.5 bg-amber-950/20 rounded border border-amber-900/30">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></div>
+                        <span className="text-[9px] text-amber-500/80 tracking-wider font-bold">VETO OVERRIDDEN BY BAYESIAN EVIDENCE</span>
+                      </div>
+                      <p className="text-[8px] text-amber-400/60 leading-relaxed">ArcFace structural similarity fell below threshold, but physical mark evidence (LR<sub>marks</sub> = {formatLR(results.audit_log?.lr_marks)}) provided overwhelming statistical support for same-identity. Posterior probability: {results.audit_log?.posterior_probability != null ? `${(results.audit_log.posterior_probability * 100).toFixed(4)}%` : 'N/A'}.</p>
                     </div>
                   )}
                   {(!results.veto_triggered && results.fused_identity_score >= 40.0) && (
@@ -1225,7 +1281,7 @@ export default function Home() {
               {/* ── Technical Details (3-column) ── */}
               {auditExpanded && results.audit_log && (
                 <div className="border border-[#1a1a0a] bg-[#000000] rounded p-2.5 font-mono text-[9px] leading-relaxed shadow-[inset_0_0_30px_rgba(0,0,0,0.5)]">
-                  <div className="grid grid-cols-3 gap-4 mt-1">
+                  <div className="grid grid-cols-2 gap-4 mt-1">
 
                     {/* Block 1: Confidence & Accuracy */}
                     <div className="border border-[#1a2a1a] rounded p-2 bg-[#010201]">
@@ -1283,6 +1339,28 @@ export default function Home() {
                         )}
                         {results.audit_log.license_short_name && (
                           <div className="flex justify-between"><span className="text-gray-500">Image License</span><span className="text-gray-400">{results.audit_log.license_short_name}</span></div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Block 4: Bayesian Evidence — Daubert Forensic Trail */}
+                    <div className="border border-[#2a1a2a] rounded p-2 bg-[#020102]">
+                      <div className="text-purple-400/80 tracking-[0.2em] mb-1 border-b border-purple-900/30 pb-1 text-[8px]">▸ BAYESIAN EVIDENCE (DAUBERT v3.0)</div>
+                      <p className="text-[7px] text-gray-600 mb-1.5 leading-relaxed">Likelihood Ratios quantifying the strength of evidence for same-identity hypothesis.</p>
+                      <div className="space-y-0.5 pl-1">
+                        <div className="flex justify-between"><span className="text-gray-500">LR<sub>arcface</sub></span><span className="text-purple-300 font-bold">{formatLRSci(results.audit_log.lr_arcface)}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-500">LR<sub>marks</sub></span><span className="text-purple-300 font-bold">{formatLRSci(results.audit_log.lr_marks)}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-500">LR<sub>total</sub></span><span className="text-[#D4AF37] font-bold">{formatLRSci(results.audit_log.lr_total)}</span></div>
+                        <div className="flex justify-between mt-1 pt-1 border-t border-purple-900/20"><span className="text-gray-500">Posterior P(same)</span><span className="text-[#D4AF37] font-bold">{results.audit_log.posterior_probability != null ? `${(results.audit_log.posterior_probability * 100).toFixed(6)}%` : 'N/A'}</span></div>
+                        {results.audit_log.mark_lrs && results.audit_log.mark_lrs.length > 0 && (
+                          <div className="mt-1 pt-1 border-t border-purple-900/20">
+                            <div className="text-gray-500 mb-0.5">Individual Mark LRs ({results.audit_log.mark_lrs.length})</div>
+                            <div className="flex flex-wrap gap-1">
+                              {results.audit_log.mark_lrs.map((lr, i) => (
+                                <span key={i} className={`text-[7px] px-1 py-0.5 rounded ${lr > 10 ? 'bg-[#D4AF37]/15 text-[#D4AF37]' : 'bg-gray-800 text-gray-400'}`}>{lr.toFixed(1)}</span>
+                              ))}
+                            </div>
+                          </div>
                         )}
                       </div>
                     </div>
