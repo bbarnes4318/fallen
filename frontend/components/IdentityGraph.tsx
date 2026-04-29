@@ -92,14 +92,23 @@ function getNodeConnections(nodeId: string, links: GraphLink[]) {
   });
 }
 
+// ─── Props ───────────────────────────────────────────────
+interface IdentityGraphProps {
+  onCompare?: (galleryUrl: string, probeUrl: string, galleryName: string, probeName: string) => void;
+}
+
 // ─── Component ───────────────────────────────────────────
-export default function IdentityGraph() {
+export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
   const [loading, setLoading] = useState(true);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [showLegend, setShowLegend] = useState(true);
+
+  // ── Target selection for 1:1 comparison ──
+  const [targetA, setTargetA] = useState<GraphNode | null>(null);  // Gallery
+  const [targetB, setTargetB] = useState<GraphNode | null>(null);  // Probe
 
   // ── Image cache for thumbnail rendering on canvas ──
   const imageCache = useRef<Map<string, HTMLImageElement | null>>(new Map());
@@ -458,6 +467,34 @@ export default function IdentityGraph() {
                   <p className="text-sm font-bold text-white">{connections.length}</p>
                 </div>
               </div>
+
+              {/* ── Set as Target Buttons ── */}
+              {selectedNode.thumbnail && (
+                <div className="mt-3 flex gap-2">
+                  <button
+                    onClick={() => { setTargetA(selectedNode); setSelectedNode(null); }}
+                    className={`flex-1 py-2 rounded text-[9px] tracking-[0.15em] font-bold transition-all border ${
+                      targetA?.id === selectedNode.id
+                        ? 'border-[#D4AF37] bg-[#D4AF37]/20 text-[#D4AF37]'
+                        : 'border-[#333] bg-[#111] text-gray-400 hover:border-[#D4AF37]/60 hover:text-[#D4AF37] hover:bg-[#D4AF37]/10'
+                    }`}
+                  >
+                    ◆ SET AS TARGET A
+                    <span className="block text-[7px] tracking-wider text-gray-600 mt-0.5">GALLERY</span>
+                  </button>
+                  <button
+                    onClick={() => { setTargetB(selectedNode); setSelectedNode(null); }}
+                    className={`flex-1 py-2 rounded text-[9px] tracking-[0.15em] font-bold transition-all border ${
+                      targetB?.id === selectedNode.id
+                        ? 'border-cyan-500 bg-cyan-500/20 text-cyan-400'
+                        : 'border-[#333] bg-[#111] text-gray-400 hover:border-cyan-500/60 hover:text-cyan-400 hover:bg-cyan-500/10'
+                    }`}
+                  >
+                    ◆ SET AS TARGET B
+                    <span className="block text-[7px] tracking-wider text-gray-600 mt-0.5">PROBE</span>
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Connections List with thumbnails */}
@@ -526,6 +563,74 @@ export default function IdentityGraph() {
           </>
         )}
       </div>
+
+      {/* ── Floating Comparison Launcher ── */}
+      {(targetA || targetB) && (
+        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
+          <div className="bg-[#0a0a0b]/95 border border-[#D4AF37]/40 rounded-xl px-5 py-3 backdrop-blur-md shadow-[0_0_40px_rgba(212,175,55,0.15)] flex items-center gap-4 font-mono">
+
+            {/* Target A Slot */}
+            <div className="flex items-center gap-2">
+              {targetA ? (
+                <div className="relative group">
+                  <div className="w-10 h-10 rounded-lg overflow-hidden border-2 border-[#D4AF37]">
+                    <img src={targetA.thumbnail} alt={targetA.name} className="w-full h-full object-cover" crossOrigin="anonymous" />
+                  </div>
+                  <button
+                    onClick={() => setTargetA(null)}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-900 border border-red-700 rounded-full text-[8px] text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  >✕</button>
+                  <p className="text-[7px] text-[#D4AF37] tracking-wider text-center mt-1 truncate max-w-[60px]">{targetA.name}</p>
+                </div>
+              ) : (
+                <div className="w-10 h-10 rounded-lg border-2 border-dashed border-[#333] flex items-center justify-center">
+                  <span className="text-gray-700 text-[8px]">A</span>
+                </div>
+              )}
+            </div>
+
+            {/* VS Divider */}
+            <div className="text-[10px] text-gray-600 tracking-[0.3em] font-bold">VS</div>
+
+            {/* Target B Slot */}
+            <div className="flex items-center gap-2">
+              {targetB ? (
+                <div className="relative group">
+                  <div className="w-10 h-10 rounded-lg overflow-hidden border-2 border-cyan-500">
+                    <img src={targetB.thumbnail} alt={targetB.name} className="w-full h-full object-cover" crossOrigin="anonymous" />
+                  </div>
+                  <button
+                    onClick={() => setTargetB(null)}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-900 border border-red-700 rounded-full text-[8px] text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  >✕</button>
+                  <p className="text-[7px] text-cyan-400 tracking-wider text-center mt-1 truncate max-w-[60px]">{targetB.name}</p>
+                </div>
+              ) : (
+                <div className="w-10 h-10 rounded-lg border-2 border-dashed border-[#333] flex items-center justify-center">
+                  <span className="text-gray-700 text-[8px]">B</span>
+                </div>
+              )}
+            </div>
+
+            {/* Launch Button */}
+            <button
+              disabled={!targetA || !targetB || !targetA.thumbnail || !targetB.thumbnail}
+              onClick={() => {
+                if (targetA?.thumbnail && targetB?.thumbnail && onCompare) {
+                  onCompare(targetA.thumbnail, targetB.thumbnail, targetA.name, targetB.name);
+                }
+              }}
+              className={`ml-2 px-5 py-2.5 rounded-lg text-[10px] tracking-[0.2em] font-bold transition-all ${
+                targetA && targetB && targetA.thumbnail && targetB.thumbnail
+                  ? 'bg-[#D4AF37] text-black hover:bg-[#e5c544] shadow-[0_0_20px_rgba(212,175,55,0.3)] cursor-pointer'
+                  : 'bg-[#1a1a1a] text-gray-600 border border-[#222] cursor-not-allowed'
+              }`}
+            >
+              RUN DEEP FORENSIC COMPARISON
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

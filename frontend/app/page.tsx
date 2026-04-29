@@ -243,6 +243,39 @@ export default function Home() {
     }
   };
 
+  // ── Graph-to-Comparison bridge: receives URLs from IdentityGraph ──
+  const handleGraphCompare = async (galleryUrl: string, probeUrl: string, galleryName: string, probeName: string) => {
+    try {
+      setViewMode('acquisition');
+      setMode('compare');
+      setStep('frontalizing');
+      setGalleryPreview(galleryUrl);
+      setProbePreview(probeUrl);
+
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      setStep('calculating');
+
+      const verifyRes = await fetch(`${getApiUrl()}/verify/fuse`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ gallery_url: galleryUrl, probe_url: probeUrl })
+      });
+      if (verifyRes.status === 401) { handleLogout(); return; }
+      if (!verifyRes.ok) {
+        const errBody = await verifyRes.json().catch(() => null);
+        throw new Error(errBody?.detail || 'Verification pipeline failed.');
+      }
+      const data = await verifyRes.json();
+
+      sessionStorage.setItem('cachedResult', JSON.stringify(data));
+      setResults(data);
+      setStep('paywall');
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Graph comparison failed.');
+      setStep('error');
+    }
+  };
+
   const generateForensicReport = async () => {
     if (!results) return;
     setIsExporting(true);
@@ -479,7 +512,7 @@ export default function Home() {
       {/* ── Body ── */}
       {viewMode === 'graph' ? (
         <div className="flex-1 min-h-0">
-          <IdentityGraph />
+          <IdentityGraph onCompare={handleGraphCompare} />
         </div>
       ) : (
       <div className="flex-1 min-h-0 p-4">
