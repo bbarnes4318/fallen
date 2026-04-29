@@ -8,7 +8,7 @@ This script:
   1. Queries all IdentityProfile records from PostgreSQL
   2. Decrypts each KMS-encrypted 512-D ArcFace embedding
   3. Computes upper-triangle NxN cosine similarity matrix
-  4. Filters links > 90% match threshold (capped at 5,000 strongest)
+  4. Filters links > 97% match threshold (capped at 5,000 strongest)
   5. Uploads the resulting JSON graph to GCS
 
 Designed to run as an asynchronous Cloud Run Job triggered by
@@ -264,7 +264,7 @@ def generate_graph():
                 comparisons += 1
                 score = calculate_cosine_similarity(vec_a, vec_b) * 100
 
-                if score > 90.0:
+                if score > 97.0:
                     links.append({
                         "source": decrypted[i]["user_id"],
                         "target": decrypted[j]["user_id"],
@@ -273,7 +273,7 @@ def generate_graph():
 
         compute_elapsed = (time.perf_counter() - compute_start) * 1000
         print(f"[GRAPH] Computed {comparisons} pairwise comparisons in {compute_elapsed:.0f}ms")
-        print(f"[GRAPH] Found {len(links)} links above 90% threshold")
+        print(f"[GRAPH] Found {len(links)} links above 97% threshold")
 
         # Cap links to strongest 5,000 for browser renderability
         MAX_LINKS = 5000
