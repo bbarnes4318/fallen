@@ -30,6 +30,8 @@ from skimage.feature import local_binary_pattern
 import mediapipe as mp
 import onnxruntime as ort
 from models import SessionLocal, IdentityProfile, VerificationEvent, init_db
+from sqlalchemy import event
+from vault_index import vault_index
 import stripe
 from deepface import DeepFace
 
@@ -58,6 +60,28 @@ except Exception as e:
 @app.on_event("startup")
 def on_startup():
     init_db()
+    print("Hydrating FAISS Vault Index...")
+    session = SessionLocal()
+    try:
+        profiles = session.query(IdentityProfile).all()
+        for p in profiles:
+            try:
+                emb = decrypt_embedding(p.encrypted_facial_embedding)
+                vault_index.add_identity(p.user_id, emb)
+            except Exception as e:
+                print(f"Failed to load embedding for {p.user_id}: {e}")
+        print(f"FAISS index hydrated with {vault_index.index.ntotal} records.")
+    finally:
+        session.close()
+
+# Dynamically sync FAISS when new identities are added
+@event.listens_for(IdentityProfile, 'after_insert')
+def receive_after_insert(mapper, connection, target):
+    try:
+        emb = decrypt_embedding(target.encrypted_facial_embedding)
+        vault_index.add_identity(target.user_id, emb)
+    except Exception as e:
+        print(f"FAISS sync failed for {target.user_id}: {e}")
 
 app.add_middleware(
     CORSMiddleware,
@@ -1945,42 +1969,18 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
 
     probe_embedding = extract_arcface_embedding(probe_aligned)
 
-    # 4. Decrypt & search the entire vault
-    session = SessionLocal()
-    best_score = -1.0
-    best_user_id = None
-    vault_decrypt_start = time.perf_counter()
+    # 4. Two-Stage Retrieval: Stage 1 (FAISS Filter)
+    vault_search_start = time.perf_counter()
+    results = vault_index.search(probe_embedding, top_k=1)
+    vault_decrypt_elapsed_ms = (time.perf_counter() - vault_search_start) * 1000
 
-    try:
-        profiles = session.query(IdentityProfile).all()
-
-        if not profiles:
-            raise HTTPException(
-                status_code=404,
-                detail="VAULT_EMPTY: No identity profiles in the database."
-            )
-
-        for profile in profiles:
-            try:
-                gallery_vec = decrypt_embedding(profile.encrypted_facial_embedding)
-                # Skip dimension mismatch (legacy 1404-D vs current 512-D ArcFace)
-                if gallery_vec.shape[0] != probe_embedding.shape[0]:
-                    continue
-                score = calculate_cosine_similarity(probe_embedding, gallery_vec)
-                if score > best_score:
-                    best_score = score
-                    best_user_id = profile.user_id
-            except Exception:
-                continue  # Skip corrupted or undecryptable records
-    finally:
-        session.close()
-    vault_decrypt_elapsed_ms = (time.perf_counter() - vault_decrypt_start) * 1000
-
-    if best_user_id is None:
+    if not results:
         raise HTTPException(
             status_code=404,
-            detail="NO_MATCH: Could not match against any vault profile."
+            detail="VAULT_EMPTY_OR_NO_MATCH: No valid matches found in vault index."
         )
+
+    best_user_id, best_score = results[0]
 
     # 5. Tier 1 score from vault search (ArcFace only initially)
     tier1_score = best_score * 100
