@@ -101,6 +101,12 @@ class VerificationEvent(Base):
     geometric_score_x100 = Column(Integer, nullable=True)
     micro_topology_score_x100 = Column(Integer, nullable=True)
 
+    # Neural Ensemble Audit Trail (Tier 1 v4.0)
+    # Individual model scores before weighted fusion (×10000 for 4-decimal precision)
+    arcface_score_x10000 = Column(Integer, nullable=True)       # Raw ArcFace cosine × 10000
+    secondary_score_x10000 = Column(Integer, nullable=True)     # Raw secondary model cosine × 10000
+    ensemble_model_secondary = Column(String(64), nullable=True) # Name of secondary model (e.g., 'Facenet512')
+
     # Tier 4: Mark Correspondence (×100 for integer consistency)
     mark_correspondence_x100 = Column(Integer, nullable=True)
 
