@@ -809,6 +809,12 @@ export default function Home() {
               GRAPH
             </button>
           </div>
+          <a
+            href="/architecture"
+            className="text-[10px] tracking-widest font-bold text-gray-500 hover:text-[#D4AF37] transition-colors border border-[#1f1f1f] hover:border-[#D4AF37]/30 px-3 py-1 bg-[#0d0d0e]"
+          >
+            ARCHITECTURE
+          </a>
           <button 
             onClick={handleLogout}
             className="text-[10px] text-gray-500 hover:text-red-400 transition-colors border border-transparent hover:border-red-900/50 px-2.5 py-1 rounded"
