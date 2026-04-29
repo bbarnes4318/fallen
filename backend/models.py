@@ -107,6 +107,11 @@ class VerificationEvent(Base):
     secondary_score_x10000 = Column(Integer, nullable=True)     # Raw secondary model cosine × 10000
     ensemble_model_secondary = Column(String(64), nullable=True) # Name of secondary model (e.g., 'Facenet512')
 
+    # Tier 2: 3D Topographical Mapping Telemetry
+    pose_corrected_3d = Column(Boolean, nullable=True)
+    probe_pose_angles = Column(Text, nullable=True)     # JSON string of pitch, yaw, roll
+    gallery_pose_angles = Column(Text, nullable=True)   # JSON string of pitch, yaw, roll
+
     # Tier 4: Mark Correspondence (×100 for integer consistency)
     mark_correspondence_x100 = Column(Integer, nullable=True)
 
