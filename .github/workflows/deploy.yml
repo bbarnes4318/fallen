@@ -121,6 +121,8 @@ jobs:
             DB_NAME=facial_db
             CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance
             STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
+            JWT_SECRET=${{ secrets.JWT_SECRET }}
+            OPERATOR_PASSWORD=${{ secrets.OPERATOR_PASSWORD }}
 
       - name: Deploy Wikimedia Crawler Job
         run: |
@@ -136,7 +138,7 @@ jobs:
             --task-timeout=3600 \
             --max-retries=1 \
             --set-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance \
-            --set-env-vars="KMS_KEY_NAME=projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek,BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=${{ secrets.DB_PASS }},DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance"
+            --set-env-vars="KMS_KEY_NAME=projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek,BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=${{ secrets.DB_PASS }},DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance,JWT_SECRET=${{ secrets.JWT_SECRET }},OPERATOR_PASSWORD=${{ secrets.OPERATOR_PASSWORD }}"
 
       - name: Deploy ArcFace Migration Job
         run: |
@@ -152,7 +154,7 @@ jobs:
             --task-timeout=3600 \
             --max-retries=0 \
             --set-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance \
-            --set-env-vars="KMS_KEY_NAME=projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek,BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=${{ secrets.DB_PASS }},DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance"
+            --set-env-vars="KMS_KEY_NAME=projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek,BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=${{ secrets.DB_PASS }},DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance,JWT_SECRET=${{ secrets.JWT_SECRET }},OPERATOR_PASSWORD=${{ secrets.OPERATOR_PASSWORD }}"
 
       - name: Deploy Mass Ingestion Job
         run: |
@@ -168,7 +170,7 @@ jobs:
             --task-timeout=3600 \
             --max-retries=1 \
             --set-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance \
-            --set-env-vars="KMS_KEY_NAME=projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek,BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=${{ secrets.DB_PASS }},DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance"
+            --set-env-vars="KMS_KEY_NAME=projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek,BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=${{ secrets.DB_PASS }},DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance,JWT_SECRET=${{ secrets.JWT_SECRET }},OPERATOR_PASSWORD=${{ secrets.OPERATOR_PASSWORD }}"
 
       - name: Deploy LFW Calibration Job
         run: |
@@ -183,7 +185,7 @@ jobs:
             --cpu=4 \
             --task-timeout=7200 \
             --max-retries=1 \
-            --set-env-vars="BUCKET_NAME=hoppwhistle-facial-uploads"
+            --set-env-vars="BUCKET_NAME=hoppwhistle-facial-uploads,JWT_SECRET=${{ secrets.JWT_SECRET }},OPERATOR_PASSWORD=${{ secrets.OPERATOR_PASSWORD }}"
 
       - name: Deploy Identity Graph Generator Job
         run: |
@@ -199,7 +201,7 @@ jobs:
             --task-timeout=3600 \
             --max-retries=1 \
             --set-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance \
-            --set-env-vars="KMS_KEY_NAME=projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek,BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=${{ secrets.DB_PASS }},DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance"
+            --set-env-vars="KMS_KEY_NAME=projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek,BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=${{ secrets.DB_PASS }},DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance,JWT_SECRET=${{ secrets.JWT_SECRET }},OPERATOR_PASSWORD=${{ secrets.OPERATOR_PASSWORD }}"
 
       - name: Deploy WORM Ledger Anchor Job
         run: |
@@ -215,7 +217,7 @@ jobs:
             --task-timeout=600 \
             --max-retries=1 \
             --set-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance \
-            --set-env-vars="BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=${{ secrets.DB_PASS }},DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance"
+            --set-env-vars="BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=${{ secrets.DB_PASS }},DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance,JWT_SECRET=${{ secrets.JWT_SECRET }},OPERATOR_PASSWORD=${{ secrets.OPERATOR_PASSWORD }}"
 
       - name: Deploy Gallery Re-Upload Job
         run: |
@@ -231,7 +233,7 @@ jobs:
             --task-timeout=1800 \
             --max-retries=1 \
             --set-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance \
-            --set-env-vars="BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=${{ secrets.DB_PASS }},DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance"
+            --set-env-vars="BUCKET_NAME=hoppwhistle-facial-uploads,DB_USER=facial_app,DB_PASS=${{ secrets.DB_PASS }},DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance,JWT_SECRET=${{ secrets.JWT_SECRET }},OPERATOR_PASSWORD=${{ secrets.OPERATOR_PASSWORD }}"
 
       - name: Deploy Frontend to Cloud Run
         id: deploy-frontend
