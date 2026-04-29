@@ -323,7 +323,6 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
         cooldownTicks={150}
         d3AlphaDecay={0.015}
         d3VelocityDecay={0.25}
-        d3Force="center"
         onEngineStop={() => {
           if (fgRef.current) {
             fgRef.current.zoomToFit(400, 60);
