@@ -51,6 +51,10 @@ export default function Home() {
     structural_score: number;
     soft_biometrics_score: number;
     micro_topology_score: number;
+    mark_correspondence_score?: number | null;
+    marks_detected_gallery?: number;
+    marks_detected_probe?: number;
+    marks_matched?: number;
     fused_identity_score: number;
     veto_triggered: boolean;
     conclusion: string;
@@ -342,12 +346,12 @@ export default function Home() {
           </div>
 
           <!-- CONCLUSION -->
-          <div style="border:1px solid ${results.veto_triggered ? '#7f1d1d' : '#333'};padding:8px 12px;background:${results.veto_triggered ? '#1a0505' : '#0a0a0a'};margin-bottom:10px;flex-shrink:0;display:flex;justify-content:space-between;align-items:center;">
+          <div style="border:1px solid ${results.fused_identity_score < 40.0 ? '#7f1d1d' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '#92400e' : '#333'};padding:8px 12px;background:${results.fused_identity_score < 40.0 ? '#1a0505' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '#291102' : '#0a0a0a'};margin-bottom:10px;flex-shrink:0;display:flex;justify-content:space-between;align-items:center;">
             <div>
               <div style="font-size:7px;color:#666;letter-spacing:2px;margin-bottom:2px;">CONCLUSION</div>
-              <div style="font-size:11px;color:${results.veto_triggered ? '#f87171' : '#e5e5e5'};font-weight:bold;">${results.conclusion}</div>
+              <div style="font-size:11px;color:${results.fused_identity_score < 40.0 ? '#f87171' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '#fbbf24' : '#e5e5e5'};font-weight:bold;">${results.conclusion}</div>
             </div>
-            <div style="padding:3px 10px;background:${results.veto_triggered ? '#7f1d1d' : '#0a0a0a'};color:${results.veto_triggered ? '#fee2e2' : '#22c55e'};font-size:8px;letter-spacing:2px;border:1px solid ${results.veto_triggered ? '#ef4444' : 'rgba(34,197,94,0.3)'};">${results.veto_triggered ? 'ACE-V VETO' : 'NO DISCREPANCY'}</div>
+            <div style="padding:3px 10px;background:${results.fused_identity_score < 40.0 ? '#7f1d1d' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '#78350f' : '#0a0a0a'};color:${results.fused_identity_score < 40.0 ? '#fee2e2' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '#fef3c7' : '#22c55e'};font-size:8px;letter-spacing:2px;border:1px solid ${results.fused_identity_score < 40.0 ? '#ef4444' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '#d97706' : 'rgba(34,197,94,0.3)'};">${results.fused_identity_score < 40.0 ? 'ACE-V VETO' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? 'VETO OVERRIDDEN' : 'NO DISCREPANCY'}</div>
           </div>
 
           <!-- CRYPTOGRAPHIC AUDIT LOG (Terminal Block) -->
@@ -1017,7 +1021,7 @@ export default function Home() {
                   NEW RUN
                 </button>
               </div>
-              <div className={`flex-1 min-h-0 bg-[#0d0d0e] border rounded-lg p-2 ${results.veto_triggered ? 'border-red-900/50 shadow-[0_0_20px_rgba(180,0,30,0.15)]' : 'border-[#D4AF37]/30 shadow-[0_0_20px_rgba(212,175,55,0.08)]'}`}>
+              <div className={`flex-1 min-h-0 bg-[#0d0d0e] border rounded-lg p-2 ${(results.fused_identity_score < 40.0) ? 'border-red-900/50 shadow-[0_0_20px_rgba(180,0,30,0.15)]' : 'border-[#D4AF37]/30 shadow-[0_0_20px_rgba(212,175,55,0.08)]'}`}>
                 <SymmetryMerge
                   galleryImageSrc={results.gallery_aligned_b64}
                   probeImageSrc={results.probe_aligned_b64}
@@ -1033,14 +1037,14 @@ export default function Home() {
             <div className="w-[30%] flex flex-col gap-2 min-h-0 overflow-y-auto overflow-x-hidden shrink-0 pr-0.5">
 
               {/* ═══ OVERALL MATCH — Hero Score ═══ */}
-              <div className={`relative overflow-hidden rounded-lg p-4 border-2 ${results.veto_triggered ? 'border-red-700/60 bg-gradient-to-br from-[#1a0505] to-[#0d0d0e]' : 'border-[#D4AF37]/50 bg-gradient-to-br from-[#1a170d] to-[#0d0d0e]'}`}>
-                <div className={`absolute -top-6 -right-6 w-24 h-24 rounded-full ${results.veto_triggered ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
-                <div className={`absolute -bottom-4 -left-4 w-16 h-16 rounded-full ${results.veto_triggered ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
+              <div className={`relative overflow-hidden rounded-lg p-4 border-2 ${(results.fused_identity_score < 40.0) ? 'border-red-700/60 bg-gradient-to-br from-[#1a0505] to-[#0d0d0e]' : 'border-[#D4AF37]/50 bg-gradient-to-br from-[#1a170d] to-[#0d0d0e]'}`}>
+                <div className={`absolute -top-6 -right-6 w-24 h-24 rounded-full ${(results.fused_identity_score < 40.0) ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
+                <div className={`absolute -bottom-4 -left-4 w-16 h-16 rounded-full ${(results.fused_identity_score < 40.0) ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
                 <div className="relative z-10">
-                  <div className={`text-[8px] tracking-[0.3em] mb-1 ${results.veto_triggered ? 'text-red-400/70' : 'text-[#D4AF37]/70'}`}>OVERALL MATCH SCORE</div>
+                  <div className={`text-[8px] tracking-[0.3em] mb-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/70' : 'text-[#D4AF37]/70'}`}>OVERALL MATCH SCORE</div>
                   <div className="flex items-baseline gap-1.5">
-                    <span className={`text-4xl font-bold tabular-nums ${results.veto_triggered ? 'text-red-400' : 'text-[#D4AF37]'}`}>{results.fused_identity_score}</span>
-                    <span className={`text-lg font-bold ${results.veto_triggered ? 'text-red-400/60' : 'text-[#D4AF37]/60'}`}>%</span>
+                    <span className={`text-4xl font-bold tabular-nums ${(results.fused_identity_score < 40.0) ? 'text-red-400' : 'text-[#D4AF37]'}`}>{results.fused_identity_score}</span>
+                    <span className={`text-lg font-bold ${(results.fused_identity_score < 40.0) ? 'text-red-400/60' : 'text-[#D4AF37]/60'}`}>%</span>
                   </div>
                   {/* Score bar */}
                   <div className="mt-2 h-1.5 w-full bg-[#111] rounded-full overflow-hidden">
@@ -1050,10 +1054,10 @@ export default function Home() {
                     />
                   </div>
                   {/* Human-readable interpretation */}
-                  <div className={`text-[10px] mt-2 font-medium ${results.veto_triggered ? 'text-red-300/80' : results.fused_identity_score > 80 ? 'text-emerald-300/80' : results.fused_identity_score > 60 ? 'text-amber-300/80' : 'text-red-300/80'}`}>
+                  <div className={`text-[10px] mt-2 font-medium ${(results.fused_identity_score < 40.0) ? 'text-red-300/80' : results.fused_identity_score > 80 ? 'text-emerald-300/80' : results.fused_identity_score > 60 ? 'text-amber-300/80' : 'text-red-300/80'}`}>
                     {results.fused_identity_score > 85 ? 'Very strong facial similarity detected' : results.fused_identity_score > 70 ? 'Moderate facial similarity detected' : results.fused_identity_score > 50 ? 'Weak similarity — likely different people' : 'Very low similarity — different people'}
                   </div>
-                  <div className={`text-[8px] mt-1 ${results.veto_triggered ? 'text-red-400/40' : 'text-[#D4AF37]/40'}`}>Combined from 3 independent analysis methods below</div>
+                  <div className={`text-[8px] mt-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/40' : 'text-[#D4AF37]/40'}`}>Combined from {results.marks_matched ? '4' : '3'} independent analysis methods below</div>
                 </div>
               </div>
 
@@ -1128,29 +1132,56 @@ export default function Home() {
                   </div>
                   <div className="text-[7px] text-gray-700 mt-1 tracking-wide">15% of overall score · LBP texture analysis</div>
                 </div>
+
+                {/* Tier 4: Mark Correspondence (Only if marks found) */}
+                {results.marks_matched !== undefined && results.marks_matched > 0 && results.mark_correspondence_score !== undefined && results.mark_correspondence_score !== null && (
+                  <div className="p-2.5 border-t border-[#1a1a1a]">
+                    <div className="flex items-baseline justify-between">
+                      <h3 className="text-[#D4AF37] text-[9px] tracking-wider font-bold">MARK CORRESPONDENCE</h3>
+                      <span className={`text-lg font-bold tabular-nums ${results.mark_correspondence_score > 80 ? 'text-[#D4AF37]' : 'text-amber-400'}`}>{results.mark_correspondence_score}%</span>
+                    </div>
+                    <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden border border-[#D4AF37]/20">
+                      <div
+                        className={`h-full rounded-full ${results.mark_correspondence_score > 80 ? 'bg-[#D4AF37]/90' : 'bg-amber-500/70'}`}
+                        style={{ width: `${Math.min(100, results.mark_correspondence_score)}%` }}
+                      />
+                    </div>
+                    <p className="text-[9px] text-[#D4AF37]/70 mt-1.5 leading-relaxed">Direct mapping of unique scars, moles, and birthmarks. High correspondence provides extremely strong physical proof of identity, bypassing standard structural failure limits.</p>
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <div className={`w-1 h-1 rounded-full ${results.mark_correspondence_score > 80 ? 'bg-[#D4AF37]' : 'bg-amber-500'}`}></div>
+                      <span className={`text-[8px] italic ${results.mark_correspondence_score > 80 ? 'text-[#D4AF37]/80' : 'text-amber-500/70'}`}>
+                        {results.marks_matched} corresponding marks matched across both faces
+                      </span>
+                    </div>
+                    <div className="text-[7px] text-[#D4AF37]/50 mt-1 tracking-wide">Score Boost · Exponential FAR Reduction · Error Margin Recovery</div>
+                  </div>
+                )}
               </div>
 
               {/* ═══ VERDICT ═══ */}
-              <div className={`rounded-lg overflow-hidden border-2 ${results.veto_triggered ? 'border-red-700/60' : 'border-emerald-700/40'}`}>
-                <div className={`px-3 py-1.5 text-[9px] tracking-[0.15em] font-bold ${results.veto_triggered ? 'bg-red-900/40 text-red-300' : 'bg-emerald-900/30 text-emerald-300'}`}>
-                  {results.veto_triggered ? '✗ VERDICT: NOT A MATCH' : '✓ VERDICT: MATCH DETECTED'}
+              <div className={`rounded-lg overflow-hidden border-2 ${(results.fused_identity_score < 40.0) ? 'border-red-700/60' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? 'border-amber-700/50' : 'border-emerald-700/40'}`}>
+                <div className={`px-3 py-1.5 text-[9px] tracking-[0.15em] font-bold ${(results.fused_identity_score < 40.0) ? 'bg-red-900/40 text-red-300' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? 'bg-amber-900/40 text-amber-400' : 'bg-emerald-900/30 text-emerald-300'}`}>
+                  {(results.fused_identity_score < 40.0) ? '✗ VERDICT: NOT A MATCH' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '⚠ VERDICT: CONDITIONAL MATCH' : '✓ VERDICT: MATCH DETECTED'}
                 </div>
-                <div className={`px-3 py-3 ${results.veto_triggered ? 'bg-red-950/20' : 'bg-[#0d0d0e]'}`}>
-                  <p className={`text-[11px] leading-relaxed ${results.veto_triggered ? 'text-red-300/90' : 'text-gray-200'}`}>
-                    {results.veto_triggered
-                      ? 'The primary face recognition test scored below the minimum threshold. These are different people. The overall score is too low to support a match regardless of other factors.'
-                      : results.conclusion
-                    }
+                <div className={`px-3 py-3 ${(results.fused_identity_score < 40.0) ? 'bg-red-950/20' : 'bg-[#0d0d0e]'}`}>
+                  <p className={`text-[11px] leading-relaxed ${(results.fused_identity_score < 40.0) ? 'text-red-300/90' : 'text-gray-200'}`}>
+                    {results.conclusion}
                   </p>
-                  {results.veto_triggered && (
+                  {(results.fused_identity_score < 40.0) && (
                     <div className="mt-2 px-2 py-1.5 bg-red-950/30 rounded border border-red-900/30">
                       <p className="text-[8px] text-red-400/70 leading-relaxed">The face recognition AI returned a similarity of {results.structural_score}%, which is below the 40% minimum required to consider a potential match. This is an automatic exclusion.</p>
                     </div>
                   )}
-                  {!results.veto_triggered && (
+                  {(results.veto_triggered && results.fused_identity_score >= 40.0) && (
+                    <div className="mt-2 flex items-center gap-1.5 px-2 py-1.5 bg-amber-950/20 rounded border border-amber-900/30">
+                      <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></div>
+                      <span className="text-[9px] text-amber-500/80 tracking-wider">ArcFace veto overridden by independent physical scar/mark verification.</span>
+                    </div>
+                  )}
+                  {(!results.veto_triggered && results.fused_identity_score >= 40.0) && (
                     <div className="mt-2 flex items-center gap-1.5">
                       <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></div>
-                      <span className="text-[9px] text-emerald-500/70 tracking-wider">No discrepancies found across all 3 tests</span>
+                      <span className="text-[9px] text-emerald-500/70 tracking-wider">No discrepancies found across structural tests</span>
                     </div>
                   )}
                 </div>
