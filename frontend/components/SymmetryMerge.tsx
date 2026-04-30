@@ -233,8 +233,10 @@ export default function SymmetryMerge({
     return { x, y, lr, isMatched: getIsMatched(m, side) };
   };
 
-  const probeMarksRaw = results?.probe_data?.marks || results?.correspondences?.map((c: any) => c.probe_pt) || [];
-  const galleryMarksRaw = results?.gallery_data?.marks || results?.correspondences?.map((c: any) => c.gallery_pt) || [];
+  const probeMarksRaw = results?.probe_data?.marks || [];
+  const galleryMarksRaw = results?.gallery_data?.marks || [];
+
+  console.log("STRICT MARKS - LEFT:", results?.probe_data?.marks, "RIGHT:", results?.gallery_data?.marks);
 
   const probePoints = probeMarksRaw.map((m: any) => mapPoint(m, 'probe'));
   const galleryPoints = galleryMarksRaw.map((m: any) => mapPoint(m, 'gallery'));
