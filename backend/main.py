@@ -19,6 +19,7 @@ from google.cloud import storage
 from google.cloud import kms
 from cryptography.fernet import Fernet
 from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -48,6 +49,15 @@ app = FastAPI(
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    import traceback
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error", "error": str(exc)}
+    )
 
 # Preload Tier 1 Neural Ensemble models at module init to avoid per-request cold start
 print("Starting Tier 1 Neural Ensemble model preload...", flush=True)
@@ -2035,7 +2045,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         pipeline_version=PIPELINE_VERSION,
         dependency_versions=DEPENDENCY_VERSIONS,
         # Bayesian LR Forensic Audit Trail
-        lr_arcface=round(lr_arcface, 6),
+        lr_arcface=round(lr_ensemble, 6),
         lr_marks=round(lr_marks, 6),
         lr_total=round(lr_total, 6),
         posterior_probability=round(posterior, 8),
@@ -2402,7 +2412,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         pipeline_version=PIPELINE_VERSION,
         dependency_versions=DEPENDENCY_VERSIONS,
         # Bayesian LR Forensic Audit Trail
-        lr_arcface=round(lr_arcface, 6),
+        lr_arcface=round(lr_ensemble, 6),
         lr_marks=round(lr_marks, 6),
         lr_total=round(lr_total, 6),
         posterior_probability=round(posterior, 8),
