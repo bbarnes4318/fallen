@@ -1,7 +1,7 @@
 import os
 import pickle
 os.environ["TF_USE_LEGACY_KERAS"] = "1"  # Force Keras 2 — required for DeepFace/ArcFace
-
+os.environ["DEEPFACE_HOME"] = "/app"     # Force DeepFace to use the pre-baked weights directory
 import cv2
 import numpy as np
 import urllib.request
