@@ -2005,7 +2005,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     stats = calculate_statistical_confidence(structural_sim)
 
     # Deep Forensic Telemetry (hash of 512-D ArcFace vector)
-    probe_vector_hash = compute_vector_hash(embed_probe)
+    probe_vector_hash = compute_vector_hash(ensemble_probe["arcface"])
     probe_alignment = compute_alignment_variance(probe_aligned)
 
     audit = AuditLog(
