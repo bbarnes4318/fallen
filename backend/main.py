@@ -429,6 +429,15 @@ TIER4_CALIBRATION = None
 def _load_tier4_calibration():
     """Load the Tier 4 population model from local file or GCS."""
     import json as _json
+    import sys
+    import numpy as np
+    
+    # Monkey-patch to allow unpickling numpy 2.x models in numpy 1.x environments
+    if "numpy.core.numeric" in sys.modules and "numpy._core.numeric" not in sys.modules:
+        sys.modules["numpy._core"] = sys.modules["numpy.core"]
+        sys.modules["numpy._core.numeric"] = sys.modules["numpy.core.numeric"]
+        sys.modules["numpy._core.multiarray"] = sys.modules["numpy.core.multiarray"]
+
     bucket_name = os.getenv("BUCKET_NAME", "hoppwhistle-facial-uploads")
     gcs_path = "calibration/tier4_population_model.pkl"
 

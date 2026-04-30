@@ -2,11 +2,11 @@ fastapi==0.110.0
 uvicorn==0.27.1
 pydantic==2.6.3
 requests==2.31.0
-opencv-python-headless
-numpy>=2.0.0
-scikit-image
-mediapipe>=0.10.14
-scipy
+opencv-python-headless==4.9.0.80
+numpy==1.26.4
+scikit-image==0.22.0
+mediapipe==0.10.11
+scipy==1.12.0
 sqlalchemy==2.0.28
 psycopg2-binary==2.9.9
 pgvector==0.2.5
