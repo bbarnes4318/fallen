@@ -35,6 +35,10 @@ RUN mkdir -p /app/.deepface/weights && \
 # Copy the rest of the application code
 COPY . .
 
+# Download missing MiniFASNetV2.onnx for anti-spoofing
+RUN mkdir -p models && \
+    curl -L -o models/MiniFASNetV2.onnx https://github.com/facenox/face-antispoof-onnx/raw/main/models/MiniFASNetV2.onnx
+
 # Expose the port Cloud Run expects
 EXPOSE 8080
 

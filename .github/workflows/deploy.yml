@@ -123,6 +123,7 @@ jobs:
             STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
             JWT_SECRET=${{ secrets.JWT_SECRET }}
             OPERATOR_PASSWORD=${{ secrets.OPERATOR_PASSWORD }}
+            FRONTEND_URL=https://facial-frontend-vkd6b6ijxa-uk.a.run.app
 
       - name: Deploy Wikimedia Crawler Job
         run: |
