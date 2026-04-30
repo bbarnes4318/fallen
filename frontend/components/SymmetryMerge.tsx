@@ -323,22 +323,65 @@ export default function SymmetryMerge({
         </div>
       </div>
 
-      {/* ── Verdict Banner & Marks List ── */}
+      {/* ── High-Density Telemetry HUD ── */}
       {results && (
-        <div className={`mb-2 p-2 rounded border font-mono text-[10px] shrink-0 ${results.veto_triggered ? 'bg-red-950/40 border-red-900 text-red-400' : (results.fused_identity_score >= 40.0 ? 'bg-[#D4AF37]/10 border-[#D4AF37]/30 text-[#D4AF37]' : 'bg-[#111] border-[#333] text-gray-400')}`}>
-          <div className="flex justify-between items-center">
-            <span className="font-bold text-xs tracking-wider">
-              {results.veto_triggered ? 'VERDICT: MISMATCH (ARCFACE VETO)' : (results.fused_identity_score >= 40.0 ? 'VERDICT: MATCH' : 'VERDICT: INCONCLUSIVE')}
-            </span>
-            <span className="tracking-widest">FUSED SCORE: {results.fused_identity_score.toFixed(2)}%</span>
+        <div className="mb-2 flex flex-col gap-[2px] shrink-0 font-mono text-[10px] uppercase select-none">
+          {/* Provenance Veto Row */}
+          {results.failed_provenance_veto && (
+            <div className="px-2 py-1.5 flex justify-between items-center bg-[#1a0005] border border-[#5a0015] text-[#ff2040]">
+              <span className="font-bold tracking-widest text-xs">DEEPFAKE VETO: SYNTHETIC PROVENANCE DETECTED</span>
+              <span className="tracking-widest font-bold opacity-90">FUSION ABORTED</span>
+            </div>
+          )}
+
+          {/* Main Verdict Row */}
+          {!results.failed_provenance_veto && (
+            <div className={`px-2 py-1.5 flex justify-between items-center border ${results.veto_triggered ? 'bg-[#1a0005] border-[#5a0015] text-[#ff2040]' : (results.fused_identity_score >= 40.0 ? 'bg-[#111100] border-[#D4AF37]/40 text-[#D4AF37]' : 'bg-[#0a0a0a] border-[#333] text-gray-400')}`}>
+              <span className="font-bold tracking-wider text-xs">
+                {results.veto_triggered ? 'VERDICT: MISMATCH (ARCFACE VETO)' : (results.fused_identity_score >= 40.0 ? 'VERDICT: MATCH' : 'VERDICT: INCONCLUSIVE')}
+              </span>
+              <span className="tracking-widest font-bold">FUSED SCORE: {results.fused_identity_score?.toFixed(2)}%</span>
+            </div>
+          )}
+
+          {/* Telemetry Data Grid */}
+          <div className="grid grid-cols-2 gap-[2px]">
+            {/* Provenance Module */}
+            <div className={`px-2 py-1 border flex justify-between items-center ${results.failed_provenance_veto ? 'bg-[#1a0005] border-[#5a0015] text-[#ff2040]' : 'bg-[#050505] border-[#222] text-gray-500'}`}>
+               <span className="tracking-widest text-[9px]">SYNTH_ANOMALY:</span>
+               <span className="font-bold text-gray-300">{results.synthetic_anomaly_score !== undefined ? results.synthetic_anomaly_score.toFixed(4) : 'N/A'}</span>
+            </div>
+
+            {/* Occlusion Module */}
+            <div className="px-2 py-1 border bg-[#050505] border-[#222] text-gray-500 flex justify-between items-center">
+              <span className="tracking-widest text-[9px]">OCCLUSION (RATIOS):</span>
+              <span className="font-bold text-gray-300">
+                {results.occlusion_percentage !== undefined ? `${(results.occlusion_percentage).toFixed(1)}% (${results.effective_geometric_ratios_used ?? 0} ACTIVE)` : 'N/A'}
+              </span>
+            </div>
           </div>
-          {results.correspondences && results.correspondences.length > 0 && (
-            <div className="flex gap-2 overflow-x-auto mt-2 pb-1 custom-scrollbar">
-              {results.correspondences.map((c: any, i: number) => (
-                <div key={i} className={`flex-shrink-0 px-2 py-1 border rounded bg-black/50 tracking-wider ${results.veto_triggered ? 'border-red-900/50' : 'border-[#D4AF37]/30'}`}>
-                  MARK {i+1} <span className="opacity-50 ml-1">LR:</span> {c.lr.toFixed(1)}
+
+          {/* Dynamic Lists (Occlusions & Marks) */}
+          {(results.occluded_regions?.length > 0 || results.correspondences?.length > 0) && (
+            <div className="flex flex-col gap-[2px]">
+              {results.occluded_regions && results.occluded_regions.length > 0 && (
+                <div className="flex gap-[2px] flex-wrap">
+                  {results.occluded_regions.map((region: string, i: number) => (
+                    <div key={`occ-${i}`} className="px-1.5 py-0.5 border border-[#8a4000]/40 bg-[#3a1500]/20 text-[#ff8800]/80 tracking-widest text-[9px]">
+                      MASKED: {region}
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
+              {results.correspondences && results.correspondences.length > 0 && (
+                <div className="flex gap-[2px] flex-wrap">
+                  {results.correspondences.map((c: any, i: number) => (
+                    <div key={`corr-${i}`} className={`px-1.5 py-0.5 border bg-[#050505] tracking-widest text-[9px] ${results.veto_triggered || results.failed_provenance_veto ? 'border-[#5a0015] text-[#ff2040]/70' : 'border-[#D4AF37]/30 text-[#D4AF37]/80'}`}>
+                      MARK {i+1} <span className="opacity-50 mx-0.5">LR:</span>{c.lr.toFixed(1)}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

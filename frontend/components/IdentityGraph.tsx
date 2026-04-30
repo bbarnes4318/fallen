@@ -105,6 +105,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
   const [loading, setLoading] = useState(true);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [showLegend, setShowLegend] = useState(true);
+  const [hoverNode, setHoverNode] = useState<GraphNode | null>(null);
 
   // ── Target selection for 1:1 comparison ──
   const [targetA, setTargetA] = useState<GraphNode | null>(null);  // Gallery
@@ -271,42 +272,63 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
             ctx.arc(x, y, radius, 0, 2 * Math.PI);
             ctx.closePath();
             ctx.clip();
+            // Desaturate thumbnails slightly for a more institutional look
+            ctx.filter = 'grayscale(30%) contrast(110%)';
             ctx.drawImage(img, x - radius, y - radius, radius * 2, radius * 2);
             ctx.restore();
 
             // Ring border
             ctx.beginPath();
             ctx.arc(x, y, radius + 1, 0, 2 * Math.PI);
-            ctx.strokeStyle = isGold ? '#D4AF37' : '#555555';
-            ctx.lineWidth = isGold ? 2.5 : 1.5;
-            if (isGold) {
-              ctx.shadowColor = '#D4AF37';
-              ctx.shadowBlur = 10;
-            }
+            ctx.strokeStyle = isGold ? 'rgba(212,175,55,0.7)' : 'rgba(100,105,115,0.6)';
+            ctx.lineWidth = isGold ? 1.5 : 1;
             ctx.stroke();
-            ctx.shadowColor = 'transparent';
-            ctx.shadowBlur = 0;
           } else {
             // ── Fallback: colored dot (when no thumbnail) ──
-            const dotRadius = isGold ? 7 : 5;
-            if (isGold) { ctx.shadowColor = '#D4AF37'; ctx.shadowBlur = 12; }
+            const dotRadius = isGold ? 6 : 4;
             ctx.beginPath();
             ctx.arc(x, y, dotRadius, 0, 2 * Math.PI);
-            ctx.fillStyle = isGold ? '#D4AF37' : '#666666';
+            ctx.fillStyle = isGold ? 'rgba(212,175,55,0.4)' : 'rgba(50,55,65,0.8)';
             ctx.fill();
-            ctx.strokeStyle = isGold ? '#D4AF37' : '#444444';
+            ctx.strokeStyle = isGold ? 'rgba(212,175,55,0.8)' : 'rgba(120,125,135,0.6)';
             ctx.lineWidth = 1;
             ctx.stroke();
-            ctx.shadowColor = 'transparent';
-            ctx.shadowBlur = 0;
           }
 
-          // Name label
-          ctx.font = '3.5px Courier New';
-          ctx.fillStyle = isGold ? '#D4AF37' : '#999999';
-          ctx.textAlign = 'left';
-          ctx.textBaseline = 'middle';
-          ctx.fillText((node.name as string) ?? (node.id as string), x + radius + 4, y);
+          // Render Tooltip on Hover
+          if (hoverNode && hoverNode.id === node.id) {
+            ctx.save();
+            ctx.font = '5px "JetBrains Mono", Courier, monospace';
+            const hashText = `HASH: ${node.id}`;
+            const nameText = `ID:   ${node.name || 'UNKNOWN'}`;
+            const m1 = ctx.measureText(hashText);
+            const m2 = ctx.measureText(nameText);
+            const tw = Math.max(m1.width, m2.width) + 8;
+            const th = 14;
+            
+            // Tooltip Background
+            ctx.fillStyle = 'rgba(5, 10, 16, 0.95)';
+            ctx.fillRect(x + radius + 4, y - th / 2, tw, th);
+            
+            // Tooltip Border
+            ctx.strokeStyle = isGold ? 'rgba(212,175,55,0.8)' : 'rgba(120,130,140,0.8)';
+            ctx.lineWidth = 0.5;
+            ctx.strokeRect(x + radius + 4, y - th / 2, tw, th);
+            
+            // Tooltip Text
+            ctx.fillStyle = isGold ? '#D4AF37' : '#E0E0E0';
+            ctx.fillText(nameText, x + radius + 8, y - th / 2 + 5);
+            ctx.fillStyle = '#888888';
+            ctx.fillText(hashText, x + radius + 8, y - th / 2 + 11);
+            ctx.restore();
+          } else {
+            // Standard muted label
+            ctx.font = '3.5px "JetBrains Mono", Courier, monospace';
+            ctx.fillStyle = isGold ? 'rgba(212,175,55,0.6)' : 'rgba(120,130,140,0.5)';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillText((node.name as string) ?? (node.id as string), x + radius + 4, y);
+          }
         }}
         nodePointerAreaPaint={(node: Record<string, unknown>, color: string, ctx: CanvasRenderingContext2D) => {
           const x = (node.x as number) ?? 0;
@@ -316,12 +338,13 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
           ctx.fillStyle = color;
           ctx.fill();
         }}
-        linkColor={(link: Record<string, unknown>) => ((link.value as number) > 95 ? '#881111' : '#2a2a2a')}
-        linkWidth={(link: Record<string, unknown>) => ((link.value as number) > 95 ? 1.8 : 0.4)}
+        linkColor={(link: Record<string, unknown>) => ((link.value as number) > 95 ? 'rgba(212,175,55,0.7)' : 'rgba(80,90,100,0.4)')}
+        linkWidth={(link: Record<string, unknown>) => ((link.value as number) > 95 ? 1.5 : 0.6)}
         linkDirectionalParticles={1}
-        linkDirectionalParticleWidth={(link: Record<string, unknown>) => (link.value as number) > 95 ? 2 : 0}
-        linkDirectionalParticleColor={() => '#881111'}
+        linkDirectionalParticleWidth={(link: Record<string, unknown>) => (link.value as number) > 95 ? 1.5 : 0}
+        linkDirectionalParticleColor={() => 'rgba(212,175,55,0.8)'}
         onNodeClick={(node: Record<string, unknown>) => setSelectedNode(node as unknown as GraphNode)}
+        onNodeHover={(node: Record<string, unknown> | null) => setHoverNode(node as unknown as GraphNode | null)}
         cooldownTicks={150}
         d3AlphaDecay={0.015}
         d3VelocityDecay={0.25}

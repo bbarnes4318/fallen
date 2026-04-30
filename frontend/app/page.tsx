@@ -464,7 +464,7 @@ export default function Home() {
   // ─── SOVEREIGN IDENTITY GATEWAY (Landing Page) ───────
   if (!token) {
     return (
-      <main className="min-h-screen w-screen bg-[#050A10] text-[#E0E0E0] selection:bg-[#D4AF37] selection:text-black overflow-y-auto overflow-x-hidden">
+      <main className="min-h-screen w-full bg-[#050A10] text-[#E0E0E0] selection:bg-[#D4AF37] selection:text-black overflow-y-auto overflow-x-hidden">
 
         {/* ═══════════════════════════════════════════════
             SECTION 1: HERO — Sovereign Identity Gateway
@@ -776,7 +776,7 @@ export default function Home() {
 
   // ─── MAIN TERMINAL ────────────────────────────────────
   return (
-    <main className="h-screen w-screen overflow-hidden bg-[#0A0A0B] text-[#E0E0E0] font-mono selection:bg-[#D4AF37] selection:text-black flex flex-col">
+    <main className="h-screen w-full overflow-hidden bg-[#0A0A0B] text-[#E0E0E0] font-mono selection:bg-[#D4AF37] selection:text-black flex flex-col">
       
       {/* ── Top Bar ── */}
       <header className="shrink-0 flex justify-between items-center px-5 py-2.5 border-b border-[#1a1a1a]">
