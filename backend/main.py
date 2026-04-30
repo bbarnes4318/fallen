@@ -1893,7 +1893,7 @@ def analyze_frequency_domain(image: np.ndarray) -> float:
     mean_intensity = float(np.mean(high_freq))
     
     anomaly_score = (peak_intensity - mean_intensity) / (mean_intensity + 1e-8)
-    normalized_score = max(0.0, min(1.0, anomaly_score * 0.12))
+    normalized_score = max(0.0, min(1.0, anomaly_score * 0.4))
     return normalized_score
 
 @app.post("/verify/fuse", response_model=VerificationResponse)
