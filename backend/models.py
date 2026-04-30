@@ -129,6 +129,10 @@ class VerificationEvent(Base):
     lr_total = Column(Float, nullable=True)
     posterior_probability = Column(Float, nullable=True)
 
+    # Phase 7: Synthetic Provenance Veto (Deepfake Detection)
+    synthetic_anomaly_score = Column(Float, nullable=True)
+    failed_provenance_veto = Column(Boolean, nullable=True, default=False)
+
     # Composite forensic receipt (GCS URI of stitched PNG)
     receipt_url = Column(Text, nullable=True)
 

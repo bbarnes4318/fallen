@@ -356,6 +356,9 @@ class AuditLog(BaseModel):
     pose_corrected_3d: Optional[bool] = None
     probe_pose_angles: Optional[dict] = None
     gallery_pose_angles: Optional[dict] = None
+    occlusion_percentage: Optional[float] = None
+    occluded_regions: Optional[list] = None
+    effective_geometric_ratios_used: Optional[int] = None
     # Temporal & Spectral Telemetry (Tier 1/3)
     estimated_temporal_delta: Optional[float] = None
     cross_spectral_correction_applied: Optional[bool] = None
@@ -1865,6 +1868,34 @@ def generate_upload_urls(req: UploadUrlsRequest, _: dict = Depends(verify_jwt)):
         print(f"GCS Error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to generate upload URLs: {str(e)}")
 
+def analyze_frequency_domain(image: np.ndarray) -> float:
+    """
+    Phase 7: Synthetic Provenance Veto.
+    Performs FFT frequency domain analysis to detect checkerboard artifacts 
+    (high-frequency grid anomalies) inherent to AI upscaling networks.
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    f = np.fft.fft2(gray)
+    fshift = np.fft.fftshift(f)
+    magnitude_spectrum = 20 * np.log(np.abs(fshift) + 1e-8)
+    
+    h, w = magnitude_spectrum.shape
+    cy, cx = h // 2, w // 2
+    Y, X = np.ogrid[:h, :w]
+    dist_from_center = np.sqrt((X - cx)**2 + (Y - cy)**2)
+    mask = dist_from_center > (min(h, w) * 0.15)
+    
+    high_freq = magnitude_spectrum[mask]
+    if len(high_freq) == 0:
+        return 0.0
+        
+    peak_intensity = float(np.max(high_freq))
+    mean_intensity = float(np.mean(high_freq))
+    
+    anomaly_score = (peak_intensity - mean_intensity) / (mean_intensity + 1e-8)
+    normalized_score = max(0.0, min(1.0, anomaly_score * 0.12))
+    return normalized_score
+
 @app.post("/verify/fuse", response_model=VerificationResponse)
 @limiter.limit("5/minute")
 def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = Depends(verify_jwt)):
@@ -1872,6 +1903,40 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     gallery_img, gallery_file_hash = fetch_image_from_url(payload.gallery_url)
     probe_img, probe_file_hash = fetch_image_from_url(payload.probe_url)
     
+    # Phase 7: Synthetic Provenance Gatekeeper
+    SYNTHETIC_ARTIFACT_THRESHOLD = 0.85
+    gallery_anomaly = analyze_frequency_domain(gallery_img)
+    probe_anomaly = analyze_frequency_domain(probe_img)
+    max_anomaly = max(gallery_anomaly, probe_anomaly)
+    
+    if max_anomaly > SYNTHETIC_ARTIFACT_THRESHOLD:
+        ledger_session = SessionLocal()
+        try:
+            event = VerificationEvent(
+                probe_hash=probe_file_hash,
+                gallery_hash=gallery_file_hash,
+                fused_score_x100=0,
+                conclusion="VETO: Synthetic Media Detected",
+                pipeline_version=PIPELINE_VERSION,
+                veto_triggered=True,
+                failed_provenance_veto=True,
+                synthetic_anomaly_score=max_anomaly
+            )
+            ledger_session.add(event)
+            ledger_session.commit()
+        except Exception as e:
+            print(f"Failed to write provenance veto to ledger: {e}")
+            ledger_session.rollback()
+        finally:
+            ledger_session.close()
+            
+        return JSONResponse(status_code=200, content={
+            "status": "success", 
+            "conclusion": "VETO: Synthetic Media Detected", 
+            "fused_score": 0,
+            "synthetic_anomaly_score": max_anomaly
+        })
+
     # 1.5 Presentation Attack Detection (Liveness Firewall)
     if payload.require_liveness:
         liveness_result = detect_liveness(probe_img)
