@@ -2021,8 +2021,20 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     gallery_wireframe = generate_wireframe_hud(gallery_aligned, gallery_landmarks)
     probe_wireframe = generate_wireframe_hud(probe_aligned, probe_landmarks)
 
-    # Statistical confidence from Tier-1 raw cosine
+    # Statistical confidence from Tier-1 raw cosine (baseline)
     stats = calculate_statistical_confidence(structural_sim)
+    
+    # Upgrade statistical confidence to reflect the final Bayesian Posterior
+    bayesian_far = 1.0 - posterior
+    if bayesian_far < 1e-7:
+        stats["false_acceptance_rate"] = "< 1 in 10,000,000"
+        stats["statistical_certainty"] = f"{(posterior * 100):.6f}%"
+    elif bayesian_far >= 0.60:  # Maps to a fused_score < 40.0
+        stats["false_acceptance_rate"] = "DIFFERENT IDENTITIES"
+        stats["statistical_certainty"] = "0% — Non-Match"
+    else:
+        stats["false_acceptance_rate"] = f"1 in {int(1.0 / bayesian_far):,}"
+        stats["statistical_certainty"] = f"{(posterior * 100):.6f}%"
 
     # Deep Forensic Telemetry (hash of 512-D ArcFace vector)
     probe_vector_hash = compute_vector_hash(ensemble_probe[0])
