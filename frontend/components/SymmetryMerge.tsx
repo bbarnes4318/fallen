@@ -3,11 +3,7 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 
 interface SymmetryMergeProps {
-  galleryImageSrc: string;
-  probeImageSrc: string;
-  deltaImageSrc?: string;
-  galleryWireframeSrc?: string;
-  probeWireframeSrc?: string;
+  results: any | null;
   isXrayMode?: boolean;
 }
 
@@ -59,7 +55,9 @@ function drawPane(
   borderColor?: string,
   baseOpacity?: number,
   overlayOpacity?: number,
-  xrayFilter?: boolean
+  overlayOpacity?: number,
+  xrayFilter?: boolean,
+  points?: {x: number, y: number, lr: number}[]
 ) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -109,6 +107,20 @@ function drawPane(
     ctx.globalAlpha = 1;
   }
 
+  if (points && points.length > 0) {
+    points.forEach(p => {
+      const px = p.x * iw;
+      const py = p.y * ih;
+      ctx.beginPath();
+      ctx.arc(px, py, Math.max(2, 4 / scale), 0, 2 * Math.PI);
+      ctx.fillStyle = 'rgba(212, 175, 55, 0.9)'; // Gold color for marks
+      ctx.fill();
+      ctx.lineWidth = 1.5 / scale;
+      ctx.strokeStyle = '#111';
+      ctx.stroke();
+    });
+  }
+
   if (borderColor) {
     ctx.globalAlpha = 1;
     ctx.filter = 'none';
@@ -127,13 +139,14 @@ function drawPane(
  *   Right = Gallery (Vault Match / Known Alias)
  */
 export default function SymmetryMerge({
-  galleryImageSrc,
-  probeImageSrc,
-  deltaImageSrc,
-  galleryWireframeSrc,
-  probeWireframeSrc,
+  results,
   isXrayMode = false,
 }: SymmetryMergeProps) {
+  const galleryImageSrc = results?.gallery_aligned_b64;
+  const probeImageSrc = results?.probe_aligned_b64;
+  const deltaImageSrc = results?.scar_delta_b64;
+  const galleryWireframeSrc = results?.gallery_wireframe_b64;
+  const probeWireframeSrc = results?.probe_wireframe_b64;
   const [mode, setMode] = useState<ViewMode>('aligned');
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -184,15 +197,27 @@ export default function SymmetryMerge({
   const baseOpacity = isXrayMode && hasOverlay ? 0.1 : 1.0;
   const overlayOpacity = isXrayMode && hasOverlay ? 1.0 : (mode === 'delta' ? 0.7 : 0.85);
 
+  const probePoints = results?.correspondences?.map((c: any) => ({
+    x: c.probe_pt[0],
+    y: c.probe_pt[1],
+    lr: c.lr
+  })) || [];
+
+  const galleryPoints = results?.correspondences?.map((c: any) => ({
+    x: c.gallery_pt[0],
+    y: c.gallery_pt[1],
+    lr: c.lr
+  })) || [];
+
   // Draw dual panes — LEFT = PROBE, RIGHT = GALLERY (both get delta overlay in delta mode)
   useEffect(() => {
     if (!imagesReady || mode === 'overlap') return;
 
     if (leftCanvasRef.current && probeImg) {
-      drawPane(leftCanvasRef.current, probeImg, getLeftOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode);
+      drawPane(leftCanvasRef.current, probeImg, getLeftOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, probePoints);
     }
     if (rightCanvasRef.current && galleryImg) {
-      drawPane(rightCanvasRef.current, galleryImg, getRightOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode);
+      drawPane(rightCanvasRef.current, galleryImg, getRightOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, galleryPoints);
     }
   });
 
@@ -201,10 +226,10 @@ export default function SymmetryMerge({
     if (!imagesReady || mode !== 'overlap') return;
 
     if (overlapLeftRef.current && probeImg) {
-      drawPane(overlapLeftRef.current, probeImg, null, zoom, pan, undefined, undefined, undefined, isXrayMode);
+      drawPane(overlapLeftRef.current, probeImg, null, zoom, pan, undefined, undefined, undefined, isXrayMode, probePoints);
     }
     if (overlapRightRef.current && galleryImg) {
-      drawPane(overlapRightRef.current, galleryImg, null, zoom, pan, undefined, undefined, undefined, isXrayMode);
+      drawPane(overlapRightRef.current, galleryImg, null, zoom, pan, undefined, undefined, undefined, isXrayMode, galleryPoints);
     }
   });
 
@@ -298,6 +323,27 @@ export default function SymmetryMerge({
           </div>
         </div>
       </div>
+
+      {/* ── Verdict Banner & Marks List ── */}
+      {results && (
+        <div className={`mb-2 p-2 rounded border font-mono text-[10px] shrink-0 ${results.veto_triggered ? 'bg-red-950/40 border-red-900 text-red-400' : (results.fused_identity_score >= 40.0 ? 'bg-[#D4AF37]/10 border-[#D4AF37]/30 text-[#D4AF37]' : 'bg-[#111] border-[#333] text-gray-400')}`}>
+          <div className="flex justify-between items-center">
+            <span className="font-bold text-xs tracking-wider">
+              {results.veto_triggered ? 'VERDICT: MISMATCH (ARCFACE VETO)' : (results.fused_identity_score >= 40.0 ? 'VERDICT: MATCH' : 'VERDICT: INCONCLUSIVE')}
+            </span>
+            <span className="tracking-widest">FUSED SCORE: {results.fused_identity_score.toFixed(2)}%</span>
+          </div>
+          {results.correspondences && results.correspondences.length > 0 && (
+            <div className="flex gap-2 overflow-x-auto mt-2 pb-1 custom-scrollbar">
+              {results.correspondences.map((c: any, i: number) => (
+                <div key={i} className={`flex-shrink-0 px-2 py-1 border rounded bg-black/50 tracking-wider ${results.veto_triggered ? 'border-red-900/50' : 'border-[#D4AF37]/30'}`}>
+                  MARK {i+1} <span className="opacity-50 ml-1">LR:</span> {c.lr.toFixed(1)}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Dual-Pane Viewport ── */}
       {!imagesReady ? (

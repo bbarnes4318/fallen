@@ -91,6 +91,7 @@ export default function Home() {
     scar_delta_b64: string;
     gallery_wireframe_b64: string;
     probe_wireframe_b64: string;
+    correspondences?: any[];
     audit_log?: AuditLog;
   }
 
@@ -1055,11 +1056,7 @@ export default function Home() {
               </div>
               <div className={`flex-1 min-h-0 bg-[#0d0d0e] border rounded-lg p-2 ${(results.fused_identity_score < 40.0) ? 'border-red-900/50 shadow-[0_0_20px_rgba(180,0,30,0.15)]' : 'border-[#D4AF37]/30 shadow-[0_0_20px_rgba(212,175,55,0.08)]'}`}>
                 <SymmetryMerge
-                  galleryImageSrc={results.gallery_aligned_b64}
-                  probeImageSrc={results.probe_aligned_b64}
-                  deltaImageSrc={results.scar_delta_b64}
-                  galleryWireframeSrc={results.gallery_wireframe_b64}
-                  probeWireframeSrc={results.probe_wireframe_b64}
+                  results={results}
                   isXrayMode={isXrayMode}
                 />
               </div>

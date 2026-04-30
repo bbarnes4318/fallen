@@ -410,6 +410,7 @@ class VerificationResponse(BaseModel):
     marks_detected_gallery: int = 0
     marks_detected_probe: int = 0
     marks_matched: int = 0
+    correspondences: list = []
     audit_log: Optional[AuditLog] = None
 
 # ---------------------------------------------------------
@@ -2438,6 +2439,15 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         mark_lrs=[round(lr, 4) for lr in mark_result.get("mark_lrs", [])],
     )
 
+    # Build correspondences list for the UI
+    correspondences = []
+    for g_idx, p_idx, individual_lr in mark_result.get("matches", []):
+        correspondences.append({
+            "gallery_pt": valid_gallery_marks[g_idx]["centroid"],
+            "probe_pt": valid_probe_marks[p_idx]["centroid"],
+            "lr": individual_lr
+        })
+
     response = VerificationResponse(
         structural_score=round(tier1_score, 2),
         soft_biometrics_score=round(tier2_score, 2),
@@ -2456,6 +2466,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         marks_detected_gallery=mark_result["total_gallery"],
         marks_detected_probe=mark_result["total_probe"],
         marks_matched=mark_result["matched"],
+        correspondences=correspondences,
         audit_log=audit,
     )
 
