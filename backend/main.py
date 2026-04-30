@@ -1636,14 +1636,11 @@ def generate_scar_delta_map(
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
     true_scars = cv2.dilate(true_scars, kernel, iterations=1)
 
-    # 6. Build overlay canvas: darkened, desaturated gallery
-    hsv = cv2.cvtColor(img_gallery, cv2.COLOR_BGR2HSV)
-    hsv[:, :, 1] = (hsv[:, :, 1] * 0.3).astype(np.uint8)   # Desaturate
-    hsv[:, :, 2] = (hsv[:, :, 2] * 0.35).astype(np.uint8)   # Darken
-    canvas = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+    # 6. Build overlay canvas: transparent RGBA (so it can be overlaid without blending faces)
+    canvas = np.zeros((h, w, 4), dtype=np.uint8)
 
-    # Paint neon crimson (BGR: 30, 0, 180) where scars are detected
-    canvas[true_scars > 0] = (30, 0, 180)
+    # Paint neon crimson (BGRA: 30, 0, 180, 255) where scars are detected
+    canvas[true_scars > 0] = (30, 0, 180, 255)
 
     # 7. Overlay detected mark circles (from Tier 4 engine)
     if marks_gallery and mark_matches is not None:
@@ -1656,10 +1653,10 @@ def generate_scar_delta_map(
 
             if i in matched_gallery_indices:
                 # Green circle — matched mark (confirmed in both faces)
-                cv2.circle(canvas, (cx, cy), radius, (0, 220, 80), 2, cv2.LINE_AA)
+                cv2.circle(canvas, (cx, cy), radius, (0, 220, 80, 255), 2, cv2.LINE_AA)
             else:
                 # Yellow circle — unmatched mark (only in gallery)
-                cv2.circle(canvas, (cx, cy), radius, (0, 200, 220), 1, cv2.LINE_AA)
+                cv2.circle(canvas, (cx, cy), radius, (0, 200, 220, 255), 1, cv2.LINE_AA)
 
     # 8. Encode to base64 data URI
     _, buffer = cv2.imencode('.png', canvas)
