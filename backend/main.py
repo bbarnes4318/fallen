@@ -77,19 +77,22 @@ def on_startup():
     session = SessionLocal()
     try:
         import concurrent.futures
-        profiles = session.query(IdentityProfile).all()
+        # Query specific columns to detach from SQLAlchemy Session (Thread-safety)
+        profiles = session.query(IdentityProfile.user_id, IdentityProfile.encrypted_facial_embedding).all()
         
-        def _process_profile(p):
+        def _process_profile(data):
+            user_id, encrypted_emb = data
             try:
-                emb = decrypt_embedding(p.encrypted_facial_embedding)
-                return p.user_id, emb
+                emb = decrypt_embedding(encrypted_emb)
+                return user_id, emb
             except Exception as e:
-                print(f"Failed to decrypt embedding for {p.user_id}: {e}", flush=True)
+                print(f"Failed to decrypt embedding for {user_id}: {e}", flush=True)
                 return None
                 
         # Perform network-bound KMS decryption in parallel to prevent startup timeouts
         with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
-            results = executor.map(_process_profile, profiles)
+            # Eagerly evaluate the map to a list to prevent the `with` block from exiting prematurely
+            results = list(executor.map(_process_profile, profiles))
             
         for result in results:
             if result is not None:
@@ -210,6 +213,13 @@ def detect_liveness(image: np.ndarray) -> dict:
 # The Key Encryption Key (KEK) managed by GCP KMS
 KMS_KEY_NAME = os.getenv("KMS_KEY_NAME") or "projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek"
 
+_kms_client = None
+def get_kms_client():
+    global _kms_client
+    if _kms_client is None:
+        _kms_client = kms.KeyManagementServiceClient()
+    return _kms_client
+
 def encrypt_embedding(embedding: np.ndarray) -> bytes:
     """
     Application-Level Envelope Encryption.
@@ -226,7 +236,7 @@ def encrypt_embedding(embedding: np.ndarray) -> bytes:
         encrypted_payload = cipher.encrypt(payload_bytes)
         
         # 3. Encrypt the DEK with KMS
-        client = kms.KeyManagementServiceClient()
+        client = get_kms_client()
         encrypt_response = client.encrypt(request={'name': KMS_KEY_NAME, 'plaintext': dek})
         encrypted_dek = encrypt_response.ciphertext
         
@@ -253,7 +263,7 @@ def decrypt_embedding(packet: bytes) -> np.ndarray:
         encrypted_payload = packet[4+dek_len:]
         
         # 2. Decrypt DEK via KMS
-        client = kms.KeyManagementServiceClient()
+        client = get_kms_client()
         decrypt_response = client.decrypt(request={'name': KMS_KEY_NAME, 'ciphertext': encrypted_dek})
         dek = decrypt_response.plaintext
         
