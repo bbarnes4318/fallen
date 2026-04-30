@@ -1183,7 +1183,7 @@ export default function Home() {
                         style={{ width: `${Math.min(100, results.audit_log?.lr_marks != null ? Math.min(100, Math.log10(Math.max(1, results.audit_log.lr_marks)) * 10) : 0)}%` }}
                       />
                     </div>
-                    <p className="text-[9px] text-[#D4AF37]/70 mt-1.5 leading-relaxed">Bayesian Likelihood Ratio from {results.marks_matched} matching scars, moles, and birthmarks. Values {'>'} 1 support same-identity hypothesis; values {'>'} 10,000 constitute strong forensic evidence.</p>
+                    <p className="text-[8px] break-words text-[#D4AF37]/70 mt-1.5 leading-relaxed">Bayesian Likelihood Ratio from {results.marks_matched} matching scars, moles, and birthmarks. Values {'>'} 1 support same-identity hypothesis; values {'>'} 10,000 constitute strong forensic evidence.</p>
                     {/* Individual mark LR breakdown */}
                     {results.audit_log?.lr_arcface != null && (
                       <div className="mt-1.5 flex items-center gap-3 flex-wrap">
@@ -1223,18 +1223,18 @@ export default function Home() {
                   <p className={`text-[11px] leading-relaxed ${(results.fused_identity_score < 40.0) ? 'text-red-300/90' : 'text-gray-200'}`}>
                     {results.conclusion}
                   </p>
-                  {(results.fused_identity_score < 40.0) && (
+                  {(results.fused_identity_score < 40.0 && results.veto_triggered) && (
                     <div className="mt-2 px-2 py-1.5 bg-red-950/30 rounded border border-red-900/30">
-                      <p className="text-[8px] text-red-400/70 leading-relaxed">The face recognition AI returned a similarity of {results.structural_score}%, which is below the 40% minimum required to consider a potential match. This is an automatic exclusion.</p>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></div>
+                        <span className="text-[9px] text-red-500/80 tracking-wider font-bold">ARCFACE VETO TRIGGERED</span>
+                      </div>
+                      <p className="text-[8px] text-red-400/70 leading-relaxed break-words">Structural similarity fell below threshold. This is an automatic exclusion. Any subsequent Bayesian mark evidence has been overruled.</p>
                     </div>
                   )}
-                  {(results.veto_triggered && results.fused_identity_score >= 40.0) && (
-                    <div className="mt-2 px-2 py-1.5 bg-amber-950/20 rounded border border-amber-900/30">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></div>
-                        <span className="text-[9px] text-amber-500/80 tracking-wider font-bold">VETO OVERRIDDEN BY BAYESIAN EVIDENCE</span>
-                      </div>
-                      <p className="text-[8px] text-amber-400/60 leading-relaxed">ArcFace structural similarity fell below threshold, but physical mark evidence (LR<sub>marks</sub> = {formatLR(results.audit_log?.lr_marks)}) provided overwhelming statistical support for same-identity. Posterior probability: {results.audit_log?.posterior_probability != null ? `${(results.audit_log.posterior_probability * 100).toFixed(4)}%` : 'N/A'}.</p>
+                  {(results.fused_identity_score < 40.0 && !results.veto_triggered) && (
+                    <div className="mt-2 px-2 py-1.5 bg-red-950/30 rounded border border-red-900/30">
+                      <p className="text-[8px] text-red-400/70 leading-relaxed break-words">The face recognition AI returned a similarity of {results.structural_score}%, which is below the 40% minimum required to consider a potential match. This is an automatic exclusion.</p>
                     </div>
                   )}
                   {(!results.veto_triggered && results.fused_identity_score >= 40.0) && (
@@ -1349,7 +1349,7 @@ export default function Home() {
                     {/* Block 4: Bayesian Evidence — Daubert Forensic Trail */}
                     <div className="border border-[#2a1a2a] rounded p-2 bg-[#020102]">
                       <div className="text-purple-400/80 tracking-[0.2em] mb-1 border-b border-purple-900/30 pb-1 text-[8px]">▸ BAYESIAN EVIDENCE (DAUBERT v3.0)</div>
-                      <p className="text-[7px] text-gray-600 mb-1.5 leading-relaxed">Likelihood Ratios quantifying the strength of evidence for same-identity hypothesis.</p>
+                      <p className="text-[8px] break-words text-gray-600 mb-1.5 leading-relaxed">Likelihood Ratios quantifying the strength of evidence for same-identity hypothesis.</p>
                       <div className="space-y-0.5 pl-1">
                         <div className="flex justify-between"><span className="text-gray-500">LR<sub>arcface</sub></span><span className="text-purple-300 font-bold">{formatLRSci(results.audit_log.lr_arcface)}</span></div>
                         <div className="flex justify-between"><span className="text-gray-500">LR<sub>marks</sub></span><span className="text-purple-300 font-bold">{formatLRSci(results.audit_log.lr_marks)}</span></div>

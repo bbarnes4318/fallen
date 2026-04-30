@@ -414,6 +414,8 @@ class VerificationResponse(BaseModel):
     marks_detected_probe: int = 0
     marks_matched: int = 0
     correspondences: list = []
+    raw_probe_marks: list = []
+    raw_gallery_marks: list = []
     audit_log: Optional[AuditLog] = None
 
 # ---------------------------------------------------------
@@ -2047,14 +2049,8 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     base_fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3)
 
     if veto_triggered:
-        # Bayesian override: if mark LR is strong enough, the posterior
-        # will naturally rise above threshold. The veto FLAG still fires
-        # for forensic transparency but doesn't artificially cap the score.
-        matched_marks = mark_result["matched"]
-        if lr_marks > 100.0 and matched_marks >= 1:
-            conclusion = f"Conditional Match: ArcFace Veto — {matched_marks} mark(s) yield LR={lr_marks:.1f}"
-        else:
-            conclusion = "Exclusion: Biometric Non-Match (ArcFace Cosine < 0.40)"
+        fused_score = 0.0
+        conclusion = "EXCLUSION: Biometric Non-Match (ArcFace Veto)"
     elif fused_score > 90.0:
         conclusion = "Strongest Support for Common Source"
     elif fused_score > 75.0:
@@ -2137,6 +2133,15 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         mark_lrs=[round(lr, 4) for lr in mark_result.get("mark_lrs", [])],
     )
 
+    # Build correspondences list for the UI
+    correspondences = []
+    for g_idx, p_idx, individual_lr in mark_result.get("matches", []):
+        correspondences.append({
+            "gallery_pt": valid_gallery_marks[g_idx]["centroid"],
+            "probe_pt": valid_probe_marks[p_idx]["centroid"],
+            "lr": individual_lr
+        })
+
     response = VerificationResponse(
         structural_score=round(tier1_score, 2),
         soft_biometrics_score=round(tier2_score, 2),
@@ -2155,6 +2160,9 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         marks_detected_gallery=mark_result["total_gallery"],
         marks_detected_probe=mark_result["total_probe"],
         marks_matched=mark_result["matched"],
+        correspondences=correspondences,
+        raw_probe_marks=valid_probe_marks,
+        raw_gallery_marks=valid_gallery_marks,
         audit_log=audit
     )
 
@@ -2411,11 +2419,8 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
 
     # 11. Conclusion
     if veto_arcface:
-        matched_marks = mark_result["matched"]
-        if lr_marks > 100.0 and matched_marks >= 1:
-            conclusion = f"CONDITIONAL MATCH — ArcFace Veto, {matched_marks} mark(s) LR={lr_marks:.1f}: {best_user_id}"
-        else:
-            conclusion = f"EXCLUSION — Biometric Non-Match: {best_user_id} (ArcFace: {best_score:.4f})"
+        fused_score = 0.0
+        conclusion = "EXCLUSION: Biometric Non-Match (ArcFace Veto)"
     elif fused_score > 90.0:
         conclusion = f"TARGET ACQUIRED — Strongest match: {best_user_id} (Posterior: {fused_score:.1f}%)"
     elif fused_score > 75.0:
@@ -2532,6 +2537,8 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         marks_detected_probe=mark_result["total_probe"],
         marks_matched=mark_result["matched"],
         correspondences=correspondences,
+        raw_probe_marks=valid_probe_marks,
+        raw_gallery_marks=valid_gallery_marks,
         audit_log=audit,
     )
 
