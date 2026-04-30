@@ -55,7 +55,6 @@ function drawPane(
   borderColor?: string,
   baseOpacity?: number,
   overlayOpacity?: number,
-  overlayOpacity?: number,
   xrayFilter?: boolean,
   points?: {x: number, y: number, lr: number}[]
 ) {
