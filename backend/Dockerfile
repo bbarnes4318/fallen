@@ -30,7 +30,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Pre-download DeepFace models to /app/.deepface/weights so they are baked into the image
 # This prevents Cloud Run from timing out during container startup
 RUN mkdir -p /app/.deepface/weights && \
-    TF_USE_LEGACY_KERAS=1 DEEPFACE_HOME=/app python -c "from deepface import DeepFace; DeepFace.build_model('ArcFace'); DeepFace.build_model('Facenet512')"
+    TF_USE_LEGACY_KERAS=1 DEEPFACE_HOME=/app python -c "import numpy as np; from deepface import DeepFace; DeepFace.build_model('ArcFace'); DeepFace.build_model('Facenet512'); DeepFace.extract_faces(img_path=np.zeros((224, 224, 3), dtype=np.uint8), detector_backend='retinaface', enforce_detection=False)"
 
 # Copy the rest of the application code
 COPY . .
