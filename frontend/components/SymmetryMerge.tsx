@@ -56,7 +56,7 @@ function drawPane(
   baseOpacity?: number,
   overlayOpacity?: number,
   xrayFilter?: boolean,
-  points?: {x: number, y: number, lr: number}[]
+  points?: {x: number, y: number, lr?: number, isMatched?: boolean}[]
 ) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -112,10 +112,17 @@ function drawPane(
       const py = p.y * ih;
       ctx.beginPath();
       ctx.arc(px, py, Math.max(2, 4 / scale), 0, 2 * Math.PI);
-      ctx.fillStyle = 'rgba(212, 175, 55, 0.9)'; // Gold color for marks
+      
+      if (p.isMatched === false) {
+        ctx.fillStyle = 'rgba(255, 32, 64, 0.9)'; // Red for missing correspondence
+        ctx.strokeStyle = '#5a0015';
+      } else {
+        ctx.fillStyle = 'rgba(212, 175, 55, 0.9)'; // Gold color for matched marks
+        ctx.strokeStyle = '#111';
+      }
+      
       ctx.fill();
       ctx.lineWidth = 1.5 / scale;
-      ctx.strokeStyle = '#111';
       ctx.stroke();
     });
   }
@@ -196,17 +203,41 @@ export default function SymmetryMerge({
   const baseOpacity = isXrayMode && hasOverlay ? 0.1 : 1.0;
   const overlayOpacity = isXrayMode && hasOverlay ? 1.0 : (mode === 'delta' ? 0.7 : 0.85);
 
-  const probePoints = results?.correspondences?.map((c: any) => ({
-    x: c.probe_pt[0],
-    y: c.probe_pt[1],
-    lr: c.lr
-  })) || [];
+  const getIsMatched = (pt: any, side: 'probe' | 'gallery') => {
+    if (!results?.correspondences) return false;
+    return results.correspondences.some((c: any) => {
+      const cPt = c[`${side}_pt`];
+      if (!cPt) return false;
+      const pX = pt[0] !== undefined ? pt[0] : pt.x;
+      const pY = pt[1] !== undefined ? pt[1] : pt.y;
+      const cx = cPt[0] !== undefined ? cPt[0] : cPt.x;
+      const cy = cPt[1] !== undefined ? cPt[1] : cPt.y;
+      return Math.abs(pX - cx) < 0.001 && Math.abs(pY - cy) < 0.001;
+    });
+  };
 
-  const galleryPoints = results?.correspondences?.map((c: any) => ({
-    x: c.gallery_pt[0],
-    y: c.gallery_pt[1],
-    lr: c.lr
-  })) || [];
+  const mapPoint = (m: any, side: 'probe' | 'gallery') => {
+    const x = m[0] !== undefined ? m[0] : m.x;
+    const y = m[1] !== undefined ? m[1] : m.y;
+    let lr = m.lr;
+    if (lr === undefined && results?.correspondences) {
+      const corr = results.correspondences.find((c: any) => {
+        const cPt = c[`${side}_pt`];
+        if (!cPt) return false;
+        const cx = cPt[0] !== undefined ? cPt[0] : cPt.x;
+        const cy = cPt[1] !== undefined ? cPt[1] : cPt.y;
+        return Math.abs(x - cx) < 0.001 && Math.abs(y - cy) < 0.001;
+      });
+      if (corr) lr = corr.lr;
+    }
+    return { x, y, lr, isMatched: getIsMatched(m, side) };
+  };
+
+  const probeMarksRaw = results?.probe_data?.marks || results?.correspondences?.map((c: any) => c.probe_pt) || [];
+  const galleryMarksRaw = results?.gallery_data?.marks || results?.correspondences?.map((c: any) => c.gallery_pt) || [];
+
+  const probePoints = probeMarksRaw.map((m: any) => mapPoint(m, 'probe'));
+  const galleryPoints = galleryMarksRaw.map((m: any) => mapPoint(m, 'gallery'));
 
   // Draw dual panes — LEFT = PROBE, RIGHT = GALLERY (both get delta overlay in delta mode)
   useEffect(() => {
@@ -362,13 +393,31 @@ export default function SymmetryMerge({
           </div>
 
           {/* Dynamic Lists (Occlusions & Marks) */}
-          {(results.occluded_regions?.length > 0 || results.correspondences?.length > 0) && (
+          {((results.probe_data?.occluded_regions?.length > 0) || (results.gallery_data?.occluded_regions?.length > 0) || results.occluded_regions?.length > 0 || results.correspondences?.length > 0) && (
             <div className="flex flex-col gap-[2px]">
-              {results.occluded_regions && results.occluded_regions.length > 0 && (
+              {results.occluded_regions && results.occluded_regions.length > 0 && !results.probe_data && !results.gallery_data && (
                 <div className="flex gap-[2px] flex-wrap">
                   {results.occluded_regions.map((region: string, i: number) => (
                     <div key={`occ-${i}`} className="px-1.5 py-0.5 border border-[#8a4000]/40 bg-[#3a1500]/20 text-[#ff8800]/80 tracking-widest text-[9px]">
                       MASKED: {region}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {results.probe_data?.occluded_regions && results.probe_data.occluded_regions.length > 0 && (
+                <div className="flex gap-[2px] flex-wrap">
+                  {results.probe_data.occluded_regions.map((region: string, i: number) => (
+                    <div key={`probe-occ-${i}`} className="px-1.5 py-0.5 border border-[#8a4000]/40 bg-[#3a1500]/20 text-[#ff8800]/80 tracking-widest text-[9px]">
+                      PROBE MASK: {region}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {results.gallery_data?.occluded_regions && results.gallery_data.occluded_regions.length > 0 && (
+                <div className="flex gap-[2px] flex-wrap">
+                  {results.gallery_data.occluded_regions.map((region: string, i: number) => (
+                    <div key={`gallery-occ-${i}`} className="px-1.5 py-0.5 border border-[#8a4000]/40 bg-[#3a1500]/20 text-[#ff8800]/80 tracking-widest text-[9px]">
+                      GALLERY MASK: {region}
                     </div>
                   ))}
                 </div>
