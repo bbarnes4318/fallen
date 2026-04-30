@@ -2015,13 +2015,15 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     for m in marks_gallery:
         cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
         if cy < 256 and cx < 256 and occ_probe[cy, cx] == 0:
-            valid_gallery_marks.append(m)
+            clean_m = {k: v for k, v in m.items() if k != "contour"}
+            valid_gallery_marks.append(clean_m)
             
     valid_probe_marks = []
     for m in marks_probe:
         cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
         if cy < 256 and cx < 256 and occ_gallery[cy, cx] == 0:
-            valid_probe_marks.append(m)
+            clean_m = {k: v for k, v in m.items() if k != "contour"}
+            valid_probe_marks.append(clean_m)
 
     mark_result = compute_mark_correspondence(valid_gallery_marks, valid_probe_marks)
     tier4_score = mark_result["score"]  # None if insufficient marks
@@ -2388,13 +2390,15 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     for m in marks_gallery:
         cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
         if cy < 256 and cx < 256 and occ_probe[cy, cx] == 0:
-            valid_gallery_marks.append(m)
+            clean_m = {k: v for k, v in m.items() if k != "contour"}
+            valid_gallery_marks.append(clean_m)
             
     valid_probe_marks = []
     for m in marks_probe:
         cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
         if cy < 256 and cx < 256 and occ_gallery[cy, cx] == 0:
-            valid_probe_marks.append(m)
+            clean_m = {k: v for k, v in m.items() if k != "contour"}
+            valid_probe_marks.append(clean_m)
 
     mark_result = compute_mark_correspondence(valid_gallery_marks, valid_probe_marks)
     tier4_score = mark_result["score"]  # None if insufficient marks
