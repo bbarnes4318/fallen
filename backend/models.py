@@ -111,6 +111,9 @@ class VerificationEvent(Base):
     pose_corrected_3d = Column(Boolean, nullable=True)
     probe_pose_angles = Column(Text, nullable=True)     # JSON string of pitch, yaw, roll
     gallery_pose_angles = Column(Text, nullable=True)   # JSON string of pitch, yaw, roll
+    occlusion_percentage = Column(Float, nullable=True)
+    occluded_regions = Column(Text, nullable=True)      # JSON list of strings
+    effective_geometric_ratios_used = Column(Integer, nullable=True)
 
     # Temporal & Spectral Telemetry (Tier 1/3)
     estimated_temporal_delta = Column(Float, nullable=True)

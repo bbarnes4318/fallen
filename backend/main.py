@@ -510,9 +510,9 @@ def calculate_statistical_confidence(cosine_score: float) -> dict:
     }
 
 
-def cosine_to_lr_arcface(cosine_score: float, temporal_delta: float = 0.0) -> float:
+def score_to_lr_ensemble(ensemble_score: float, temporal_delta: float = 0.0) -> float:
     """
-    Convert ArcFace cosine similarity to a Likelihood Ratio using
+    Convert Fused 60/40 Ensemble Score to a Likelihood Ratio using
     empirically calibrated FAR/FRR from the LFW benchmark.
 
     LR = P(score | Hp) / P(score | Hd) = (1 - FRR) / FAR
@@ -530,14 +530,18 @@ def cosine_to_lr_arcface(cosine_score: float, temporal_delta: float = 0.0) -> fl
     if CALIBRATION is None:
         return 1.0  # Neutral LR — no calibration data
 
-    thresholds = CALIBRATION["arcface"]["thresholds"]
+    thresholds = CALIBRATION.get("ensemble", {}).get("thresholds", {})
+    if not thresholds:
+        # Fallback to arcface if ensemble calibration is not yet loaded
+        thresholds = CALIBRATION.get("arcface", {}).get("thresholds", {})
+        
     sorted_thresh = sorted(thresholds.keys(), key=float)
 
     far_value = None
     frr_value = None
 
     for t in sorted_thresh:
-        if cosine_score >= float(t):
+        if ensemble_score >= float(t):
             far_value = thresholds[t]["far"]
             frr_value = thresholds[t]["frr"]
 
@@ -1076,11 +1080,67 @@ def procrustes_align_3d(landmarks_3d: np.ndarray) -> tuple[np.ndarray, dict]:
     
     return aligned_landmarks, angles
 
-def extract_geometric_ratios_3d(landmarks) -> tuple[np.ndarray, dict]:
+def extract_geometric_ratios_3d(landmarks) -> tuple[np.ndarray, dict, dict]:
     """
     Computes scale-invariant, true 3D Euclidean facial geometric ratios for Tier 2.
     Uses Procrustes alignment to mathematically un-rotate the face to a perfect frontal view.
+    Also computes landmark visibility telemetry for Tier 2 dynamic dropping.
     """
+    VISIBILITY_THRESHOLD = 0.85
+
+    # Compute Visibility Telemetry
+    masked_count = sum(1 for l in landmarks if getattr(l, "visibility", 1.0) < VISIBILITY_THRESHOLD)
+    occlusion_percentage = (masked_count / len(landmarks)) * 100.0 if len(landmarks) > 0 else 0.0
+
+    STRUCTURAL_GROUPS = {
+        "Left Orbital": [33, 133, 160, 159, 158, 144, 145, 153],
+        "Right Orbital": [263, 362, 387, 386, 385, 373, 374, 380],
+        "Nose": [1, 2, 98, 327, 4, 5, 195, 197, 6],
+        "Mouth": [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 308, 324, 318, 402, 317, 14, 87, 178, 88],
+        "Left Jaw": [234, 93, 132, 58, 172, 136, 150, 149, 176, 148, 152],
+        "Right Jaw": [454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152],
+        "Left Eyebrow": [70, 63, 105, 66, 107, 55, 65, 52, 53, 46],
+        "Right Eyebrow": [300, 293, 334, 296, 336, 285, 295, 282, 283, 276],
+        "Forehead": [10, 338, 297, 332, 284, 251, 389, 356]
+    }
+
+    occluded_regions = []
+    for region, indices in STRUCTURAL_GROUPS.items():
+        region_masked = sum(1 for idx in indices if getattr(landmarks[idx], "visibility", 1.0) < VISIBILITY_THRESHOLD)
+        if region_masked > len(indices) * 0.5:  # If >50% masked, call it occluded
+            occluded_regions.append(region)
+
+    ratio_landmarks_indices = [
+        [1, 152],         # Nose-to-chin
+        [6, 1],           # Nose length
+        [61, 291],        # Mouth width
+        [10, 152],        # Face height
+        [234, 454],       # Jaw width
+        [70, 33],         # Left brow height
+        [300, 263],       # Right brow height
+        [1, 33],          # Nose-to-left-eye
+        [1, 263],         # Nose-to-right-eye
+        [152, 61],        # Chin-to-left-mouth
+        [152, 291],       # Chin-to-right-mouth
+        [234, 152, 454]   # Jaw symmetry
+    ]
+    
+    iod_points = [33, 263]
+    ratio_visibility = []
+    for idx_group in ratio_landmarks_indices:
+        is_visible = all(getattr(landmarks[idx], "visibility", 1.0) >= VISIBILITY_THRESHOLD for idx in idx_group)
+        is_iod_visible = all(getattr(landmarks[idx], "visibility", 1.0) >= VISIBILITY_THRESHOLD for idx in iod_points)
+        if len(idx_group) == 3: # Jaw symmetry doesn't use IOD
+            ratio_visibility.append(is_visible)
+        else:
+            ratio_visibility.append(is_visible and is_iod_visible)
+
+    vis_data = {
+        "occlusion_percentage": round(occlusion_percentage, 2),
+        "occluded_regions": occluded_regions,
+        "ratio_visibility": np.array(ratio_visibility, dtype=bool)
+    }
+
     coords_3d = np.array([(l.x, l.y, l.z) for l in landmarks])
     aligned_coords, angles = procrustes_align_3d(coords_3d)
 
@@ -1089,7 +1149,7 @@ def extract_geometric_ratios_3d(landmarks) -> tuple[np.ndarray, dict]:
     iod = np.linalg.norm(right_eye - left_eye)
 
     if iod < 1e-6:
-        return np.zeros(12), angles
+        return np.zeros(12), angles, vis_data
 
     nose_tip = aligned_coords[1]
     nose_bridge = aligned_coords[6]
@@ -1119,7 +1179,7 @@ def extract_geometric_ratios_3d(landmarks) -> tuple[np.ndarray, dict]:
         np.linalg.norm(left_jaw - chin) / jaw_to_chin_r if jaw_to_chin_r > 1e-6 else 1.0,  # Jaw symmetry
     ])
 
-    return ratios, angles
+    return ratios, angles, vis_data
 
 
 # ---------------------------------------------------------
@@ -1257,21 +1317,29 @@ def _build_skin_mask(shape: tuple, landmarks, margin: int = 5) -> np.ndarray:
     return skin_mask
 
 
-def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> list:
+def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, np.ndarray]:
     """
     Detects discrete facial anomalies (scars, moles, birthmarks) on
     the skin surface of an aligned 256×256 face crop.
 
-    Returns a list of mark descriptors:
-        [{"centroid": (cx, cy), "area": float, "intensity": float, "circularity": float}, ...]
-
-    Centroids are normalized to [0,1] relative to crop dimensions.
+    Returns a tuple:
+        - list of mark descriptors: [{"centroid": (cx, cy), "area": float, "intensity": float, "circularity": float}, ...]
+        - occlusion_mask (np.ndarray): Mask of occluded regions
     """
     h, w = aligned_crop.shape[:2]
     gray = cv2.cvtColor(aligned_crop, cv2.COLOR_BGR2GRAY)
 
     # Build skin mask excluding major facial features
     skin_mask = _build_skin_mask(aligned_crop.shape, landmarks)
+
+    # Build occluded mask for Bayesian Penalty Nullification
+    occ_mask = np.zeros((h, w), dtype=np.uint8)
+    pts = []
+    for lm in landmarks:
+        if getattr(lm, "visibility", 1.0) < 0.85:
+            pts.append((int(lm.x * w), int(lm.y * h)))
+    for pt in pts:
+        cv2.circle(occ_mask, pt, int(min(h, w) * 0.05), 255, -1)
 
     # Adaptive threshold to detect dark anomalies on skin
     thresh = cv2.adaptiveThreshold(
@@ -1281,6 +1349,9 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> list:
 
     # Apply skin mask — only keep marks on skin surface
     masked = cv2.bitwise_and(thresh, skin_mask)
+
+    # Apply occlusion mask to avoid detecting shadows as marks
+    masked[occ_mask > 0] = 0
 
     # Morphological opening to remove speckle noise
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -1319,7 +1390,7 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> list:
             "contour": cnt,  # keep for visualization
         })
 
-    return marks
+    return marks, occ_mask
 
 
 def compute_mark_correspondence(marks_gallery: list, marks_probe: list) -> dict:
@@ -1797,9 +1868,18 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     
     # 5. TIER 2: Geometric Biometrics (3D Topographical Mapping)
     # Uses Euclidean distance between 12-D scale-invariant, 3D Procrustes-aligned facial ratio vectors.
-    ratios_gallery, gal_angles = extract_geometric_ratios_3d(gallery_landmarks)
-    ratios_probe, pro_angles = extract_geometric_ratios_3d(probe_landmarks)
-    ratio_l2 = float(np.linalg.norm(ratios_gallery - ratios_probe))
+    ratios_gallery, gal_angles, gal_vis = extract_geometric_ratios_3d(gallery_landmarks)
+    ratios_probe, pro_angles, pro_vis = extract_geometric_ratios_3d(probe_landmarks)
+    
+    valid_mask = gal_vis["ratio_visibility"] & pro_vis["ratio_visibility"]
+    effective_ratios = int(np.sum(valid_mask))
+    
+    if effective_ratios > 0:
+        raw_l2 = float(np.linalg.norm((ratios_gallery - ratios_probe)[valid_mask]))
+        ratio_l2 = raw_l2 * math.sqrt(12.0 / effective_ratios)
+    else:
+        ratio_l2 = 0.50
+        
     # L2 mapping: 0 distance → 100%, ≥0.50 → 0%. Recalibrated from 0.40 due to added 3D variance.
     tier2_score = max(0.0, min(100.0, (1.0 - (ratio_l2 / 0.50)) * 100))
     
@@ -1816,20 +1896,33 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     veto_triggered = structural_sim < 0.40
 
     # 7.5 TIER 4: Mark Correspondence (Bayesian LR Engine)
-    marks_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
-    marks_probe = detect_facial_marks(probe_aligned, probe_landmarks)
-    mark_result = compute_mark_correspondence(marks_gallery, marks_probe)
+    marks_gallery, occ_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
+    marks_probe, occ_probe = detect_facial_marks(probe_aligned, probe_landmarks)
+    
+    valid_gallery_marks = []
+    for m in marks_gallery:
+        cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
+        if cy < 256 and cx < 256 and occ_probe[cy, cx] == 0:
+            valid_gallery_marks.append(m)
+            
+    valid_probe_marks = []
+    for m in marks_probe:
+        cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
+        if cy < 256 and cx < 256 and occ_gallery[cy, cx] == 0:
+            valid_probe_marks.append(m)
+
+    mark_result = compute_mark_correspondence(valid_gallery_marks, valid_probe_marks)
     tier4_score = mark_result["score"]  # None if insufficient marks
 
     # ── BAYESIAN EVIDENCE FUSION (Daubert v4.0) ──
-    # Convert ArcFace cosine to Likelihood Ratio (calibration applies to ArcFace, not fused)
-    lr_arcface = cosine_to_lr_arcface(arcface_sim, temporal_delta=temporal_delta)
+    # Convert Fused Ensemble score to Likelihood Ratio
+    lr_ensemble = score_to_lr_ensemble(structural_sim, temporal_delta=temporal_delta)
 
     # Combined mark LR (product of individual mark LRs)
     lr_marks = mark_result.get("lr_marks", 1.0)
 
     # Total LR = independent evidence product
-    lr_total = lr_arcface * lr_marks
+    lr_total = lr_ensemble * lr_marks
 
     # Posterior probability via Bayes' Theorem (neutral prior = 0.5)
     # P(Hp|E) = (Prior × LR) / ((Prior × LR) + (1 - Prior))
@@ -1898,6 +1991,9 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         pose_corrected_3d=True,
         probe_pose_angles=pro_angles,
         gallery_pose_angles=gal_angles,
+        occlusion_percentage=pro_vis["occlusion_percentage"],
+        occluded_regions=pro_vis["occluded_regions"],
+        effective_geometric_ratios_used=effective_ratios,
         estimated_temporal_delta=round(temporal_delta, 1),
         cross_spectral_correction_applied=spectral_correction,
         statistical_certainty=stats["statistical_certainty"],
@@ -1974,6 +2070,9 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             pose_corrected_3d=True,
             probe_pose_angles=json.dumps(pro_angles) if pro_angles else None,
             gallery_pose_angles=json.dumps(gal_angles) if gal_angles else None,
+            occlusion_percentage=pro_vis["occlusion_percentage"],
+            occluded_regions=json.dumps(pro_vis["occluded_regions"]) if pro_vis["occluded_regions"] else None,
+            effective_geometric_ratios_used=effective_ratios,
             receipt_url=receipt_url,
         )
         ledger_session.add(event)
@@ -2126,13 +2225,24 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
 
     # 7. Tier 2: Geometric Biometrics (3D Topographical Mapping)
     if gallery_landmarks is not None:
-        ratios_gallery, gal_angles = extract_geometric_ratios_3d(gallery_landmarks)
-        ratios_probe, pro_angles = extract_geometric_ratios_3d(probe_landmarks)
-        ratio_l2 = float(np.linalg.norm(ratios_gallery - ratios_probe))
+        ratios_gallery, gal_angles, gal_vis = extract_geometric_ratios_3d(gallery_landmarks)
+        ratios_probe, pro_angles, pro_vis = extract_geometric_ratios_3d(probe_landmarks)
+        
+        valid_mask = gal_vis["ratio_visibility"] & pro_vis["ratio_visibility"]
+        effective_ratios = int(np.sum(valid_mask))
+        
+        if effective_ratios > 0:
+            raw_l2 = float(np.linalg.norm((ratios_gallery - ratios_probe)[valid_mask]))
+            ratio_l2 = raw_l2 * math.sqrt(12.0 / effective_ratios)
+        else:
+            ratio_l2 = 0.50
+            
         tier2_score = max(0.0, min(100.0, (1.0 - (ratio_l2 / 0.50)) * 100))
     else:
         tier2_score = 0.0
         gal_angles, pro_angles = {}, {}
+        pro_vis = {"occlusion_percentage": 0.0, "occluded_regions": []}
+        effective_ratios = 0
 
     # 8. Tier 3: Micro-Topology (LBP Chi-Squared Distance)
     lbp_gal = extract_lbp_histogram(gallery_aligned)
@@ -2141,15 +2251,28 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     tier3_score = max(0.0, min(100.0, (1.0 - chi_squared) * 100))
 
     # 9. TIER 4: Mark Correspondence (Bayesian LR Engine)
-    marks_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
-    marks_probe = detect_facial_marks(probe_aligned, probe_landmarks)
-    mark_result = compute_mark_correspondence(marks_gallery, marks_probe)
+    marks_gallery, occ_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
+    marks_probe, occ_probe = detect_facial_marks(probe_aligned, probe_landmarks)
+    
+    valid_gallery_marks = []
+    for m in marks_gallery:
+        cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
+        if cy < 256 and cx < 256 and occ_probe[cy, cx] == 0:
+            valid_gallery_marks.append(m)
+            
+    valid_probe_marks = []
+    for m in marks_probe:
+        cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
+        if cy < 256 and cx < 256 and occ_gallery[cy, cx] == 0:
+            valid_probe_marks.append(m)
+
+    mark_result = compute_mark_correspondence(valid_gallery_marks, valid_probe_marks)
     tier4_score = mark_result["score"]  # None if insufficient marks
 
     # ── BAYESIAN EVIDENCE FUSION (Daubert v4.0) ──
-    lr_arcface = cosine_to_lr_arcface(arcface_sim, temporal_delta=temporal_delta)
+    lr_ensemble = score_to_lr_ensemble(structural_sim, temporal_delta=temporal_delta)
     lr_marks = mark_result.get("lr_marks", 1.0)
-    lr_total = lr_arcface * lr_marks
+    lr_total = lr_ensemble * lr_marks
 
     # Posterior probability via Bayes' Theorem (neutral prior = 0.5)
     PRIOR = 0.5
@@ -2227,6 +2350,9 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         pose_corrected_3d=True,
         probe_pose_angles=pro_angles,
         gallery_pose_angles=gal_angles,
+        occlusion_percentage=pro_vis["occlusion_percentage"],
+        occluded_regions=pro_vis["occluded_regions"],
+        effective_geometric_ratios_used=effective_ratios,
         estimated_temporal_delta=round(temporal_delta, 1),
         cross_spectral_correction_applied=spectral_correction,
         statistical_certainty=stats["statistical_certainty"],
@@ -2311,6 +2437,9 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             pose_corrected_3d=True,
             probe_pose_angles=json.dumps(pro_angles) if pro_angles else None,
             gallery_pose_angles=json.dumps(gal_angles) if gal_angles else None,
+            occlusion_percentage=pro_vis["occlusion_percentage"],
+            occluded_regions=json.dumps(pro_vis["occluded_regions"]) if pro_vis["occluded_regions"] else None,
+            effective_geometric_ratios_used=effective_ratios,
             receipt_url=receipt_url,
         )
         ledger_session.add(event)

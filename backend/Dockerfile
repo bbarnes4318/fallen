@@ -4,7 +4,8 @@ FROM python:3.10-slim
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PORT=8080
+    PORT=8080 \
+    DEEPFACE_HOME=/app
 
 # Set the working directory
 WORKDIR /app
@@ -26,9 +27,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Pre-download DeepFace models to ~/.deepface/weights so they are baked into the image
+# Pre-download DeepFace models to /app/.deepface/weights so they are baked into the image
 # This prevents Cloud Run from timing out during container startup
-RUN TF_USE_LEGACY_KERAS=1 python -c "from deepface import DeepFace; DeepFace.build_model('ArcFace'); DeepFace.build_model('Facenet512')"
+RUN mkdir -p /app/.deepface/weights && \
+    TF_USE_LEGACY_KERAS=1 DEEPFACE_HOME=/app python -c "from deepface import DeepFace; DeepFace.build_model('ArcFace'); DeepFace.build_model('Facenet512')"
 
 # Copy the rest of the application code
 COPY . .
