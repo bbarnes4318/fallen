@@ -15,6 +15,120 @@ function getApiUrl(): string {
   return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 }
 
+function TelemetryLoader() {
+  const [logs, setLogs] = useState<string[]>([]);
+  const [hash, setHash] = useState<string>('');
+  const [progress, setProgress] = useState(0);
+
+  const PIPELINE_STEPS = [
+    "[sys] Initializing secure TLS enclave...",
+    "[sys] Injecting payload into volatile memory...",
+    "[tier_1] Verifying image integrity and EXIF metadata...",
+    "[tier_1] Normalizing cross-spectral variants...",
+    "[tier_1] Executing MTCNN face detection...",
+    "[tier_1] Extracting 512-D neural embeddings (ArcFace)...",
+    "[tier_2] Extracting 468-point 3D facial mesh...",
+    "[tier_2] Executing 3D Procrustes rigid alignment...",
+    "[tier_2] Computing geometric ratios and soft biometrics...",
+    "[tier_3] Mapping micro-topology LBP textures...",
+    "[tier_3] Scanning for synthetic GAN anomalies...",
+    "[tier_4] Extracting localized facial marks and scars...",
+    "[tier_4] Querying population frequency database...",
+    "[tier_4] Calculating Bayesian Likelihood Ratios...",
+    "[sys] Fusing independent identity scores...",
+    "[sys] Finalizing Daubert-compliant audit trail..."
+  ];
+
+  useEffect(() => {
+    let currentIndex = 0;
+    const interval = setInterval(() => {
+      if (currentIndex < PIPELINE_STEPS.length) {
+        setLogs(prev => {
+          const newLogs = [...prev, PIPELINE_STEPS[currentIndex]];
+          if (newLogs.length > 5) return newLogs.slice(newLogs.length - 5);
+          return newLogs;
+        });
+        setProgress(Math.min(99, (currentIndex / PIPELINE_STEPS.length) * 100 + Math.random() * 5));
+        currentIndex++;
+      } else {
+        setLogs(prev => {
+          const newLogs = [...prev, "[sys] Awaiting server response..."];
+          if (newLogs.length > 5) return newLogs.slice(newLogs.length - 5);
+          return newLogs;
+        });
+        setProgress(99);
+      }
+    }, 450);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const hashInterval = setInterval(() => {
+      const randomHex = Array.from({length: 64}, () => Math.floor(Math.random()*16).toString(16)).join('');
+      setHash(randomHex);
+    }, 50);
+    return () => clearInterval(hashInterval);
+  }, []);
+
+  return (
+    <div className="h-full flex flex-col items-center justify-center p-4 w-full">
+      <div className="w-full max-w-2xl border border-gray-700 bg-[#050505] flex flex-col p-6 font-mono relative overflow-hidden shadow-[0_0_30px_rgba(0,0,0,0.8)]">
+        {/* Header */}
+        <div className="flex justify-between items-center border-b border-gray-800 pb-3 mb-4 relative z-10">
+          <div className="flex flex-col">
+            <span className="text-[#D4AF37] text-xs tracking-[0.2em] font-bold">ACTIVE TELEMETRY</span>
+            <span className="text-gray-600 text-[9px] tracking-widest mt-0.5">INSTITUTIONAL PIPELINE STATUS</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 bg-red-500 animate-[pulse_0.5s_infinite] rounded-full"></div>
+            <span className="text-red-500 text-[10px] tracking-widest font-bold">PROCESSING</span>
+          </div>
+        </div>
+        
+        {/* Cryptographic Visual (Hex Dump) */}
+        <div className="bg-[#0a0a0a] p-3 border border-gray-800 mb-4 relative z-10">
+          <div className="text-[8px] text-gray-500 tracking-[0.2em] mb-1.5 flex justify-between">
+            <span>KMS ENVELOPE DECRYPTION [SHA-256]</span>
+            <span className="text-gray-600">SECURE ENCLAVE</span>
+          </div>
+          <div className="text-[10px] text-emerald-500/80 break-all font-bold tracking-widest leading-relaxed">
+            {hash}
+          </div>
+        </div>
+
+        {/* Terminal Feed */}
+        <div className="h-28 flex flex-col justify-end text-[10px] text-gray-400 gap-1.5 mb-4 relative z-10">
+          {logs.map((log, i) => (
+            <div key={i} className="flex gap-2 items-start">
+              <span className="text-gray-600 shrink-0">{'>'}</span>
+              <span className={i === logs.length - 1 ? 'text-gray-200' : 'text-gray-500'}>{log}</span>
+            </div>
+          ))}
+          <div className="flex gap-2 items-start text-[#D4AF37] animate-pulse">
+            <span className="shrink-0">{'>'}</span>
+            <span>_</span>
+          </div>
+        </div>
+
+        {/* Progress Architecture */}
+        <div className="relative z-10">
+          <div className="flex justify-between text-[9px] text-gray-500 mb-1.5 tracking-widest font-bold">
+            <span>PIPELINE LOAD</span>
+            <span className="text-[#D4AF37]">{Math.floor(progress)}%</span>
+          </div>
+          <div className="w-full h-2 bg-[#111] border border-gray-700 overflow-hidden">
+            <div 
+              className="h-full bg-gradient-to-r from-gray-700 via-gray-400 to-white transition-all duration-300 ease-out" 
+              style={{ width: `${progress}%` }}
+            ></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const [probeFile, setProbeFile] = useState<File | null>(null);
   const [probePreview, setProbePreview] = useState<string>('');
@@ -919,14 +1033,7 @@ export default function Home() {
 
         {/* ════ LOADING ════ */}
         {['uploading', 'frontalizing', 'calculating'].includes(step) && (
-          <div className="h-full flex flex-col items-center justify-center">
-            <div className="w-12 h-12 border-4 border-[#333] border-t-[#D4AF37] rounded-full animate-spin mb-4"></div>
-            <p className="text-sm text-gray-300 tracking-widest animate-pulse">
-              {step === 'uploading' && "UPLOADING TARGET..."}
-              {step === 'frontalizing' && "SCANNING ENCRYPTED VAULT..."}
-              {step === 'calculating' && "DECRYPTING IDENTITY VECTORS..."}
-            </p>
-          </div>
+          <TelemetryLoader />
         )}
 
         {/* ════ ERROR ════ */}
