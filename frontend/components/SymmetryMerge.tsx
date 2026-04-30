@@ -178,12 +178,12 @@ export default function SymmetryMerge({
 
   const imagesReady = !!galleryImg && !!probeImg;
 
-  // ── LEFT PANE = PROBE (+ delta overlay in delta mode, + wireframe in mesh mode) ──
+  // ── LEFT PANE = PROBE (+ wireframe in mesh mode) ──
   const getLeftOverlay = useCallback((): HTMLImageElement | null => {
     if (mode === 'mesh' && pWireImg) return pWireImg;
-    if (mode === 'delta' && deltaImg) return deltaImg;
+    if (mode === 'delta') return null;
     return null;
-  }, [mode, pWireImg, deltaImg]);
+  }, [mode, pWireImg]);
 
   // ── RIGHT PANE = GALLERY (+ delta overlay in delta mode, + wireframe in mesh mode) ──
   const getRightOverlay = useCallback((): HTMLImageElement | null => {
