@@ -1063,7 +1063,7 @@ export default function Home() {
             </div>
 
             {/* ── RIGHT PANEL (30%): Intelligence Panel — Human-Readable ── */}
-            <div className="w-[30%] flex flex-col gap-2 min-h-0 overflow-y-auto overflow-x-hidden shrink-0 pr-0.5">
+            <div className="w-[30%] flex flex-col gap-2 min-h-0 overflow-y-auto overflow-x-hidden shrink-0 min-w-0 pr-0.5">
 
               {/* ═══ OVERALL MATCH — Hero Score ═══ */}
               <div className={`relative overflow-hidden rounded-lg p-4 border-2 ${(results.fused_identity_score < 40.0) ? 'border-red-700/60 bg-gradient-to-br from-[#1a0505] to-[#0d0d0e]' : 'border-[#D4AF37]/50 bg-gradient-to-br from-[#1a170d] to-[#0d0d0e]'}`}>
@@ -1174,7 +1174,7 @@ export default function Home() {
                   <div className="p-2.5 border-t border-[#1a1a1a]">
                     <div className="flex items-baseline justify-between">
                       <h3 className="text-[#D4AF37] text-[9px] tracking-wider font-bold">MARK EVIDENCE (LR)</h3>
-                      <span className="text-lg font-bold tabular-nums text-[#D4AF37]">{formatLR(results.audit_log?.lr_marks)}</span>
+                      <span className="text-lg font-bold tabular-nums text-[#D4AF37] break-all whitespace-normal overflow-hidden">{formatLR(results.audit_log?.lr_marks)}</span>
                     </div>
                     {/* LR magnitude bar — log-scaled */}
                     <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden border border-[#D4AF37]/20">
@@ -1189,17 +1189,17 @@ export default function Home() {
                       <div className="mt-1.5 flex items-center gap-3 flex-wrap">
                         <div className="flex items-center gap-1">
                           <span className="text-[7px] text-gray-500">LR<sub>arcface</sub></span>
-                          <span className="text-[8px] font-bold text-[#D4AF37]/80 tabular-nums">{formatLR(results.audit_log.lr_arcface)}</span>
+                          <span className="text-[8px] font-bold text-[#D4AF37]/80 tabular-nums break-all whitespace-normal overflow-hidden">{formatLR(results.audit_log.lr_arcface)}</span>
                         </div>
                         <span className="text-[7px] text-gray-600">×</span>
                         <div className="flex items-center gap-1">
                           <span className="text-[7px] text-gray-500">LR<sub>marks</sub></span>
-                          <span className="text-[8px] font-bold text-[#D4AF37]/80 tabular-nums">{formatLR(results.audit_log.lr_marks)}</span>
+                          <span className="text-[8px] font-bold text-[#D4AF37]/80 tabular-nums break-all whitespace-normal overflow-hidden">{formatLR(results.audit_log.lr_marks)}</span>
                         </div>
                         <span className="text-[7px] text-gray-600">=</span>
                         <div className="flex items-center gap-1">
                           <span className="text-[7px] text-gray-500">LR<sub>total</sub></span>
-                          <span className="text-[8px] font-bold text-[#D4AF37] tabular-nums">{formatLR(results.audit_log.lr_total)}</span>
+                          <span className="text-[8px] font-bold text-[#D4AF37] tabular-nums break-all whitespace-normal overflow-hidden">{formatLR(results.audit_log.lr_total)}</span>
                         </div>
                       </div>
                     )}
@@ -1220,7 +1220,7 @@ export default function Home() {
                   {(results.fused_identity_score < 40.0) ? '✗ VERDICT: NOT A MATCH' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '⚠ VERDICT: CONDITIONAL MATCH' : '✓ VERDICT: MATCH DETECTED'}
                 </div>
                 <div className={`px-3 py-3 ${(results.fused_identity_score < 40.0) ? 'bg-red-950/20' : 'bg-[#0d0d0e]'}`}>
-                  <p className={`text-[11px] leading-relaxed ${(results.fused_identity_score < 40.0) ? 'text-red-300/90' : 'text-gray-200'}`}>
+                  <p className={`text-[11px] leading-relaxed break-all whitespace-normal overflow-hidden ${(results.fused_identity_score < 40.0) ? 'text-red-300/90' : 'text-gray-200'}`}>
                     {results.conclusion}
                   </p>
                   {(results.fused_identity_score < 40.0 && results.veto_triggered) && (
@@ -1328,7 +1328,7 @@ export default function Home() {
                       <p className="text-[7px] text-gray-600 mb-1.5 leading-relaxed">Cryptographic proof that the biometric data was not tampered with during analysis.</p>
                       <div className="space-y-0.5 pl-1">
                         {results.audit_log.vector_hash && (
-                          <div><span className="text-gray-500">Digital Fingerprint</span><div className="text-amber-300/80 text-[8px] break-all mt-0.5">{results.audit_log.vector_hash}</div></div>
+                          <div><span className="text-gray-500">Digital Fingerprint</span><div className="text-amber-300/80 text-[8px] break-all whitespace-normal overflow-hidden mt-0.5">{results.audit_log.vector_hash}</div></div>
                         )}
                         {results.audit_log.crypto_envelope && (<>
                           <div className="flex justify-between mt-1"><span className="text-gray-500">Encryption Standard</span><span className="text-amber-300">{results.audit_log.crypto_envelope.standard}</span></div>
@@ -1351,9 +1351,9 @@ export default function Home() {
                       <div className="text-purple-400/80 tracking-[0.2em] mb-1 border-b border-purple-900/30 pb-1 text-[8px]">▸ BAYESIAN EVIDENCE (DAUBERT v3.0)</div>
                       <p className="text-[8px] break-words text-gray-600 mb-1.5 leading-relaxed">Likelihood Ratios quantifying the strength of evidence for same-identity hypothesis.</p>
                       <div className="space-y-0.5 pl-1">
-                        <div className="flex justify-between"><span className="text-gray-500">LR<sub>arcface</sub></span><span className="text-purple-300 font-bold">{formatLRSci(results.audit_log.lr_arcface)}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-500">LR<sub>marks</sub></span><span className="text-purple-300 font-bold">{formatLRSci(results.audit_log.lr_marks)}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-500">LR<sub>total</sub></span><span className="text-[#D4AF37] font-bold">{formatLRSci(results.audit_log.lr_total)}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-500">LR<sub>arcface</sub></span><span className="text-purple-300 font-bold break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_arcface)}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-500">LR<sub>marks</sub></span><span className="text-purple-300 font-bold break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_marks)}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-500">LR<sub>total</sub></span><span className="text-[#D4AF37] font-bold break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_total)}</span></div>
                         <div className="flex justify-between mt-1 pt-1 border-t border-purple-900/20"><span className="text-gray-500">Posterior P(same)</span><span className="text-[#D4AF37] font-bold">{results.audit_log.posterior_probability != null ? `${(results.audit_log.posterior_probability * 100).toFixed(6)}%` : 'N/A'}</span></div>
                         {results.audit_log.mark_lrs && results.audit_log.mark_lrs.length > 0 && (
                           <div className="mt-1 pt-1 border-t border-purple-900/20">
