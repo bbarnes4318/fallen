@@ -66,13 +66,29 @@ def on_startup():
     print("Hydrating FAISS Vault Index...", flush=True)
     session = SessionLocal()
     try:
+        import concurrent.futures
         profiles = session.query(IdentityProfile).all()
-        for p in profiles:
+        
+        def _process_profile(p):
             try:
                 emb = decrypt_embedding(p.encrypted_facial_embedding)
-                vault_index.add_identity(p.user_id, emb)
+                return p.user_id, emb
             except Exception as e:
-                print(f"Failed to load embedding for {p.user_id}: {e}", flush=True)
+                print(f"Failed to decrypt embedding for {p.user_id}: {e}", flush=True)
+                return None
+                
+        # Perform network-bound KMS decryption in parallel to prevent startup timeouts
+        with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+            results = executor.map(_process_profile, profiles)
+            
+        for result in results:
+            if result is not None:
+                user_id, emb = result
+                try:
+                    vault_index.add_identity(user_id, emb)
+                except Exception as e:
+                    print(f"Failed to add embedding to FAISS for {user_id}: {e}", flush=True)
+
         print(f"FAISS index hydrated with {vault_index.index.ntotal} records.", flush=True)
     finally:
         session.close()
