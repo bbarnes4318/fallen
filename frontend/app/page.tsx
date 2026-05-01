@@ -1170,7 +1170,7 @@ export default function Home() {
             </div>
 
             {/* ── RIGHT PANEL (30%): Intelligence Panel — Human-Readable ── */}
-            <div className="w-[30%] flex flex-col gap-2 min-h-0 overflow-y-auto overflow-x-hidden shrink-0 min-w-0 pr-0.5">
+            <div className="w-[30%] flex flex-col gap-2 min-h-0 overflow-y-auto overflow-x-hidden shrink-0 min-w-0 break-words pr-0.5">
 
               {/* ═══ OVERALL MATCH — Hero Score ═══ */}
               <div className={`relative overflow-hidden rounded-lg p-4 border-2 ${(results.fused_identity_score < 40.0) ? 'border-red-700/60 bg-gradient-to-br from-[#1a0505] to-[#0d0d0e]' : 'border-[#D4AF37]/50 bg-gradient-to-br from-[#1a170d] to-[#0d0d0e]'}`}>
@@ -1178,15 +1178,15 @@ export default function Home() {
                 <div className={`absolute -bottom-4 -left-4 w-16 h-16 rounded-full ${(results.fused_identity_score < 40.0) ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
                 <div className="relative z-10">
                   <div className={`text-[8px] tracking-[0.3em] mb-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/70' : 'text-[#D4AF37]/70'}`}>POSTERIOR PROBABILITY</div>
-                  <div className="flex items-baseline gap-1.5">
+                  <div className="flex items-baseline gap-1.5 flex-wrap overflow-hidden min-w-0 w-full">
                     <span className={`text-4xl font-bold tabular-nums ${(results.fused_identity_score < 40.0) ? 'text-red-400' : 'text-[#D4AF37]'}`}>{results.fused_identity_score}</span>
                     <span className={`text-lg font-bold ${(results.fused_identity_score < 40.0) ? 'text-red-400/60' : 'text-[#D4AF37]/60'}`}>%</span>
                   </div>
                   {/* LR_total context */}
                   {results.audit_log?.lr_total != null && (
-                    <div className="mt-1.5 flex items-center gap-2">
-                      <span className="text-[8px] text-gray-500 tracking-wider">LR<sub>total</sub></span>
-                      <span className={`text-[11px] font-bold tabular-nums ${(results.fused_identity_score < 40.0) ? 'text-red-400/80' : 'text-[#D4AF37]/90'}`}>{formatLR(results.audit_log.lr_total)}</span>
+                    <div className="mt-1.5 flex items-center gap-2 max-w-full">
+                      <span className="text-[8px] text-gray-500 tracking-wider shrink-0">LR<sub>total</sub></span>
+                      <span className={`text-[11px] font-bold tabular-nums truncate ${(results.fused_identity_score < 40.0) ? 'text-red-400/80' : 'text-[#D4AF37]/90'}`}>{formatLR(results.audit_log.lr_total)}</span>
                     </div>
                   )}
                   {/* Score bar */}
@@ -1391,10 +1391,10 @@ export default function Home() {
               {/* ── Technical Details (3-column) ── */}
               {auditExpanded && results.audit_log && (
                 <div className="border border-[#1a1a0a] bg-[#000000] rounded p-2.5 font-mono text-[9px] leading-relaxed shadow-[inset_0_0_30px_rgba(0,0,0,0.5)]">
-                  <div className="grid grid-cols-2 gap-4 mt-1">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-1 w-full min-w-0">
 
                     {/* Block 1: Confidence & Accuracy */}
-                    <div className="border border-[#1a2a1a] rounded p-2 bg-[#010201]">
+                    <div className="border border-[#1a2a1a] rounded p-2 bg-[#010201] min-w-0">
                       <div className="text-green-500/80 tracking-[0.2em] mb-1 border-b border-green-900/30 pb-1 text-[8px]">▸ CONFIDENCE &amp; ACCURACY</div>
                       <p className="text-[7px] text-gray-600 mb-1.5 leading-relaxed">How confident is the system in this result? Lower error rates mean higher reliability.</p>
                       <div className="space-y-0.5 pl-1">
@@ -1409,7 +1409,7 @@ export default function Home() {
                     </div>
 
                     {/* Block 2: Image Quality & Authenticity */}
-                    <div className="border border-[#2a1a1a] rounded p-2 bg-[#020101]">
+                    <div className="border border-[#2a1a1a] rounded p-2 bg-[#020101] min-w-0">
                       <div className="text-cyan-500/80 tracking-[0.2em] mb-1 border-b border-cyan-900/30 pb-1 text-[8px]">▸ IMAGE QUALITY &amp; AUTHENTICITY</div>
                       <p className="text-[7px] text-gray-600 mb-1.5 leading-relaxed">How were the photos corrected for comparison, and are they real photographs?</p>
                       <div className="space-y-0.5 pl-1">
@@ -1430,31 +1430,31 @@ export default function Home() {
                     </div>
 
                     {/* Block 3: Security & Data Integrity */}
-                    <div className="border border-[#1a1a2a] rounded p-2 bg-[#010102]">
+                    <div className="border border-[#1a1a2a] rounded p-2 bg-[#010102] min-w-0">
                       <div className="text-amber-500/80 tracking-[0.2em] mb-1 border-b border-amber-900/30 pb-1 text-[8px]">▸ SECURITY &amp; DATA INTEGRITY</div>
                       <p className="text-[7px] text-gray-600 mb-1.5 leading-relaxed">Cryptographic proof that the biometric data was not tampered with during analysis.</p>
                       <div className="space-y-0.5 pl-1">
                         {results.audit_log.vector_hash && (
-                          <div><span className="text-gray-500">Digital Fingerprint</span><div className="text-amber-300/80 text-[8px] break-all whitespace-normal overflow-hidden mt-0.5">{results.audit_log.vector_hash}</div></div>
+                          <div><span className="text-gray-500">Digital Fingerprint</span><div className="text-amber-300/80 text-[8px] break-all whitespace-pre-wrap w-full min-w-0 mt-0.5">{results.audit_log.vector_hash}</div></div>
                         )}
                         {results.audit_log.crypto_envelope && (<>
-                          <div className="flex justify-between mt-1"><span className="text-gray-500">Encryption Standard</span><span className="text-amber-300">{results.audit_log.crypto_envelope.standard}</span></div>
-                          <div className="flex justify-between"><span className="text-gray-500">Decryption Speed</span><span className="text-amber-300">{results.audit_log.crypto_envelope.decryption_time}</span></div>
+                          <div className="flex justify-between items-start gap-2 break-words w-full min-w-0 mt-1"><span className="text-gray-500">Encryption Standard</span><span className="text-amber-300">{results.audit_log.crypto_envelope.standard}</span></div>
+                          <div className="flex justify-between items-start gap-2 break-words w-full min-w-0"><span className="text-gray-500">Decryption Speed</span><span className="text-amber-300">{results.audit_log.crypto_envelope.decryption_time}</span></div>
                         </>)}
                         {results.audit_log.matched_user_id && (
-                          <div className="flex justify-between mt-1"><span className="text-gray-500">Matched Profile ID</span><span className="text-white">{results.audit_log.matched_user_id}</span></div>
+                          <div className="flex justify-between items-start gap-2 break-words w-full min-w-0 mt-1"><span className="text-gray-500">Matched Profile ID</span><span className="text-white">{results.audit_log.matched_user_id}</span></div>
                         )}
                         {results.audit_log.person_name && (
-                          <div className="flex justify-between"><span className="text-gray-500">Matched Name</span><span className="text-white">{results.audit_log.person_name}</span></div>
+                          <div className="flex justify-between items-start gap-2 break-words w-full min-w-0"><span className="text-gray-500">Matched Name</span><span className="text-white">{results.audit_log.person_name}</span></div>
                         )}
                         {results.audit_log.license_short_name && (
-                          <div className="flex justify-between"><span className="text-gray-500">Image License</span><span className="text-gray-400">{results.audit_log.license_short_name}</span></div>
+                          <div className="flex justify-between items-start gap-2 break-words w-full min-w-0"><span className="text-gray-500">Image License</span><span className="text-gray-400">{results.audit_log.license_short_name}</span></div>
                         )}
                       </div>
                     </div>
 
                     {/* Block 4: Bayesian Evidence — Daubert Forensic Trail */}
-                    <div className="border border-[#2a1a2a] rounded p-2 bg-[#020102]">
+                    <div className="border border-[#2a1a2a] rounded p-2 bg-[#020102] min-w-0">
                       <div className="text-purple-400/80 tracking-[0.2em] mb-1 border-b border-purple-900/30 pb-1 text-[8px]">▸ BAYESIAN EVIDENCE (DAUBERT v3.0)</div>
                       <p className="text-[8px] break-words text-gray-600 mb-1.5 leading-relaxed">Likelihood Ratios quantifying the strength of evidence for same-identity hypothesis.</p>
                       <div className="space-y-0.5 pl-1">
