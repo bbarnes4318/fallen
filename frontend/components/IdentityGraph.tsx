@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
 
@@ -225,7 +225,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
 
   // Pre-load all node thumbnails when graph data arrives
   useEffect(() => {
-    graphData.nodes.forEach((node) => {
+    graphData.nodes.forEach((node: GraphNode) => {
       if (node.thumbnail) loadImage(node.thumbnail);
     });
   }, [graphData, loadImage]);
@@ -237,7 +237,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
   const nodeMap = useRef<Map<string, GraphNode>>(new Map());
   useEffect(() => {
     const m = new Map<string, GraphNode>();
-    graphData.nodes.forEach((n) => m.set(n.id, n));
+    graphData.nodes.forEach((n: GraphNode) => m.set(n.id, n));
     nodeMap.current = m;
   }, [graphData]);
 
