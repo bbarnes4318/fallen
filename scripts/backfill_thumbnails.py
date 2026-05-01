@@ -1,5 +1,5 @@
 """
-AurumShield — Backfill thumbnail_url for LFW profiles
+Fallen — Backfill thumbnail_url for LFW profiles
 =====================================================
 Sets thumbnail_url = gs://hoppwhistle-facial-uploads/gallery/{stem}.jpg
 for all profiles where thumbnail_url IS NULL and source = 'LFW Academic Dataset'.

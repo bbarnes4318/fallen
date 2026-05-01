@@ -141,7 +141,7 @@ export default function App() {
           </h1>
           
           <p className="text-lg md:text-xl text-slate-400 leading-relaxed max-w-xl">
-            A Daubert-compliant biometric engine fusing 512-D embeddings, geometric analysis, micro-topology, and Hungarian mark correspondence. Court-admissible forensics.
+            A Forensic-Grade biometric engine fusing 512-D embeddings, geometric analysis, micro-topology, and Hungarian mark correspondence. Forensic-Grade forensics.
           </p>
           
           <div className="flex flex-col sm:flex-row gap-4 pt-4">
@@ -224,7 +224,7 @@ export default function App() {
               <div className="flex items-center"><span className="text-emerald-500 mr-2">●</span> PAD: BLUR_CHECK_PASSED (142.8σ²)</div>
               <div className="flex items-center"><span className="text-amber-500 mr-2">●</span> MARK CORRESPONDENCE: MATCHED</div>
               <div className="flex items-center"><span className="text-cyan-500 mr-2">●</span> FUSED EER: 0.2031</div>
-              <div className="flex items-center"><span className="text-amber-500 mr-2">●</span> WORM ANCHOR: COMMITTED</div>
+              <div className="flex items-center"><span className="text-amber-500 mr-2">●</span> Immutable ANCHOR: COMMITTED</div>
             </React.Fragment>
           ))}
         </div>
@@ -298,7 +298,7 @@ export default function App() {
                 Interactive <br/>Identity Graph.
               </h2>
               <p className="text-slate-400 text-lg leading-relaxed">
-                The completely overhauled UI maps sovereign identity networks asynchronously. Identify critical matches and track high-connectivity anomalies through a visual thumbnail graph linked to comprehensive entity dossiers.
+                The completely overhauled UI maps Fallen identity networks asynchronously. Identify critical matches and track high-connectivity anomalies through a visual thumbnail graph linked to comprehensive entity dossiers.
               </p>
               
               <div className="pt-6 space-y-6">
@@ -580,7 +580,7 @@ export default function App() {
                 <div className="p-6 bg-[#0B1120] text-sm font-mono overflow-x-auto">
                   {activeTab === 'request' ? (
                     <pre className="text-slate-300">
-                      <code dangerouslySetInnerHTML={{__html: `curl -X POST https://api.aurumshield.com/v2/verify/fuse \\
+                      <code dangerouslySetInnerHTML={{__html: `curl -X POST https://api.Fallen.com/v2/verify/fuse \\
   -H "Authorization: Bearer <span class="text-emerald-400">sk_live_...</span>" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -620,7 +620,7 @@ export default function App() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
            <div className="p-6 rounded-lg bg-slate-900/30 border border-slate-800/50 flex flex-col items-center">
              <Database className="w-6 h-6 text-cyan-500 mb-3" />
-             <div className="text-sm font-bold text-white mb-1">WORM Immutable Ledger</div>
+             <div className="text-sm font-bold text-white mb-1">Immutable Immutable Ledger</div>
              <div className="text-xs text-slate-500">Cryptographically Anchored</div>
            </div>
            <div className="p-6 rounded-lg bg-slate-900/30 border border-slate-800/50 flex flex-col items-center">
@@ -656,7 +656,7 @@ export default function App() {
         
         <div className="border-t border-slate-900 py-8">
           <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center text-xs font-mono text-slate-600">
-            <div>© 2026 AURUMSHIELD FORENSICS. ALL RIGHTS RESERVED.</div>
+            <div>© 2026 Fallen FORENSICS. ALL RIGHTS RESERVED.</div>
             <div className="flex space-x-6 mt-4 md:mt-0">
               <a href="#" className="hover:text-slate-400 transition-colors">METHODOLOGY.MD</a>
               <a href="#" className="hover:text-slate-400 transition-colors">API REF</a>

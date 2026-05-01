@@ -434,7 +434,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
 
       {/* ── Status Bar ── */}
       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-[9px] text-gray-600 font-mono tracking-widest pointer-events-none">
-        NODES: {graphData.nodes.length} &nbsp;│&nbsp; EDGES: {graphData.links.length} &nbsp;│&nbsp; SOVEREIGN IDENTITY GRAPH
+        NODES: {graphData.nodes.length} &nbsp;│&nbsp; EDGES: {graphData.links.length} &nbsp;│&nbsp; IDENTITY GRAPH
       </div>
 
       {/* ── Entity Dossier Side Panel ── */}

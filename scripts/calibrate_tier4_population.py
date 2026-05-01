@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 =============================================================================
-  AURUMSHIELD — TIER 4 BAYESIAN POPULATION CALIBRATION ENGINE
-  Daubert-Compliant Background Model for Likelihood Ratio Framework
+  Fallen — TIER 4 BAYESIAN POPULATION CALIBRATION ENGINE
+  Forensic-Grade Background Model for Likelihood Ratio Framework
 =============================================================================
 
 Processes the LFW dataset (~9,000+ images) to build:
@@ -497,8 +497,8 @@ def build_intra_person_model(person_images, per_image_marks):
 
 def main():
     print(f"\n{_C.GOLD}══════════════════════════════════════════════════════════════════{_C.RESET}")
-    print(f"  AURUMSHIELD — TIER 4 BAYESIAN CALIBRATION ENGINE")
-    print(f"  Daubert-Compliant Population Model Builder")
+    print(f"  Fallen — TIER 4 BAYESIAN CALIBRATION ENGINE")
+    print(f"  Forensic-Grade Population Model Builder")
     print(f"{_C.GOLD}══════════════════════════════════════════════════════════════════{_C.RESET}\n")
 
     t_start = time.time()
@@ -520,7 +520,7 @@ def main():
 
     # 4. Assemble and serialize
     calibration = {
-        "version": "AurumShield Tier4 Bayesian Calibration v1.0",
+        "version": "Fallen Tier4 Bayesian Calibration v1.0",
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "dataset": "LFW (Labeled Faces in the Wild)",
         "population_size": total_images,

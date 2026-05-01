@@ -1,8 +1,8 @@
 """
-AurumShield — WORM Ledger Anchoring (Legal Non-Repudiation)
+Fallen — Immutable Ledger Anchoring (Legal Non-Repudiation)
 ============================================================
 Cryptographically anchors the mutable PostgreSQL VerificationEvent
-ledger to an immutable GCS WORM bucket to prove records were not
+ledger to an immutable GCS Immutable bucket to prove records were not
 altered post-transaction.
 
 This script:
@@ -16,7 +16,7 @@ Designed to run nightly via Google Cloud Scheduler.
 
 NOTE: The target GCS bucket path should be manually configured with a
 Bucket Lock / Retention Policy to ensure these anchor hashes can never
-be deleted or overwritten, achieving true WORM compliance.
+be deleted or overwritten, achieving true Immutable compliance.
 
 Usage:
     python anchor_ledger.py

@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "AurumShield — Daubert-Compliant Biometric Architecture",
+  title: "Fallen — Biometric Architecture",
   description:
-    "Sovereign-grade identity verification fusing 512-D deep neural embeddings with Bayesian Likelihood Ratio forensics. Tier 1–4 pipeline architecture, AES-256-GCM envelope encryption, and courtroom-ready chain of custody.",
+    "High-grade identity verification fusing 512-D deep neural embeddings with Bayesian Likelihood Ratio forensics. Tier 1–4 pipeline architecture, AES-256-GCM envelope encryption.",
 };
 
 /* ── Design Tokens ── */
@@ -120,7 +120,7 @@ const TIERS = [
     id: "04",
     label: "TIER 4",
     title: "Bayesian Mark Correspondence",
-    subtitle: "Daubert-Compliant Likelihood Ratio",
+    subtitle: "Likelihood Ratio",
     color: C.gold,
     borderColor: C.borderGold,
     bgAccent: C.goldDim,
@@ -216,7 +216,7 @@ export default function ArchitecturePage() {
           {/* Breadcrumb */}
           <div className="flex items-center gap-2 mb-10" style={{ color: C.textDim }}>
             <a href="/" className="text-[11px] tracking-[0.2em] uppercase hover:underline" style={{ color: C.goldMuted }}>
-              AurumShield
+              Fallen
             </a>
             <span className="text-[10px]">/</span>
             <span className="text-[11px] tracking-[0.2em] uppercase">Architecture</span>
@@ -232,14 +232,14 @@ export default function ArchitecturePage() {
             }}
           >
             <span className="w-1.5 h-1.5 inline-block" style={{ background: C.gold }} />
-            TECHNICAL REFERENCE — DAUBERT-COMPLIANT v3.0
+            TECHNICAL REFERENCE
           </div>
 
           <h1
             className="text-[clamp(28px,4vw,48px)] font-bold leading-[1.1] tracking-tight mb-6"
             style={{ color: C.text }}
           >
-            Daubert-Compliant<br />
+            Forensic-Grade<br />
             <span style={{ color: C.gold }}>Biometric Architecture</span>
           </h1>
 
@@ -247,8 +247,8 @@ export default function ArchitecturePage() {
             className="text-[15px] leading-[1.8] max-w-[680px] mb-10"
             style={{ color: C.textMuted }}
           >
-            AurumShield fuses deep neural network embeddings with Bayesian
-            statistical inference to produce sovereign-grade identity
+            Fallen fuses deep neural network embeddings with Bayesian
+            statistical inference to produce high-grade identity
             verification. Four independent evidence channels — structural,
             geometric, textural, and physical mark correspondence — are
             combined through a mathematically rigorous Likelihood Ratio
@@ -520,12 +520,12 @@ export default function ArchitecturePage() {
           <div className="flex items-center justify-center gap-3 mb-3">
             <div className="h-px w-12" style={{ background: C.borderGold }} />
             <span className="text-[10px] tracking-[0.3em] uppercase font-bold" style={{ color: C.gold }}>
-              AurumShield
+              Fallen
             </span>
             <div className="h-px w-12" style={{ background: C.borderGold }} />
           </div>
           <p className="text-[10px] leading-[1.8]" style={{ color: C.textDim }}>
-            Sovereign Identity Verification · Daubert-Compliant Forensic Engine · v3.0
+            Identity Verification · Forensic Engine · v3.0
           </p>
           <p className="text-[9px] mt-2" style={{ color: C.textDim }}>
             This document constitutes a technical reference for qualified auditors and institutional evaluators.

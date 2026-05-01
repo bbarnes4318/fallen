@@ -36,7 +36,7 @@ function TelemetryLoader() {
     "[tier_4] Querying population frequency database...",
     "[tier_4] Calculating Bayesian Likelihood Ratios...",
     "[sys] Fusing independent identity scores...",
-    "[sys] Finalizing Daubert-compliant audit trail..."
+    "[sys] Finalizing audit trail..."
   ];
 
   useEffect(() => {
@@ -440,8 +440,8 @@ export default function Home() {
           <div style="border-bottom:2px solid #D4AF37;padding-bottom:10px;margin-bottom:12px;flex-shrink:0;">
             <div style="display:flex;justify-content:space-between;align-items:flex-end;">
               <div>
-                <div style="font-size:8px;color:#D4AF37;letter-spacing:5px;margin-bottom:2px;">▓▓ CLASSIFIED ▓▓</div>
-                <div style="font-size:16px;font-weight:bold;color:white;letter-spacing:3px;">AURUMSHIELD <span style="color:#D4AF37;">BIOMETRIC DOSSIER</span></div>
+                <div style="font-size:8px;color:#D4AF37;letter-spacing:5px;margin-bottom:2px;">▓▓ REPORT ▓▓</div>
+                <div style="font-size:16px;font-weight:bold;color:white;letter-spacing:3px;">FALLEN <span style="color:#D4AF37;">BIOMETRIC DOSSIER</span></div>
               </div>
               <div style="text-align:right;">
                 <div style="font-size:7px;color:#555;letter-spacing:2px;">GENERATED ${ts} UTC</div>
@@ -536,7 +536,7 @@ export default function Home() {
 
           <!-- FOOTER -->
           <div style="margin-top:8px;padding-top:6px;border-top:1px solid #1a1a0a;display:flex;justify-content:space-between;flex-shrink:0;">
-            <div style="font-size:6px;color:#333;letter-spacing:2px;">AURUMSHIELD BIOMETRIC INTELLIGENCE · CLASSIFIED</div>
+            <div style="font-size:6px;color:#333;letter-spacing:2px;">FALLEN BIOMETRIC INTELLIGENCE</div>
             <div style="font-size:6px;color:#333;letter-spacing:2px;">DOC ${docId} · ${ts}</div>
           </div>
         </div>
@@ -564,7 +564,7 @@ export default function Home() {
       pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
 
       const fileTs = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      pdf.save(`AURUMSHIELD_DOSSIER_${fileTs}.pdf`);
+      pdf.save(`FALLEN_DOSSIER_${fileTs}.pdf`);
     } catch (err) {
       console.error('PDF export failed:', err);
     } finally {
@@ -575,13 +575,13 @@ export default function Home() {
   // ─── State for login overlay on landing page ─────────
   const [showLoginOverlay, setShowLoginOverlay] = useState(false);
 
-  // ─── SOVEREIGN IDENTITY GATEWAY (Landing Page) ───────
+  // ─── IDENTITY GATEWAY (Landing Page) ───────
   if (!token) {
     return (
       <main className="min-h-screen w-full bg-[#050A10] text-[#E0E0E0] selection:bg-[#D4AF37] selection:text-black overflow-y-auto overflow-x-hidden">
 
         {/* ═══════════════════════════════════════════════
-            SECTION 1: HERO — Sovereign Identity Gateway
+            SECTION 1: HERO — Identity Gateway
             ═══════════════════════════════════════════════ */}
         <section className="relative min-h-screen flex flex-col">
 
@@ -621,7 +621,7 @@ export default function Home() {
             <div className="relative z-10 max-w-3xl">
               <div className="text-[#D4AF37]/60 text-[10px] tracking-[0.5em] font-mono mb-6 flex items-center justify-center gap-3">
                 <div className="w-8 h-[1px] bg-[#D4AF37]/30"></div>
-                SOVEREIGN FACIAL INTELLIGENCE
+                FALLEN FACIAL INTELLIGENCE
                 <div className="w-8 h-[1px] bg-[#D4AF37]/30"></div>
               </div>
 
@@ -687,7 +687,7 @@ export default function Home() {
               </div>
               <div>
                 <div className="text-2xl font-bold text-white font-mono tracking-wider">AES-256</div>
-                <div className="text-[10px] text-gray-500 tracking-[0.15em]">SOVEREIGN GCM ENCRYPTION</div>
+                <div className="text-[10px] text-gray-500 tracking-[0.15em]">GCM ENCRYPTION</div>
               </div>
             </div>
           </div>
@@ -1316,7 +1316,7 @@ export default function Home() {
                         {results.marks_matched} corresponding marks matched across both faces
                       </span>
                     </div>
-                    <div className="text-[7px] text-[#D4AF37]/50 mt-1 tracking-wide">Daubert-compliant · Bayesian LR fusion · P(same|evidence) = LR/(LR+1)</div>
+                    <div className="text-[7px] text-[#D4AF37]/50 mt-1 tracking-wide">Bayesian LR fusion · P(same|evidence) = LR/(LR+1)</div>
                   </div>
                 )}
               </div>

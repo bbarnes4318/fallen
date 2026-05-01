@@ -1,5 +1,5 @@
 """
-AurumShield — Identity Graph Generator (Cloud Run Job)
+Fallen — Identity Graph Generator (Cloud Run Job)
 =======================================================
 Decoupled from the /vault/network API endpoint to eliminate O(N²)
 KMS decryption and cosine computation at request time.

@@ -1,5 +1,5 @@
 """
-LFW Benchmark Calibration Script for AurumShield
+LFW Benchmark Calibration Script for Fallen
 =================================================
 Fetches the official LFW dataset via Hugging Face Datasets CDN and evaluates
 the full biometric pipeline (ArcFace cosine, geometric L2, LBP chi-squared)
@@ -354,7 +354,7 @@ def run_calibration():
         "genuine_pairs": int(np.sum(labels_arr == 1)),
         "impostor_pairs": int(np.sum(labels_arr == 0)),
         "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-        "pipeline_version": "AurumShield v2.0 — Daubert-Compliant",
+        "pipeline_version": "Fallen v2.0 — Forensic-Grade",
         "arcface": arcface_metrics,
         "geometric_l2": geo_metrics,
         "lbp_chi_squared": lbp_metrics,

@@ -127,7 +127,7 @@ export default function App() {
           </h1>
           
           <p className="text-lg md:text-xl text-slate-400 leading-relaxed max-w-xl">
-            A Daubert-compliant biometric engine fusing 512-D structural embeddings, 468-node geometric analysis, and LBP micro-topology. Court-admissible forensics.
+            A Forensic-Grade biometric engine fusing 512-D structural embeddings, 468-node geometric analysis, and LBP micro-topology. Forensic-Grade forensics.
           </p>
           
           <div className="flex flex-col sm:flex-row gap-4 pt-4">
@@ -209,7 +209,7 @@ export default function App() {
               <div className="flex items-center"><span className="text-cyan-500 mr-2">●</span> PRE-DECODE HASH: ENABLED </div>
               <div className="flex items-center"><span className="text-emerald-500 mr-2">●</span> PAD: BLUR_CHECK_PASSED (142.8σ²)</div>
               <div className="flex items-center"><span className="text-cyan-500 mr-2">●</span> FUSED EER: 0.2031</div>
-              <div className="flex items-center"><span className="text-amber-500 mr-2">●</span> WORM ANCHOR: COMMITTED</div>
+              <div className="flex items-center"><span className="text-amber-500 mr-2">●</span> Immutable ANCHOR: COMMITTED</div>
             </React.Fragment>
           ))}
         </div>
@@ -390,7 +390,7 @@ export default function App() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
            <div className="p-6 rounded-lg bg-slate-900/30 border border-slate-800/50 flex flex-col items-center">
              <Database className="w-6 h-6 text-cyan-500 mb-3" />
-             <div className="text-sm font-bold text-white mb-1">WORM Immutable Ledger</div>
+             <div className="text-sm font-bold text-white mb-1">Immutable Immutable Ledger</div>
              <div className="text-xs text-slate-500">Cryptographically Anchored</div>
            </div>
            <div className="p-6 rounded-lg bg-slate-900/30 border border-slate-800/50 flex flex-col items-center">
@@ -426,7 +426,7 @@ export default function App() {
         
         <div className="border-t border-slate-900 py-8">
           <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center text-xs font-mono text-slate-600">
-            <div>© 2026 AURUMSHIELD FORENSICS. ALL RIGHTS RESERVED.</div>
+            <div>© 2026 Fallen FORENSICS. ALL RIGHTS RESERVED.</div>
             <div className="flex space-x-6 mt-4 md:mt-0">
               <a href="#" className="hover:text-slate-400 transition-colors">METHODOLOGY.MD</a>
               <a href="#" className="hover:text-slate-400 transition-colors">API REF</a>

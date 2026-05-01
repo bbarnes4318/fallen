@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 =============================================================================
-  AURUMSHIELD — GALLERY THUMBNAIL RE-UPLOAD JOB
+  Fallen — GALLERY THUMBNAIL RE-UPLOAD JOB
   Backfills face thumbnails for all LFW profiles missing thumbnail_url
 =============================================================================
 
@@ -103,7 +103,7 @@ def upload_face_to_gcs(aligned_img, filename: str) -> str:
 
 def main():
     print(f"\n{_C.GOLD}══════════════════════════════════════════════════════════════════{_C.RESET}")
-    print(f"  AURUMSHIELD GALLERY THUMBNAIL RE-UPLOAD ENGINE")
+    print(f"  Fallen GALLERY THUMBNAIL RE-UPLOAD ENGINE")
     print(f"  Backfilling face images for LFW profiles")
     print(f"{_C.GOLD}══════════════════════════════════════════════════════════════════{_C.RESET}\n")
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 =============================================================================
-  AURUMSHIELD — MULTI-THREADED MASS INGESTION ENGINE
+  Fallen — MULTI-THREADED MASS INGESTION ENGINE
   Phase 2: High-Throughput 1:N Vault Population (LFW Bootstrap)
 =============================================================================
 """
@@ -163,7 +163,7 @@ def process_single_image(filepath: str):
 
 def main():
     print(f"\n{_C.GOLD}══════════════════════════════════════════════════════════════════{_C.RESET}")
-    print(f"  AURUMSHIELD MASS INGESTION ENGINE")
+    print(f"  Fallen MASS INGESTION ENGINE")
     print(f"  Target: Labeled Faces in the Wild (13,233 Profiles)")
     print(f"{_C.GOLD}══════════════════════════════════════════════════════════════════{_C.RESET}\n")
 

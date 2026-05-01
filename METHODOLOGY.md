@@ -1,16 +1,16 @@
-# AurumShield Biometric Verification Pipeline
+# Fallen Biometric Verification Pipeline
 ## Forensic Methodology Document
 
 **Version:** 2.0 — Daubert-Standard Compliant  
 **Last Updated:** 2026-04-27  
-**Pipeline Author:** AurumShield Engineering  
-**Document Purpose:** Expert witness exhibit for forensic audits. This document describes every algorithm, threshold, limitation, and calibration methodology used in the AurumShield biometric identity verification system.
+**Pipeline Author:** Fallen Engineering  
+**Document Purpose:** Expert witness exhibit for forensic audits. This document describes every algorithm, threshold, limitation, and calibration methodology used in the Fallen biometric identity verification system.
 
 ---
 
 ## 1. System Overview
 
-AurumShield is a three-tier biometric identity verification system that fuses deep neural network embeddings with anthropometric geometry and texture analysis. The system is designed for 1:1 identity verification and 1:N target acquisition against an encrypted vault.
+Fallen is a three-tier biometric identity verification system that fuses deep neural network embeddings with anthropometric geometry and texture analysis. The system is designed for 1:1 identity verification and 1:N target acquisition against an encrypted vault.
 
 ### 1.1 Architecture Summary
 

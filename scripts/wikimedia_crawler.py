@@ -1,7 +1,7 @@
 """
 ===============================================================
   WIKIMEDIA AUTONOMOUS BIOMETRIC CRAWLER
-  Sovereign Identity Acquisition Daemon — v2 (Multi-Threaded)
+  Fallen Identity Acquisition Daemon — v2 (Multi-Threaded)
 ===============================================================
   Queries Wikidata SPARQL for high-profile entities, pulls images
   via Wikimedia Commons API, runs facial extraction + KMS encryption,
@@ -41,7 +41,7 @@ from main import align_face_crop, extract_arcface_embedding, encrypt_embedding, 
 # -- Constants --
 WIKIDATA_SPARQL_ENDPOINT = "https://query.wikidata.org/sparql"
 COMMONS_API_ENDPOINT = "https://commons.wikimedia.org/w/api.php"
-USER_AGENT = "SovereignBiometricCrawler/1.0 (https://hoppwhistle.com; mailto:admin@hoppwhistle.com)"
+USER_AGENT = "FallenBiometricCrawler/1.0 (https://hoppwhistle.com; mailto:admin@hoppwhistle.com)"
 MIN_FACE_SIZE = 60
 MAX_WORKERS = 5  # Tuned to stay under Wikimedia 429 thresholds
 
@@ -332,7 +332,7 @@ def _process_single_target(target: dict, existing_ids: set) -> dict:
 
 def run_crawler():
     print(f"\n{'=' * 60}")
-    print(f"  SOVEREIGN IDENTITY ACQUISITION DAEMON  v2")
+    print(f"  Fallen IDENTITY ACQUISITION DAEMON  v2")
     print(f"  Wikimedia Commons -> Biometric Vault Pipeline")
     print(f"  Workers: {MAX_WORKERS} | ArcFace 512-D | KMS Encrypted")
     print(f"{'=' * 60}\n")

@@ -327,9 +327,9 @@ class VerificationRequest(BaseModel):
     require_liveness: bool = False
 
 # ---------------------------------------------------------
-# PIPELINE VERSION PINNING (Daubert Reproducibility)
+# PIPELINE VERSION PINNING (Reproducibility)
 # ---------------------------------------------------------
-PIPELINE_VERSION = "AurumShield Daubert-Compliant v4.0 (Ensemble + 3D Procrustes + Bayesian LR)"
+PIPELINE_VERSION = "Fallen Pipeline v4.0 (Ensemble + 3D Procrustes + Bayesian LR)"
 
 def _get_dependency_versions() -> dict:
     """Snapshot the exact versions of critical biometric libraries."""
@@ -2588,13 +2588,13 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
 
 
 # ---------------------------------------------------------
-# VAULT NETWORK TOPOLOGY (SOVEREIGN IDENTITY GRAPH)
+# VAULT NETWORK TOPOLOGY (IDENTITY GRAPH)
 # ---------------------------------------------------------
 
 @app.get("/vault/network")
 def vault_network(_: dict = Depends(verify_jwt)):
     """
-    Phase 3: Sovereign Identity Graph.
+    Phase 3: Identity Graph.
     Returns a signed URL to the pre-computed network topology JSON on GCS.
     The frontend fetches the JSON directly from GCS, bypassing backend I/O.
     """
