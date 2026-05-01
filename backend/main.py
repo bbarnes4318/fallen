@@ -1199,7 +1199,10 @@ def extract_geometric_ratios_3d(landmarks) -> tuple[np.ndarray, dict, dict]:
 
     left_eye = aligned_coords[33]
     right_eye = aligned_coords[263]
-    iod = np.linalg.norm(right_eye - left_eye)
+    def dist2d(p1, p2):
+        return np.linalg.norm(p1[:2] - p2[:2])
+
+    iod = dist2d(right_eye, left_eye)
 
     if iod < 1e-6:
         return np.zeros(12), angles, vis_data
@@ -1215,21 +1218,21 @@ def extract_geometric_ratios_3d(landmarks) -> tuple[np.ndarray, dict, dict]:
     left_eyebrow = aligned_coords[70]
     right_eyebrow = aligned_coords[300]
 
-    jaw_to_chin_r = np.linalg.norm(right_jaw - chin)
+    jaw_to_chin_r = dist2d(right_jaw, chin)
 
     ratios = np.array([
-        np.linalg.norm(nose_tip - chin) / iod,                # Nose-to-chin / IOD
-        np.linalg.norm(nose_bridge - nose_tip) / iod,          # Nose length / IOD
-        np.linalg.norm(left_mouth - right_mouth) / iod,        # Mouth width / IOD
-        np.linalg.norm(forehead_top - chin) / iod,             # Face height / IOD
-        np.linalg.norm(left_jaw - right_jaw) / iod,            # Jaw width / IOD
-        np.linalg.norm(left_eyebrow - left_eye) / iod,         # Left brow height / IOD
-        np.linalg.norm(right_eyebrow - right_eye) / iod,       # Right brow height / IOD
-        np.linalg.norm(nose_tip - left_eye) / iod,             # Nose-to-left-eye / IOD
-        np.linalg.norm(nose_tip - right_eye) / iod,            # Nose-to-right-eye / IOD
-        np.linalg.norm(chin - left_mouth) / iod,               # Chin-to-left-mouth / IOD
-        np.linalg.norm(chin - right_mouth) / iod,              # Chin-to-right-mouth / IOD
-        np.linalg.norm(left_jaw - chin) / jaw_to_chin_r if jaw_to_chin_r > 1e-6 else 1.0,  # Jaw symmetry
+        dist2d(nose_tip, chin) / iod,                # Nose-to-chin / IOD
+        dist2d(nose_bridge, nose_tip) / iod,          # Nose length / IOD
+        dist2d(left_mouth, right_mouth) / iod,        # Mouth width / IOD
+        dist2d(forehead_top, chin) / iod,             # Face height / IOD
+        dist2d(left_jaw, right_jaw) / iod,            # Jaw width / IOD
+        dist2d(left_eyebrow, left_eye) / iod,         # Left brow height / IOD
+        dist2d(right_eyebrow, right_eye) / iod,       # Right brow height / IOD
+        dist2d(nose_tip, left_eye) / iod,             # Nose-to-left-eye / IOD
+        dist2d(nose_tip, right_eye) / iod,            # Nose-to-right-eye / IOD
+        dist2d(chin, left_mouth) / iod,               # Chin-to-left-mouth / IOD
+        dist2d(chin, right_mouth) / iod,              # Chin-to-right-mouth / IOD
+        dist2d(left_jaw, chin) / jaw_to_chin_r if jaw_to_chin_r > 1e-6 else 1.0,  # Jaw symmetry
     ])
 
     return ratios, angles, vis_data
@@ -1650,21 +1653,9 @@ def generate_scar_delta_map(
     # Paint neon crimson (BGRA: 30, 0, 180, 255) where scars are detected
     canvas[true_scars > 0] = (30, 0, 180, 255)
 
-    # 7. Overlay detected mark circles (from Tier 4 engine)
-    if marks_gallery and mark_matches is not None:
-        matched_gallery_indices = {m[0] for m in mark_matches} if mark_matches else set()
-
-        for i, mark in enumerate(marks_gallery):
-            cx = int(mark["centroid"][0] * w)
-            cy = int(mark["centroid"][1] * h)
-            radius = max(4, int(np.sqrt(mark["area"]) * 0.8))
-
-            if i in matched_gallery_indices:
-                # Green circle — matched mark (confirmed in both faces)
-                cv2.circle(canvas, (cx, cy), radius, (0, 220, 80, 255), 2, cv2.LINE_AA)
-            else:
-                # Yellow circle — unmatched mark (only in gallery)
-                cv2.circle(canvas, (cx, cy), radius, (0, 200, 220, 255), 1, cv2.LINE_AA)
+    # Removed drawing of mark circles from backend.
+    # The frontend now draws perfectly scaled and aligned SVG-style 
+    # vector circles for both the gallery and the probe images dynamically.
 
     # 8. Encode to base64 data URI
     _, buffer = cv2.imencode('.png', canvas)
@@ -2014,14 +2005,14 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     valid_gallery_marks = []
     for m in marks_gallery:
         cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
-        if cy < 256 and cx < 256 and occ_probe[cy, cx] == 0:
+        if cy < 256 and cx < 256 and occ_gallery[cy, cx] == 0:
             clean_m = {k: v for k, v in m.items() if k != "contour"}
             valid_gallery_marks.append(clean_m)
             
     valid_probe_marks = []
     for m in marks_probe:
         cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
-        if cy < 256 and cx < 256 and occ_gallery[cy, cx] == 0:
+        if cy < 256 and cx < 256 and occ_probe[cy, cx] == 0:
             clean_m = {k: v for k, v in m.items() if k != "contour"}
             valid_probe_marks.append(clean_m)
 
@@ -2389,14 +2380,14 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     valid_gallery_marks = []
     for m in marks_gallery:
         cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
-        if cy < 256 and cx < 256 and occ_probe[cy, cx] == 0:
+        if cy < 256 and cx < 256 and occ_gallery[cy, cx] == 0:
             clean_m = {k: v for k, v in m.items() if k != "contour"}
             valid_gallery_marks.append(clean_m)
             
     valid_probe_marks = []
     for m in marks_probe:
         cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
-        if cy < 256 and cx < 256 and occ_gallery[cy, cx] == 0:
+        if cy < 256 and cx < 256 and occ_probe[cy, cx] == 0:
             clean_m = {k: v for k, v in m.items() if k != "contour"}
             valid_probe_marks.append(clean_m)
 

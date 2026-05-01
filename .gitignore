@@ -21,3 +21,9 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Data & Models
+datasets/
+backend/calibration_data/
+*.jpg
+*.xlsx

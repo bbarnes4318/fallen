@@ -108,21 +108,24 @@ function drawPane(
 
   if (points && points.length > 0) {
     points.forEach(p => {
+      if (p.x === undefined || p.y === undefined) return;
       const px = p.x * iw;
       const py = p.y * ih;
+      // Area is calculated in image pixel space in backend. 
+      // Since canvas is scaled, we don't divide radius by scale, only strokeWidth.
+      const r = Math.max(4, Math.sqrt(p.area || 0) * 0.8);
+      
       ctx.beginPath();
-      ctx.arc(px, py, Math.max(2, 4 / scale), 0, 2 * Math.PI);
+      ctx.arc(px, py, r, 0, 2 * Math.PI);
       
       if (p.isMatched === false) {
-        ctx.fillStyle = 'rgba(255, 32, 64, 0.9)'; // Red for missing correspondence
-        ctx.strokeStyle = '#5a0015';
+        ctx.strokeStyle = 'rgba(0, 200, 220, 0.9)'; // Yellow
+        ctx.lineWidth = 1 / scale;
       } else {
-        ctx.fillStyle = 'rgba(212, 175, 55, 0.9)'; // Gold color for matched marks
-        ctx.strokeStyle = '#111';
+        ctx.strokeStyle = 'rgba(0, 220, 80, 0.9)'; // Green
+        ctx.lineWidth = 2 / scale;
       }
       
-      ctx.fill();
-      ctx.lineWidth = 1.5 / scale;
       ctx.stroke();
     });
   }
@@ -181,9 +184,9 @@ export default function SymmetryMerge({
   // ── LEFT PANE = PROBE (+ wireframe in mesh mode) ──
   const getLeftOverlay = useCallback((): HTMLImageElement | null => {
     if (mode === 'mesh' && pWireImg) return pWireImg;
-    if (mode === 'delta') return null;
+    if (mode === 'delta' && deltaImg) return deltaImg;
     return null;
-  }, [mode, pWireImg]);
+  }, [mode, pWireImg, deltaImg]);
 
   // ── RIGHT PANE = GALLERY (+ delta overlay in delta mode, + wireframe in mesh mode) ──
   const getRightOverlay = useCallback((): HTMLImageElement | null => {
@@ -203,34 +206,40 @@ export default function SymmetryMerge({
   const baseOpacity = isXrayMode && hasOverlay ? 0.1 : 1.0;
   const overlayOpacity = isXrayMode && hasOverlay ? 1.0 : (mode === 'delta' ? 0.7 : 0.85);
 
+  const getPointCoords = (pt: any) => {
+    if (!pt) return { x: undefined, y: undefined, area: 0 };
+    if (pt.centroid) return { x: pt.centroid[0], y: pt.centroid[1], area: pt.area || 0 };
+    if (pt[0] !== undefined) return { x: pt[0], y: pt[1], area: pt[2] || 0 };
+    return { x: pt.x, y: pt.y, area: pt.area || 0 };
+  };
+
   const getIsMatched = (pt: any, side: 'probe' | 'gallery') => {
     if (!results?.correspondences) return false;
+    const { x: pX, y: pY } = getPointCoords(pt);
+    if (pX === undefined || pY === undefined) return false;
     return results.correspondences.some((c: any) => {
       const cPt = c[`${side}_pt`];
       if (!cPt) return false;
-      const pX = pt[0] !== undefined ? pt[0] : pt.x;
-      const pY = pt[1] !== undefined ? pt[1] : pt.y;
-      const cx = cPt[0] !== undefined ? cPt[0] : cPt.x;
-      const cy = cPt[1] !== undefined ? cPt[1] : cPt.y;
+      const { x: cx, y: cy } = getPointCoords(cPt);
+      if (cx === undefined || cy === undefined) return false;
       return Math.abs(pX - cx) < 0.001 && Math.abs(pY - cy) < 0.001;
     });
   };
 
   const mapPoint = (m: any, side: 'probe' | 'gallery') => {
-    const x = m[0] !== undefined ? m[0] : m.x;
-    const y = m[1] !== undefined ? m[1] : m.y;
+    const { x, y, area } = getPointCoords(m);
     let lr = m.lr;
     if (lr === undefined && results?.correspondences) {
       const corr = results.correspondences.find((c: any) => {
         const cPt = c[`${side}_pt`];
         if (!cPt) return false;
-        const cx = cPt[0] !== undefined ? cPt[0] : cPt.x;
-        const cy = cPt[1] !== undefined ? cPt[1] : cPt.y;
+        const { x: cx, y: cy } = getPointCoords(cPt);
+        if (cx === undefined || cy === undefined) return false;
         return Math.abs(x - cx) < 0.001 && Math.abs(y - cy) < 0.001;
       });
       if (corr) lr = corr.lr;
     }
-    return { x, y, lr, isMatched: getIsMatched(m, side) };
+    return { x, y, area, lr, isMatched: getIsMatched(m, side) };
   };
 
   const probeMarksRaw = results?.raw_probe_marks || results?.probe_data?.marks || [];
@@ -246,10 +255,10 @@ export default function SymmetryMerge({
     if (!imagesReady || mode === 'overlap') return;
 
     if (leftCanvasRef.current && probeImg) {
-      drawPane(leftCanvasRef.current, probeImg, getLeftOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, probePoints);
+      drawPane(leftCanvasRef.current, probeImg, getLeftOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, mode === 'delta' ? probePoints : undefined);
     }
     if (rightCanvasRef.current && galleryImg) {
-      drawPane(rightCanvasRef.current, galleryImg, getRightOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, galleryPoints);
+      drawPane(rightCanvasRef.current, galleryImg, getRightOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, mode === 'delta' ? galleryPoints : undefined);
     }
   });
 
@@ -485,22 +494,6 @@ export default function SymmetryMerge({
           >
             <canvas ref={leftCanvasRef} className="block w-full h-full" />
             <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">PROBE + DELTA</span> : 'PROBE (A)'}</div>
-            
-            {mode === 'delta' && results?.raw_probe_marks && (
-              <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 50 }}>
-                {results.raw_probe_marks.map((mark: any, i: number) => (
-                  <circle 
-                    key={`probe-mark-${i}`}
-                    cx={`${mark.centroid[0] * 100}%`} 
-                    cy={`${mark.centroid[1] * 100}%`} 
-                    r={Math.max(2, Math.sqrt(mark.area) * 0.8)}
-                    fill="none"
-                    stroke="#00DC82" 
-                    strokeWidth="1.5"
-                  />
-                ))}
-              </svg>
-            )}
           </div>
 
           {/* Right Pane: Gallery */}
@@ -510,22 +503,6 @@ export default function SymmetryMerge({
           >
             <canvas ref={rightCanvasRef} className="block w-full h-full" />
             <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">GALLERY + DELTA</span> : 'GALLERY (B)'}</div>
-            
-            {mode === 'delta' && results?.raw_gallery_marks && (
-              <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 50 }}>
-                {results.raw_gallery_marks.map((mark: any, i: number) => (
-                  <circle 
-                    key={`gallery-mark-${i}`}
-                    cx={`${mark.centroid[0] * 100}%`} 
-                    cy={`${mark.centroid[1] * 100}%`} 
-                    r={Math.max(2, Math.sqrt(mark.area) * 0.8)}
-                    fill="none"
-                    stroke="#D4AF37" 
-                    strokeWidth="1.5"
-                  />
-                ))}
-              </svg>
-            )}
           </div>
         </div>
       )}
