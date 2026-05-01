@@ -34,10 +34,17 @@ function Tooltip({ text, children }: { text: string; children: React.ReactNode }
 
 function useImageLoader(src: string | undefined): HTMLImageElement | null {
   const [img, setImg] = useState<HTMLImageElement | null>(null);
+  const [currentSrc, setCurrentSrc] = useState(src);
+
+  if (src !== currentSrc) {
+    setCurrentSrc(src);
+    setImg(null);
+  }
+
   useEffect(() => {
-    if (!src) { setImg(null); return; }
+    if (!src) return;
     let cancelled = false;
-    const el = new Image();
+    const el = new window.Image();
     el.crossOrigin = 'anonymous';
     el.src = src;
     el.onload = () => { if (!cancelled) setImg(el); };
@@ -196,11 +203,11 @@ export default function SymmetryMerge({
     return null;
   }, [mode, gWireImg, deltaImg]);
 
-  const getBorderColor = (): string | undefined => {
+  const getBorderColor = useCallback((): string | undefined => {
     if (mode === 'delta') return 'rgba(180, 0, 30, 0.5)';
     if (mode === 'mesh') return 'rgba(212, 175, 55, 0.3)';
     return undefined;
-  };
+  }, [mode]);
 
   // X-RAY opacity values — active when overlays are present
   const hasOverlay = mode === 'mesh' || mode === 'delta';
@@ -226,7 +233,7 @@ export default function SymmetryMerge({
       if (cx === undefined || cy === undefined) return false;
       return Math.abs(pX - cx) < 0.001 && Math.abs(pY - cy) < 0.001;
     });
-  }, [results?.correspondences, getPointCoords]);
+  }, [results, getPointCoords]);
 
   const mapPoint = useCallback((m: RawPoint, side: 'probe' | 'gallery') => {
     const { x, y, area } = getPointCoords(m);
@@ -242,13 +249,17 @@ export default function SymmetryMerge({
       if (corr) lr = corr.lr;
     }
     return { x, y, area, lr, isMatched: getIsMatched(m, side) };
-  }, [results?.correspondences, getPointCoords, getIsMatched]);
+  }, [results, getPointCoords, getIsMatched]);
 
-  const probeMarksRaw = results?.raw_probe_marks || results?.probe_data?.marks || [];
-  const galleryMarksRaw = results?.raw_gallery_marks || results?.gallery_data?.marks || [];
-
-  const probePoints = useMemo(() => probeMarksRaw.map((m: RawPoint) => mapPoint(m, 'probe')), [probeMarksRaw, mapPoint]);
-  const galleryPoints = useMemo(() => galleryMarksRaw.map((m: RawPoint) => mapPoint(m, 'gallery')), [galleryMarksRaw, mapPoint]);
+  const probePoints = useMemo(() => {
+    const marks = results?.raw_probe_marks || results?.probe_data?.marks || [];
+    return marks.map((m: RawPoint) => mapPoint(m, 'probe'));
+  }, [results, mapPoint]);
+  
+  const galleryPoints = useMemo(() => {
+    const marks = results?.raw_gallery_marks || results?.gallery_data?.marks || [];
+    return marks.map((m: RawPoint) => mapPoint(m, 'gallery'));
+  }, [results, mapPoint]);
 
   // Draw dual panes — LEFT = PROBE, RIGHT = GALLERY (both get delta overlay in delta mode)
   useEffect(() => {

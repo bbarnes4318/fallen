@@ -127,7 +127,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
 
     // Mark as loading (null = pending)
     imageCache.current.set(url, null);
-    const img = new Image();
+    const img = new window.Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
       imageCache.current.set(url, img);
@@ -234,11 +234,10 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
   const connections = selectedNode ? getNodeConnections(selectedNode.id, graphData.links) : [];
 
   // Build thumbnail lookup for dossier panel
-  const nodeMap = useRef<Map<string, GraphNode>>(new Map());
-  useEffect(() => {
+  const nodeMap = useMemo(() => {
     const m = new Map<string, GraphNode>();
     graphData.nodes.forEach((n: GraphNode) => m.set(n.id, n));
-    nodeMap.current = m;
+    return m;
   }, [graphData]);
 
   // ── Loading State ──
@@ -479,9 +478,12 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
                   {/* Large face thumbnail */}
                   {selectedNode.thumbnail ? (
                     <div className="w-16 h-16 rounded-lg overflow-hidden border-2 border-[#D4AF37]/50 shrink-0">
-                      <img
+                      <Image
                         src={selectedNode.thumbnail}
                         alt={selectedNode.name}
+                        width={64}
+                        height={64}
+                        unoptimized
                         className="w-full h-full object-cover"
                         crossOrigin="anonymous"
                       />
@@ -555,7 +557,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
                 {connections
                   .sort((a, b) => b.score - a.score)
                   .map((conn) => {
-                    const connNode = nodeMap.current.get(conn.entity);
+                    const connNode = nodeMap.get(conn.entity);
                     return (
                       <div
                         key={conn.entity}
@@ -573,9 +575,12 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
                         {/* Connected entity thumbnail */}
                         {connNode?.thumbnail ? (
                           <div className="w-8 h-8 rounded overflow-hidden border border-[#333] shrink-0">
-                            <img
+                            <Image
                               src={connNode.thumbnail}
                               alt={connNode.name}
+                              width={32}
+                              height={32}
+                              unoptimized
                               className="w-full h-full object-cover"
                               crossOrigin="anonymous"
                             />
