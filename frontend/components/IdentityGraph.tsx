@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
-
+import type { ForceGraphMethods } from 'react-force-graph-2d';
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
 // ─── Types ───────────────────────────────────────────────
@@ -111,12 +111,8 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
 
   const [hasToken, setHasToken] = useState(false);
 
-  interface ForceGraphMethods {
-    zoomToFit: (duration?: number, padding?: number) => void;
-  }
-
   // Ref for the force graph instance (must be before any conditional returns)
-  const fgRef = useRef<ForceGraphMethods | null>(null);
+  const fgRef = useRef<ForceGraphMethods<GraphNode, GraphLink> | undefined>(undefined);
 
   // ── Image cache for thumbnail rendering on canvas ──
   const imageCache = useRef<Map<string, HTMLImageElement | null>>(new Map());
@@ -281,7 +277,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
         width={dimensions.width}
         height={dimensions.height}
         backgroundColor="#050505"
-        nodeCanvasObject={(node: Record<string, unknown>, ctx: CanvasRenderingContext2D) => {
+        nodeCanvasObject={(node: GraphNode, ctx: CanvasRenderingContext2D) => {
           const x = (node.x as number) ?? 0;
           const y = (node.y as number) ?? 0;
           const isGold = node.group === 2;
@@ -356,7 +352,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
             ctx.fillText((node.name as string) ?? (node.id as string), x + radius + 4, y);
           }
         }}
-        nodePointerAreaPaint={(node: Record<string, unknown>, color: string, ctx: CanvasRenderingContext2D) => {
+        nodePointerAreaPaint={(node: GraphNode, color: string, ctx: CanvasRenderingContext2D) => {
           const x = (node.x as number) ?? 0;
           const y = (node.y as number) ?? 0;
           ctx.beginPath();
@@ -364,13 +360,13 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
           ctx.fillStyle = color;
           ctx.fill();
         }}
-        linkColor={(link: Record<string, unknown>) => ((link.value as number) > 95 ? 'rgba(212,175,55,0.7)' : 'rgba(80,90,100,0.4)')}
-        linkWidth={(link: Record<string, unknown>) => ((link.value as number) > 95 ? 1.5 : 0.6)}
+        linkColor={(link: GraphLink) => ((link.value as number) > 95 ? 'rgba(212,175,55,0.7)' : 'rgba(80,90,100,0.4)')}
+        linkWidth={(link: GraphLink) => ((link.value as number) > 95 ? 1.5 : 0.6)}
         linkDirectionalParticles={1}
-        linkDirectionalParticleWidth={(link: Record<string, unknown>) => (link.value as number) > 95 ? 1.5 : 0}
+        linkDirectionalParticleWidth={(link: GraphLink) => (link.value as number) > 95 ? 1.5 : 0}
         linkDirectionalParticleColor={() => 'rgba(212,175,55,0.8)'}
-        onNodeClick={(node: Record<string, unknown>) => setSelectedNode(node as unknown as GraphNode)}
-        onNodeHover={(node: Record<string, unknown> | null) => setHoverNode(node as unknown as GraphNode | null)}
+        onNodeClick={(node: GraphNode) => setSelectedNode(node)}
+        onNodeHover={(node: GraphNode | null) => setHoverNode(node)}
         cooldownTicks={150}
         d3AlphaDecay={0.015}
         d3VelocityDecay={0.25}
