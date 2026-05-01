@@ -4,8 +4,7 @@ import React, { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
 import SymmetryMerge from '@/components/SymmetryMerge';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+
 import { VerificationResult } from '@/types/verification';
 
 const IdentityGraph = dynamic(() => import('@/components/IdentityGraph'), { ssr: false });
@@ -63,7 +62,7 @@ function TelemetryLoader() {
     let currentIndex = 0;
     const interval = setInterval(() => {
       if (currentIndex < PIPELINE_STEPS.length) {
-        setLogs(prev => {
+        setLogs((prev: string[]) => {
           const newLogs = [...prev, PIPELINE_STEPS[currentIndex]];
           if (newLogs.length > 5) return newLogs.slice(newLogs.length - 5);
           return newLogs;
@@ -71,7 +70,7 @@ function TelemetryLoader() {
         setProgress(Math.min(99, (currentIndex / PIPELINE_STEPS.length) * 100 + Math.random() * 5));
         currentIndex++;
       } else {
-        setLogs(prev => {
+        setLogs((prev: string[]) => {
           const newLogs = [...prev, "[sys] Awaiting server response..."];
           if (newLogs.length > 5) return newLogs.slice(newLogs.length - 5);
           return newLogs;
@@ -119,7 +118,7 @@ function TelemetryLoader() {
 
         {/* Terminal Feed */}
         <div className="h-28 flex flex-col justify-end text-[10px] text-gray-400 gap-1.5 mb-4 relative z-10">
-          {logs.map((log, i) => (
+          {logs.map((log: string, i: number) => (
             <div key={i} className="flex gap-2 items-start">
               <span className="text-gray-600 shrink-0">{'>'}</span>
               <span className={i === logs.length - 1 ? 'text-gray-200' : 'text-gray-500'}>{log}</span>
@@ -827,7 +826,7 @@ export default function Home() {
                 <p className="text-gray-600 text-[10px] tracking-[0.15em]">AUTHENTICATED ACCESS REQUIRED</p>
               </div>
 
-              <form onSubmit={(e) => { handleLogin(e); }} className="space-y-4">
+              <form onSubmit={handleLogin} className="space-y-4">
                 <input
                   type="password"
                   value={password}

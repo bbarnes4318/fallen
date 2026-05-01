@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
 
@@ -112,6 +112,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
   const [hasToken, setHasToken] = useState(false);
 
   // Ref for the force graph instance (must be before any conditional returns)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fgRef = useRef<any>(null);
 
   // ── Image cache for thumbnail rendering on canvas ──

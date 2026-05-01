@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
-import { VerificationResult, ForensicPoint } from '@/types/verification';
+import { VerificationResult, RawPoint, Correspondence } from '@/types/verification';
 
 interface SymmetryMergeProps {
   results: VerificationResult | null;
@@ -207,19 +207,20 @@ export default function SymmetryMerge({
   const baseOpacity = isXrayMode && hasOverlay ? 0.1 : 1.0;
   const overlayOpacity = isXrayMode && hasOverlay ? 1.0 : (mode === 'delta' ? 0.7 : 0.85);
 
-  const getPointCoords = useCallback((pt: any) => {
+  const getPointCoords = useCallback((pt: RawPoint) => {
     if (!pt) return { x: undefined, y: undefined, area: 0 };
-    if (pt.centroid) return { x: pt.centroid[0], y: pt.centroid[1], area: pt.area || 0 };
-    if (pt[0] !== undefined) return { x: pt[0], y: pt[1], area: pt[2] || 0 };
-    return { x: pt.x, y: pt.y, area: pt.area || 0 };
+    if ('centroid' in pt && pt.centroid) return { x: pt.centroid[0], y: pt.centroid[1], area: ('area' in pt ? pt.area : 0) || 0 };
+    if (Array.isArray(pt)) return { x: pt[0], y: pt[1], area: pt[2] || 0 };
+    if ('x' in pt) return { x: pt.x, y: pt.y, area: ('area' in pt ? pt.area : 0) || 0 };
+    return { x: undefined, y: undefined, area: 0 };
   }, []);
 
-  const getIsMatched = useCallback((pt: any, side: 'probe' | 'gallery') => {
+  const getIsMatched = useCallback((pt: RawPoint, side: 'probe' | 'gallery') => {
     if (!results?.correspondences) return false;
     const { x: pX, y: pY } = getPointCoords(pt);
     if (pX === undefined || pY === undefined) return false;
-    return results.correspondences.some((c: any) => {
-      const cPt = c[`${side}_pt`];
+    return results.correspondences.some((c: Correspondence) => {
+      const cPt = c[side === 'probe' ? 'probe_pt' : 'gallery_pt'];
       if (!cPt) return false;
       const { x: cx, y: cy } = getPointCoords(cPt);
       if (cx === undefined || cy === undefined) return false;
@@ -227,12 +228,12 @@ export default function SymmetryMerge({
     });
   }, [results?.correspondences, getPointCoords]);
 
-  const mapPoint = useCallback((m: any, side: 'probe' | 'gallery') => {
+  const mapPoint = useCallback((m: RawPoint, side: 'probe' | 'gallery') => {
     const { x, y, area } = getPointCoords(m);
-    let lr = m.lr;
+    let lr = 'lr' in m ? m.lr : undefined;
     if (lr === undefined && results?.correspondences) {
-      const corr = results.correspondences.find((c: any) => {
-        const cPt = c[`${side}_pt`];
+      const corr = results.correspondences.find((c: Correspondence) => {
+        const cPt = c[side === 'probe' ? 'probe_pt' : 'gallery_pt'];
         if (!cPt) return false;
         const { x: cx, y: cy } = getPointCoords(cPt);
         if (cx === undefined || cy === undefined) return false;
@@ -246,8 +247,8 @@ export default function SymmetryMerge({
   const probeMarksRaw = results?.raw_probe_marks || results?.probe_data?.marks || [];
   const galleryMarksRaw = results?.raw_gallery_marks || results?.gallery_data?.marks || [];
 
-  const probePoints = useMemo(() => probeMarksRaw.map((m: any) => mapPoint(m, 'probe')), [probeMarksRaw, mapPoint]);
-  const galleryPoints = useMemo(() => galleryMarksRaw.map((m: any) => mapPoint(m, 'gallery')), [galleryMarksRaw, mapPoint]);
+  const probePoints = useMemo(() => probeMarksRaw.map((m: RawPoint) => mapPoint(m, 'probe')), [probeMarksRaw, mapPoint]);
+  const galleryPoints = useMemo(() => galleryMarksRaw.map((m: RawPoint) => mapPoint(m, 'gallery')), [galleryMarksRaw, mapPoint]);
 
   // Draw dual panes — LEFT = PROBE, RIGHT = GALLERY (both get delta overlay in delta mode)
   useEffect(() => {
@@ -434,7 +435,7 @@ export default function SymmetryMerge({
               )}
               {results.correspondences && results.correspondences.length > 0 && (
                 <div className="flex gap-[2px] flex-wrap">
-                  {results.correspondences.map((c: any, i: number) => (
+                  {results.correspondences.map((c: Correspondence, i: number) => (
                     <div key={`corr-${i}`} className={`px-1.5 py-0.5 border bg-[#050505] tracking-widest text-[9px] ${results.veto_triggered || results.failed_provenance_veto ? 'border-[#5a0015] text-[#ff2040]/70' : 'border-[#D4AF37]/30 text-[#D4AF37]/80'}`}>
                       MARK {i+1} <span className="opacity-50 mx-0.5">LR:</span>{c.lr.toFixed(1)}
                     </div>
