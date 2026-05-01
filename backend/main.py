@@ -55,12 +55,13 @@ async def global_exception_handler(request: Request, exc: Exception):
     import traceback
     import uuid
     import logging
+    from security_helpers import get_safe_error_response
     request_id = str(uuid.uuid4())
     logging.error(f"Request ID: {request_id} | Exception: {str(exc)}")
     logging.error(traceback.format_exc())
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal Server Error", "request_id": request_id}
+        content=get_safe_error_response(request_id)
     )
 
 # Preload Tier 1 Neural Ensemble models at module init to avoid per-request cold start
@@ -119,12 +120,9 @@ def receive_after_insert(mapper, connection, target):
     except Exception as e:
         print(f"FAISS sync failed for {target.user_id}: {e}")
 
+from security_helpers import parse_allowed_origins
 allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")
-allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",")] if allowed_origins_env else [
-    "http://localhost:3000",
-    "https://scargods.com",
-    "https://www.scargods.com"
-]
+allowed_origins = parse_allowed_origins(allowed_origins_env)
 
 app.add_middleware(
     CORSMiddleware,
@@ -260,9 +258,8 @@ def encrypt_embedding(embedding: np.ndarray) -> bytes:
         return dek_len + encrypted_dek + encrypted_payload
     except Exception as e:
         print(f"KMS Encryption warning/fallback: {e}")
-        is_dev = os.getenv("ENVIRONMENT") == "development"
-        allow_mock = os.getenv("ALLOW_MOCK_CRYPTO", "false").lower() == "true"
-        if is_dev and allow_mock:
+        from security_helpers import is_mock_crypto_allowed
+        if is_mock_crypto_allowed(os.getenv("ENVIRONMENT", ""), os.getenv("ALLOW_MOCK_CRYPTO", "false")):
             return b"MOCK_ENCRYPTED_PACKET"
         raise RuntimeError(f"CRITICAL: KMS Encryption failed: {e}")
 
@@ -272,9 +269,8 @@ def decrypt_embedding(packet: bytes) -> np.ndarray:
     then decrypts the payload back into a 512-D numpy array in-memory.
     """
     if packet == b"MOCK_ENCRYPTED_PACKET":
-        is_dev = os.getenv("ENVIRONMENT") == "development"
-        allow_mock = os.getenv("ALLOW_MOCK_CRYPTO", "false").lower() == "true"
-        if is_dev and allow_mock:
+        from security_helpers import is_mock_crypto_allowed
+        if is_mock_crypto_allowed(os.getenv("ENVIRONMENT", ""), os.getenv("ALLOW_MOCK_CRYPTO", "false")):
             return np.random.rand(512)
         raise RuntimeError("CRITICAL: Mock crypto detected but not allowed in this environment.")
         
@@ -752,7 +748,8 @@ def fetch_image_from_url(uri: str) -> tuple:
             parts = uri.replace("gs://", "").split("/", 1)
             bucket_name_req = parts[0]
             configured_bucket = os.getenv("BUCKET_NAME", "hoppwhistle-facial-uploads")
-            if bucket_name_req != configured_bucket:
+            from security_helpers import is_safe_image_url
+            if not is_safe_image_url(uri, configured_bucket):
                 raise ValueError("Unauthorized GCS bucket.")
             bucket = storage_client.bucket(configured_bucket)
             blob = bucket.blob(parts[1])
@@ -2868,7 +2865,8 @@ def get_verification_result(job_id: str, session_id: Optional[str] = None, bypas
         if session_id:
             try:
                 stripe_session = stripe.checkout.Session.retrieve(session_id)
-                if stripe_session.payment_status == "paid" and stripe_session.metadata.get("job_id") == job_id:
+                from security_helpers import is_payment_unlocked
+                if is_payment_unlocked(session_id, stripe_session.payment_status, stripe_session.metadata.get("job_id"), job_id):
                     job.status = "paid"
                     job.stripe_session_id = session_id
                     from sqlalchemy.sql import func

@@ -22,7 +22,7 @@ if not DATABASE_URL:
     if not DB_USER or not DB_PASS or not DB_NAME:
         if is_dev:
             DB_USER = DB_USER or "facial_app_user"
-            DB_PASS = DB_PASS or "SuperSecretPassword123!"
+            DB_PASS = DB_PASS or "DevPlaceholderPassword123!"
             DB_NAME = DB_NAME or "facial_db"
             CLOUD_SQL_CONNECTION_NAME = CLOUD_SQL_CONNECTION_NAME or "hoppwhistle:us-central1:facial-db-instance"
         else:

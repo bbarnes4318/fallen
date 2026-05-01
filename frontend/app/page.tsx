@@ -782,7 +782,7 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-6">
               <a href="#" className="text-gray-600 text-[10px] tracking-wider hover:text-gray-400 transition-colors">TERMS</a>
-              <a href="#" className="text-gray-600 text-[10px] tracking-wider hover:text-gray-400 transition-colors">PRIVACY</a>
+              <a href="/privacy" className="text-gray-600 text-[10px] tracking-wider hover:text-gray-400 transition-colors">PRIVACY</a>
               <a href="#" className="text-gray-600 text-[10px] tracking-wider hover:text-gray-400 transition-colors">API DOCS</a>
             </div>
           </div>
@@ -1001,7 +1001,7 @@ export default function Home() {
                 <strong className="text-gray-400">Disclaimer:</strong> This tool provides experimental biometric similarity analysis only. Results may be inaccurate and do not prove identity. Do not use as the sole basis for legal, employment, financial, medical, or law-enforcement decisions. Users must have appropriate rights/permission to upload images.
               </p>
               <p className="text-[10px] text-gray-500 leading-relaxed">
-                By uploading, you agree that images are processed solely for experimental similarity analysis. <a href="#" className="underline hover:text-gray-300">Privacy Policy</a>
+                By uploading, you agree that images are processed solely for experimental similarity analysis. <a href="/privacy" className="underline hover:text-gray-300">Privacy Policy</a>
               </p>
             </div>
           </div>

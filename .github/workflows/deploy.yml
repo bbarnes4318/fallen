@@ -121,9 +121,11 @@ jobs:
             DB_NAME=facial_db
             CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance
             STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
+            STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
             JWT_SECRET=${{ secrets.JWT_SECRET }}
             OPERATOR_PASSWORD=${{ secrets.OPERATOR_PASSWORD }}
             FRONTEND_URL=https://facial-frontend-vkd6b6ijxa-uk.a.run.app
+            ALLOWED_ORIGINS=https://facial-frontend-vkd6b6ijxa-uk.a.run.app,https://scargods.com
 
       - name: Deploy Wikimedia Crawler Job
         run: |
