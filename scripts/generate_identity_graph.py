@@ -257,14 +257,18 @@ def generate_graph():
                 vec_a = decrypted[i]["embedding"]
                 vec_b = decrypted[j]["embedding"]
 
-                # Skip dimension mismatch (legacy 1404-D vs current 512-D)
-                if vec_a.shape[0] != vec_b.shape[0]:
+                # 1. HARD BLOCK: Only allow 512-D ArcFace vectors!
+                # This explicitly filters out the old 1404-D MediaPipe garbage vectors.
+                if vec_a.shape[0] != 512 or vec_b.shape[0] != 512:
                     continue
 
                 comparisons += 1
+                
+                # 2. Compute ArcFace Cosine Similarity
                 score = calculate_cosine_similarity(vec_a, vec_b) * 100
 
-                if score > 90.0:
+                # 3. ArcFace Threshold Correction (>60% is a strong match)
+                if score > 60.0:
                     links.append({
                         "source": decrypted[i]["user_id"],
                         "target": decrypted[j]["user_id"],
