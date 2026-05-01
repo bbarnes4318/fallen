@@ -9,10 +9,7 @@ import html2canvas from 'html2canvas';
 const IdentityGraph = dynamic(() => import('@/components/IdentityGraph'), { ssr: false });
 
 function getApiUrl(): string {
-  if (typeof window !== 'undefined' && window.location.hostname.includes('run.app')) {
-    return 'https://facial-backend-196207148120.us-east4.run.app';
-  }
-  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  return '/api';
 }
 
 function TelemetryLoader() {

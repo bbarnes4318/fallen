@@ -71,10 +71,7 @@ const DUMMY_GRAPH: GraphData = {
 
 // ─── Helpers ─────────────────────────────────────────────
 function getApiUrl(): string {
-  if (typeof window !== 'undefined' && window.location.hostname.includes('facial-frontend')) {
-    return window.location.origin.replace('facial-frontend', 'facial-backend');
-  }
-  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  return '/api';
 }
 
 function getNodeConnections(nodeId: string, links: GraphLink[]) {
