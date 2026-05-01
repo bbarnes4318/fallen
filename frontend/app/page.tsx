@@ -3,6 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 import SymmetryMerge from '@/components/SymmetryMerge';
 
 import { VerificationResult } from '@/types/verification';
