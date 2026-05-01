@@ -3,23 +3,21 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
-import type { ForceGraphMethods } from 'react-force-graph-2d';
+import type { ForceGraphMethods, NodeObject, LinkObject } from 'react-force-graph-2d';
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
 // ─── Types ───────────────────────────────────────────────
-interface GraphNode {
+interface GraphNode extends NodeObject {
   id: string;
-  name: string;
-  group: number;
+  name?: string;
+  group?: number;
   thumbnail?: string;
-  x?: number;
-  y?: number;
 }
 
-interface GraphLink {
+interface GraphLink extends LinkObject<GraphNode> {
   source: string | GraphNode;
   target: string | GraphNode;
-  value: number;
+  value?: number;
 }
 
 interface GraphData {
@@ -112,7 +110,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
   const [hasToken, setHasToken] = useState(false);
 
   // Ref for the force graph instance (must be before any conditional returns)
-  const fgRef = useRef<ForceGraphMethods<GraphNode, GraphLink> | undefined>(undefined);
+  const fgRef = useRef<ForceGraphMethods | undefined>(undefined);
 
   // ── Image cache for thumbnail rendering on canvas ──
   const imageCache = useRef<Map<string, HTMLImageElement | null>>(new Map());
@@ -277,12 +275,13 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
         width={dimensions.width}
         height={dimensions.height}
         backgroundColor="#050505"
-        nodeCanvasObject={(node: GraphNode, ctx: CanvasRenderingContext2D) => {
-          const x = (node.x as number) ?? 0;
-          const y = (node.y as number) ?? 0;
-          const isGold = node.group === 2;
+        nodeCanvasObject={(node: NodeObject, ctx: CanvasRenderingContext2D) => {
+          const graphNode = node as GraphNode;
+          const x = graphNode.x ?? 0;
+          const y = graphNode.y ?? 0;
+          const isGold = graphNode.group === 2;
           const radius = 12;
-          const thumbUrl = node.thumbnail as string;
+          const thumbUrl = graphNode.thumbnail;
 
           // Try to get cached image
           const img = thumbUrl ? loadImage(thumbUrl) : null;
@@ -318,11 +317,11 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
           }
 
           // Render Tooltip on Hover
-          if (hoverNode && hoverNode.id === node.id) {
+          if (hoverNode && hoverNode.id === graphNode.id) {
             ctx.save();
             ctx.font = '5px "JetBrains Mono", Courier, monospace';
-            const hashText = `HASH: ${node.id}`;
-            const nameText = `ID:   ${node.name || 'UNKNOWN'}`;
+            const hashText = `HASH: ${graphNode.id}`;
+            const nameText = `ID:   ${graphNode.name || 'UNKNOWN'}`;
             const m1 = ctx.measureText(hashText);
             const m2 = ctx.measureText(nameText);
             const tw = Math.max(m1.width, m2.width) + 8;
@@ -349,24 +348,37 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
             ctx.fillStyle = isGold ? 'rgba(212,175,55,0.6)' : 'rgba(120,130,140,0.5)';
             ctx.textAlign = 'left';
             ctx.textBaseline = 'middle';
-            ctx.fillText((node.name as string) ?? (node.id as string), x + radius + 4, y);
+            ctx.fillText(graphNode.name ?? graphNode.id, x + radius + 4, y);
           }
         }}
-        nodePointerAreaPaint={(node: GraphNode, color: string, ctx: CanvasRenderingContext2D) => {
-          const x = (node.x as number) ?? 0;
-          const y = (node.y as number) ?? 0;
+        nodePointerAreaPaint={(node: NodeObject, color: string, ctx: CanvasRenderingContext2D) => {
+          const graphNode = node as GraphNode;
+          const x = graphNode.x ?? 0;
+          const y = graphNode.y ?? 0;
           ctx.beginPath();
           ctx.arc(x, y, 14, 0, 2 * Math.PI);
           ctx.fillStyle = color;
           ctx.fill();
         }}
-        linkColor={(link: GraphLink) => ((link.value as number) > 95 ? 'rgba(212,175,55,0.7)' : 'rgba(80,90,100,0.4)')}
-        linkWidth={(link: GraphLink) => ((link.value as number) > 95 ? 1.5 : 0.6)}
+        linkColor={(link: LinkObject<NodeObject>) => {
+          const graphLink = link as GraphLink;
+          const value = Number(graphLink.value ?? 0);
+          return value > 95 ? 'rgba(212,175,55,0.7)' : 'rgba(80,90,100,0.4)';
+        }}
+        linkWidth={(link: LinkObject<NodeObject>) => {
+          const graphLink = link as GraphLink;
+          const value = Number(graphLink.value ?? 0);
+          return value > 95 ? 1.5 : 0.6;
+        }}
         linkDirectionalParticles={1}
-        linkDirectionalParticleWidth={(link: GraphLink) => (link.value as number) > 95 ? 1.5 : 0}
+        linkDirectionalParticleWidth={(link: LinkObject<NodeObject>) => {
+          const graphLink = link as GraphLink;
+          const value = Number(graphLink.value ?? 0);
+          return value > 95 ? 1.5 : 0;
+        }}
         linkDirectionalParticleColor={() => 'rgba(212,175,55,0.8)'}
-        onNodeClick={(node: GraphNode) => setSelectedNode(node)}
-        onNodeHover={(node: GraphNode | null) => setHoverNode(node)}
+        onNodeClick={(node: NodeObject) => setSelectedNode(node as GraphNode)}
+        onNodeHover={(node: NodeObject | null) => setHoverNode(node ? (node as GraphNode) : null)}
         cooldownTicks={150}
         d3AlphaDecay={0.015}
         d3VelocityDecay={0.25}
