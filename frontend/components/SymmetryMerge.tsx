@@ -485,6 +485,22 @@ export default function SymmetryMerge({
           >
             <canvas ref={leftCanvasRef} className="block w-full h-full" />
             <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">PROBE + DELTA</span> : 'PROBE (A)'}</div>
+            
+            {mode === 'delta' && results?.raw_probe_marks && (
+              <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 50 }}>
+                {results.raw_probe_marks.map((mark: any, i: number) => (
+                  <circle 
+                    key={`probe-mark-${i}`}
+                    cx={`${mark.centroid[0] * 100}%`} 
+                    cy={`${mark.centroid[1] * 100}%`} 
+                    r={Math.max(2, Math.sqrt(mark.area) * 0.8)}
+                    fill="none"
+                    stroke="#00DC82" 
+                    strokeWidth="1.5"
+                  />
+                ))}
+              </svg>
+            )}
           </div>
 
           {/* Right Pane: Gallery */}
@@ -494,6 +510,22 @@ export default function SymmetryMerge({
           >
             <canvas ref={rightCanvasRef} className="block w-full h-full" />
             <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">GALLERY + DELTA</span> : 'GALLERY (B)'}</div>
+            
+            {mode === 'delta' && results?.raw_gallery_marks && (
+              <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 50 }}>
+                {results.raw_gallery_marks.map((mark: any, i: number) => (
+                  <circle 
+                    key={`gallery-mark-${i}`}
+                    cx={`${mark.centroid[0] * 100}%`} 
+                    cy={`${mark.centroid[1] * 100}%`} 
+                    r={Math.max(2, Math.sqrt(mark.area) * 0.8)}
+                    fill="none"
+                    stroke="#D4AF37" 
+                    strokeWidth="1.5"
+                  />
+                ))}
+              </svg>
+            )}
           </div>
         </div>
       )}
