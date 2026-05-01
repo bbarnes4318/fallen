@@ -488,7 +488,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
                     <div className="w-16 h-16 rounded-lg overflow-hidden border-2 border-[#D4AF37]/50 shrink-0">
                       <Image
                         src={selectedNode.thumbnail}
-                        alt={selectedNode.name}
+                        alt={selectedNode.name ?? "Identity graph profile"}
                         width={64}
                         height={64}
                         unoptimized
@@ -585,7 +585,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
                           <div className="w-8 h-8 rounded overflow-hidden border border-[#333] shrink-0">
                             <Image
                               src={connNode.thumbnail}
-                              alt={connNode.name}
+                              alt={connNode.name ?? "Identity connection"}
                               width={32}
                               height={32}
                               unoptimized
@@ -637,14 +637,20 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
             <div className="flex items-center gap-2">
               {targetA ? (
                 <div className="relative group">
-                  <div className="w-10 h-10 rounded-lg overflow-hidden border-2 border-[#D4AF37]">
-                    <Image src={targetA.thumbnail} alt={targetA.name} width={40} height={40} className="w-full h-full object-cover" unoptimized crossOrigin="anonymous" />
-                  </div>
+                  {targetA.thumbnail ? (
+                    <div className="w-10 h-10 rounded-lg overflow-hidden border-2 border-[#D4AF37]">
+                      <Image src={targetA.thumbnail} alt={targetA.name ?? "Target A"} width={40} height={40} className="w-full h-full object-cover" unoptimized crossOrigin="anonymous" />
+                    </div>
+                  ) : (
+                    <div className="w-10 h-10 rounded-lg border-2 border-[#D4AF37] bg-[#111] flex items-center justify-center">
+                      <span className="text-[#D4AF37] text-xs">◆</span>
+                    </div>
+                  )}
                   <button
                     onClick={() => setTargetA(null)}
                     className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-900 border border-red-700 rounded-full text-[8px] text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                   >✕</button>
-                  <p className="text-[7px] text-[#D4AF37] tracking-wider text-center mt-1 truncate max-w-[60px]">{targetA.name}</p>
+                  <p className="text-[7px] text-[#D4AF37] tracking-wider text-center mt-1 truncate max-w-[60px]">{targetA.name ?? targetA.id}</p>
                 </div>
               ) : (
                 <div className="w-10 h-10 rounded-lg border-2 border-dashed border-[#333] flex items-center justify-center">
@@ -660,14 +666,20 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
             <div className="flex items-center gap-2">
               {targetB ? (
                 <div className="relative group">
-                  <div className="w-10 h-10 rounded-lg overflow-hidden border-2 border-cyan-500">
-                    <Image src={targetB.thumbnail} alt={targetB.name} width={40} height={40} className="w-full h-full object-cover" unoptimized crossOrigin="anonymous" />
-                  </div>
+                  {targetB.thumbnail ? (
+                    <div className="w-10 h-10 rounded-lg overflow-hidden border-2 border-cyan-500">
+                      <Image src={targetB.thumbnail} alt={targetB.name ?? "Target B"} width={40} height={40} className="w-full h-full object-cover" unoptimized crossOrigin="anonymous" />
+                    </div>
+                  ) : (
+                    <div className="w-10 h-10 rounded-lg border-2 border-cyan-500 bg-[#111] flex items-center justify-center">
+                      <span className="text-cyan-500 text-xs">◆</span>
+                    </div>
+                  )}
                   <button
                     onClick={() => setTargetB(null)}
                     className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-900 border border-red-700 rounded-full text-[8px] text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                   >✕</button>
-                  <p className="text-[7px] text-cyan-400 tracking-wider text-center mt-1 truncate max-w-[60px]">{targetB.name}</p>
+                  <p className="text-[7px] text-cyan-400 tracking-wider text-center mt-1 truncate max-w-[60px]">{targetB.name ?? targetB.id}</p>
                 </div>
               ) : (
                 <div className="w-10 h-10 rounded-lg border-2 border-dashed border-[#333] flex items-center justify-center">
