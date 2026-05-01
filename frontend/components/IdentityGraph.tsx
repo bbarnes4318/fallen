@@ -83,7 +83,7 @@ function getNodeConnections(nodeId: string, links: GraphLink[]) {
     const tgt = typeof l.target === 'object' ? l.target.id : l.target;
     return {
       entity: src === nodeId ? tgt : src,
-      score: l.value,
+      score: l.value ?? 0,
     };
   });
 }
@@ -519,8 +519,8 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
               <div className="mt-3 flex gap-3">
                 <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded px-3 py-1.5">
                   <p className="text-[8px] text-gray-600 tracking-wider">GROUP</p>
-                  <p className={`text-sm font-bold ${selectedNode.group === 2 ? 'text-[#D4AF37]' : 'text-gray-300'}`}>
-                    {selectedNode.group === 2 ? 'ANOMALY' : 'STANDARD'}
+                  <p className={`text-sm font-bold ${(selectedNode.group ?? 0) === 2 ? 'text-[#D4AF37]' : 'text-gray-300'}`}>
+                    {(selectedNode.group ?? 0) === 2 ? 'ANOMALY' : 'STANDARD'}
                   </p>
                 </div>
                 <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded px-3 py-1.5">
@@ -563,7 +563,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
               <p className="text-[9px] text-gray-600 tracking-widest mb-3">VERIFIED BIOMETRIC LINKS</p>
               <div className="space-y-2">
                 {connections
-                  .sort((a, b) => b.score - a.score)
+                  .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
                   .map((conn) => {
                     const connNode = nodeMap.get(conn.entity);
                     return (
