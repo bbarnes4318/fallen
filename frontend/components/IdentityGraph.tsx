@@ -111,9 +111,12 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
 
   const [hasToken, setHasToken] = useState(false);
 
+  interface ForceGraphMethods {
+    zoomToFit: (duration?: number, padding?: number) => void;
+  }
+
   // Ref for the force graph instance (must be before any conditional returns)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const fgRef = useRef<any>(null);
+  const fgRef = useRef<ForceGraphMethods | null>(null);
 
   // ── Image cache for thumbnail rendering on canvas ──
   const imageCache = useRef<Map<string, HTMLImageElement | null>>(new Map());

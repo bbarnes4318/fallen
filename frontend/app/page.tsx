@@ -29,11 +29,6 @@ function getApiUrl(): string {
   return '/api';
 }
 
-function TelemetryLoader() {
-  const [logs, setLogs] = useState<string[]>([]);
-  const [hash, setHash] = useState<string>('');
-  const [progress, setProgress] = useState(0);
-
 const PIPELINE_STEPS = [
   "[sys] Initializing secure TLS enclave...",
   "[sys] Injecting payload into volatile memory...",
@@ -1466,7 +1461,6 @@ export default function Home() {
                 </div>
               )}
             </div>
-
           </div>
         )}
 
