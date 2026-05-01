@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Fallen — E2E DAUBERT VALIDATION TEST
+Fallen — E2E BAYESIAN VALIDATION TEST
 Uses subprocess isolation for MediaPipe face detection to avoid
 XNNPACK delegate conflicts on Windows.
 """
@@ -251,7 +251,7 @@ def compute_mark_correspondence_bayesian(marks_gallery, marks_probe, calibration
 
 def main():
     print("\n" + "=" * 70)
-    print("  Fallen -- DAUBERT VALIDATION TEST (E2E Bayesian Pipeline)")
+    print("  Fallen -- BAYESIAN VALIDATION TEST (E2E Bayesian Pipeline)")
     print("=" * 70 + "\n")
 
     # 1. Select & process test pair
@@ -363,7 +363,7 @@ def main():
 
     # 7. Assertions
     print(f"\n  {'='*50}")
-    print(f"  DAUBERT COMPLIANCE ASSERTIONS")
+    print(f"  SCIENTIFIC COMPLIANCE ASSERTIONS")
     print(f"  {'='*50}")
 
     passed = 0
@@ -393,10 +393,10 @@ def main():
     print(f"\n  RESULT: {passed}/{passed + failed} assertions passed.")
 
     if failed > 0:
-        print(f"\n  *** DAUBERT VALIDATION FAILED ***")
+        print(f"\n  *** SCIENTIFIC VALIDATION FAILED ***")
         sys.exit(1)
     else:
-        print(f"\n  *** DAUBERT VALIDATION PASSED -- PIPELINE COURTROOM-READY ***")
+        print(f"\n  *** SCIENTIFIC VALIDATION PASSED -- PIPELINE READY ***")
         sys.exit(0)
 
 

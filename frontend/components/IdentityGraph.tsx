@@ -108,6 +108,8 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
   const [targetA, setTargetA] = useState<GraphNode | null>(null);  // Gallery
   const [targetB, setTargetB] = useState<GraphNode | null>(null);  // Probe
 
+  const [hasToken, setHasToken] = useState(false);
+
   // Ref for the force graph instance (must be before any conditional returns)
   const fgRef = useRef<any>(null);
 
@@ -150,9 +152,12 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
   // ── Fetch live graph data OR fall back to dummy ──
   useEffect(() => {
     const token = localStorage.getItem('operator_token');
+    setHasToken(!!token);
+    const isDemo = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
+
     if (!token) {
       queueMicrotask(() => {
-        setGraphData(DUMMY_GRAPH);
+        setGraphData(isDemo ? DUMMY_GRAPH : { nodes: [], links: [] });
         setLoading(false);
       });
       return;
@@ -178,23 +183,23 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
               if (data.nodes && data.nodes.length > 0) {
                 setGraphData(data);
               } else {
-                setGraphData(DUMMY_GRAPH);
+                setGraphData(isDemo ? DUMMY_GRAPH : { nodes: [], links: [] });
               }
             } else {
-              setGraphData(DUMMY_GRAPH);
+              setGraphData(isDemo ? DUMMY_GRAPH : { nodes: [], links: [] });
             }
           } else if (meta.nodes && meta.nodes.length > 0) {
             // Legacy: direct inline data
             setGraphData(meta);
           } else {
-            setGraphData(DUMMY_GRAPH);
+            setGraphData(isDemo ? DUMMY_GRAPH : { nodes: [], links: [] });
           }
           setLoading(false);
         } else if (attempt < MAX_RETRIES) {
           await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
           return fetchWithRetry(attempt + 1);
         } else {
-          setGraphData(DUMMY_GRAPH);
+          setGraphData(isDemo ? DUMMY_GRAPH : { nodes: [], links: [] });
           setLoading(false);
         }
       } catch {
@@ -202,7 +207,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
           await new Promise(r => setTimeout(r, 3000 * (attempt + 1)));
           return fetchWithRetry(attempt + 1);
         }
-        setGraphData(DUMMY_GRAPH);
+        setGraphData(isDemo ? DUMMY_GRAPH : { nodes: [], links: [] });
         setLoading(false);
       }
     };
@@ -241,10 +246,26 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
     );
   }
 
-
+  const showEmptyState = graphData.nodes.length === 0;
 
   return (
     <div ref={containerRef} className="h-full w-full relative bg-[#050505] overflow-hidden">
+      {/* ── Empty State Overlay ── */}
+      {showEmptyState && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#050505]/90 backdrop-blur-sm">
+          <div className="text-center border border-[#1f1f1f] bg-[#0a0a0b] p-8 rounded-lg max-w-md">
+            <h3 className="text-[#D4AF37] font-mono tracking-widest text-sm font-bold mb-2">
+              NO TOPOLOGY DATA
+            </h3>
+            <p className="text-gray-500 font-mono text-xs leading-relaxed">
+              {!hasToken 
+                ? "Login required to access the encrypted identity vault." 
+                : "Vault graph generation is pending or the vault is empty."}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ── Force Graph Canvas ── */}
       <ForceGraph2D
         ref={fgRef}
@@ -647,7 +668,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
                   : 'bg-[#1a1a1a] text-gray-600 border border-[#222] cursor-not-allowed'
               }`}
             >
-              RUN DEEP FORENSIC COMPARISON
+              RUN SIMILARITY COMPARISON
             </button>
           </div>
         </div>

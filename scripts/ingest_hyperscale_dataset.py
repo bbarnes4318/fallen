@@ -95,7 +95,7 @@ def ingest_dataset(dataset_name: str, split: str, output_dir: str, shard_size: i
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ingest Hyperscale Face Dataset from HuggingFace.")
-    # Default to FairFace for demographic balance (Daubert compliance)
+    # Default to FairFace for demographic balance
     parser.add_argument("--dataset_name", type=str, default="nlpub/fairface", help="HuggingFace dataset ID")
     parser.add_argument("--split", type=str, default="train", help="Dataset split to stream")
     parser.add_argument("--output_dir", type=str, default="./datasets/hyperscale", help="Base directory for shards")

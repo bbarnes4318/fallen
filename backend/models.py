@@ -8,18 +8,30 @@ import os
 # ---------------------------------------------------------
 # GCP Cloud SQL PostgreSQL connection string format
 # Example: postgresql+psycopg2://<DB_USER>:<DB_PASS>@/<DB_NAME>?host=/cloudsql/<PROJECT_ID>:<REGION>:<INSTANCE_NAME>
-DB_USER = os.getenv("DB_USER", "facial_app_user")
-DB_PASS = os.getenv("DB_PASS", "SuperSecretPassword123!")
-DB_NAME = os.getenv("DB_NAME", "facial_db")
-CLOUD_SQL_CONNECTION_NAME = os.getenv("CLOUD_SQL_CONNECTION_NAME", "hoppwhistle:us-central1:facial-db-instance")
+DB_USER = os.getenv("DB_USER")
+DB_PASS = os.getenv("DB_PASS")
+DB_NAME = os.getenv("DB_NAME")
+CLOUD_SQL_CONNECTION_NAME = os.getenv("CLOUD_SQL_CONNECTION_NAME")
 
 # For local development via Cloud SQL Auth Proxy, host is typically 127.0.0.1
 # For Cloud Run Services/Jobs, host is a unix socket: /cloudsql/<instance>
 # For direct connection (crawler), set DATABASE_URL env var
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
+    is_dev = os.getenv("ENVIRONMENT") == "development"
+    if not DB_USER or not DB_PASS or not DB_NAME:
+        if is_dev:
+            DB_USER = DB_USER or "facial_app_user"
+            DB_PASS = DB_PASS or "SuperSecretPassword123!"
+            DB_NAME = DB_NAME or "facial_db"
+            CLOUD_SQL_CONNECTION_NAME = CLOUD_SQL_CONNECTION_NAME or "hoppwhistle:us-central1:facial-db-instance"
+        else:
+            raise RuntimeError("CRITICAL: Database credentials missing in production environment.")
+
     DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@127.0.0.1:5432/{DB_NAME}"
     if os.getenv("K_SERVICE") or os.getenv("CLOUD_RUN_JOB"):  # Cloud Run Service or Job
+        if not CLOUD_SQL_CONNECTION_NAME:
+            raise RuntimeError("CRITICAL: CLOUD_SQL_CONNECTION_NAME missing in production environment.")
         DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@/{DB_NAME}?host=/cloudsql/{CLOUD_SQL_CONNECTION_NAME}"
 
 engine = create_engine(DATABASE_URL)
@@ -122,7 +134,7 @@ class VerificationEvent(Base):
     # Tier 4: Mark Correspondence (×100 for integer consistency)
     mark_correspondence_x100 = Column(Integer, nullable=True)
 
-    # Bayesian Likelihood Ratio Audit Trail (Daubert v3.0)
+    # Bayesian Likelihood Ratio Audit Trail (Scientific v3.0)
     # Stored as Float for precision — these are scientific measurements, not financial values
     lr_arcface = Column(Float, nullable=True)
     lr_marks_product = Column(Float, nullable=True)
@@ -135,6 +147,23 @@ class VerificationEvent(Base):
 
     # Composite forensic receipt (GCS URI of stitched PNG)
     receipt_url = Column(Text, nullable=True)
+
+# ---------------------------------------------------------
+from sqlalchemy.dialects.postgresql import JSONB
+
+class VerificationJob(Base):
+    """
+    Tracks payment and result state for a specific verification request.
+    Stores the full VerificationResponse as JSON payload until payment is confirmed.
+    """
+    __tablename__ = "verification_jobs"
+
+    job_id = Column(String(36), primary_key=True, index=True)
+    status = Column(String(50), default="pending", nullable=False) # 'pending', 'paid'
+    result_payload = Column(Text, nullable=False) # JSON encoded VerificationResponse
+    stripe_session_id = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    paid_at = Column(DateTime(timezone=True), nullable=True)
 
 # ---------------------------------------------------------
 # DATABASE INITIALIZATION

@@ -18,7 +18,7 @@ import jwt
 from google.cloud import storage
 from google.cloud import kms
 from cryptography.fernet import Fernet
-from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,7 +30,7 @@ from typing import Optional
 from skimage.feature import local_binary_pattern
 import mediapipe as mp
 import onnxruntime as ort
-from models import SessionLocal, IdentityProfile, VerificationEvent, init_db
+from models import SessionLocal, IdentityProfile, VerificationEvent, VerificationJob, init_db
 from sqlalchemy import event
 from vault_index import vault_index
 import stripe
@@ -53,10 +53,14 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     import traceback
-    traceback.print_exc()
+    import uuid
+    import logging
+    request_id = str(uuid.uuid4())
+    logging.error(f"Request ID: {request_id} | Exception: {str(exc)}")
+    logging.error(traceback.format_exc())
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal Server Error", "error": str(exc)}
+        content={"detail": "Internal Server Error", "request_id": request_id}
     )
 
 # Preload Tier 1 Neural Ensemble models at module init to avoid per-request cold start
@@ -115,22 +119,29 @@ def receive_after_insert(mapper, connection, target):
     except Exception as e:
         print(f"FAISS sync failed for {target.user_id}: {e}")
 
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")
+allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",")] if allowed_origins_env else [
+    "http://localhost:3000",
+    "https://scargods.com",
+    "https://www.scargods.com"
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:8000",
-        "https://scargods.com",
-        "https://www.scargods.com",
-        "https://facial-frontend-vkd6b6ijxa-uk.a.run.app",
-        "https://facial-frontend-196207148120.us-east4.run.app",
-        "https://facial-verify-api-196207148120.us-central1.run.app",
-    ],
-    allow_origin_regex=r"https://.*\.run\.app",
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    if request.url.path.startswith("/verify/") or request.url.path.startswith("/vault/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 # ---------------------------------------------------------
 # JWT ZERO-TRUST AUTHENTICATION
@@ -159,8 +170,10 @@ class LoginRequest(BaseModel):
     password: str
 
 @app.post("/login")
-def login(req: LoginRequest):
-    if req.password != OPERATOR_PASSWORD:
+@limiter.limit("5/minute")
+def login(request: Request, req: LoginRequest):
+    import secrets
+    if not OPERATOR_PASSWORD or not secrets.compare_digest(req.password, OPERATOR_PASSWORD):
         raise HTTPException(status_code=401, detail="Invalid credentials.")
     
     # Generate token valid for 8 hours
@@ -247,8 +260,11 @@ def encrypt_embedding(embedding: np.ndarray) -> bytes:
         return dek_len + encrypted_dek + encrypted_payload
     except Exception as e:
         print(f"KMS Encryption warning/fallback: {e}")
-        # Fallback for local development if KMS isn't configured
-        return b"MOCK_ENCRYPTED_PACKET"
+        is_dev = os.getenv("ENVIRONMENT") == "development"
+        allow_mock = os.getenv("ALLOW_MOCK_CRYPTO", "false").lower() == "true"
+        if is_dev and allow_mock:
+            return b"MOCK_ENCRYPTED_PACKET"
+        raise RuntimeError(f"CRITICAL: KMS Encryption failed: {e}")
 
 def decrypt_embedding(packet: bytes) -> np.ndarray:
     """
@@ -256,7 +272,11 @@ def decrypt_embedding(packet: bytes) -> np.ndarray:
     then decrypts the payload back into a 512-D numpy array in-memory.
     """
     if packet == b"MOCK_ENCRYPTED_PACKET":
-        return np.random.rand(512)
+        is_dev = os.getenv("ENVIRONMENT") == "development"
+        allow_mock = os.getenv("ALLOW_MOCK_CRYPTO", "false").lower() == "true"
+        if is_dev and allow_mock:
+            return np.random.rand(512)
+        raise RuntimeError("CRITICAL: Mock crypto detected but not allowed in this environment.")
         
     try:
         # 1. Unpack
@@ -389,7 +409,7 @@ class AuditLog(BaseModel):
     # Pipeline reproducibility
     pipeline_version: str = PIPELINE_VERSION
     dependency_versions: Optional[dict] = None
-    # Bayesian Likelihood Ratio Audit Trail (Daubert v3.0)
+    # Bayesian Likelihood Ratio Audit Trail (Scientific v3.0)
     lr_arcface: Optional[float] = None
     lr_marks: Optional[float] = None
     lr_total: Optional[float] = None
@@ -721,7 +741,7 @@ def build_crypto_envelope(decryption_time_ms: float | None = None) -> dict:
 
 def fetch_image_from_url(uri: str) -> tuple:
     """
-    Fetches an image from a GCS URI or HTTP URL.
+    Fetches an image from a GCS URI ONLY.
     Returns a tuple of (decoded_image_array, sha256_hash_of_raw_bytes).
     The hash is computed on the raw byte stream BEFORE OpenCV decode,
     establishing an immutable chain-of-custody fingerprint.
@@ -730,12 +750,21 @@ def fetch_image_from_url(uri: str) -> tuple:
         if uri.startswith("gs://"):
             storage_client = storage.Client()
             parts = uri.replace("gs://", "").split("/", 1)
-            bucket = storage_client.bucket(parts[0])
+            bucket_name_req = parts[0]
+            configured_bucket = os.getenv("BUCKET_NAME", "hoppwhistle-facial-uploads")
+            if bucket_name_req != configured_bucket:
+                raise ValueError("Unauthorized GCS bucket.")
+            bucket = storage_client.bucket(configured_bucket)
             blob = bucket.blob(parts[1])
+            blob.reload()
+            if blob.size and blob.size > 15 * 1024 * 1024:
+                raise ValueError("File exceeds 15MB size limit.")
             img_bytes = blob.download_as_bytes()
         else:
-            req = urllib.request.urlopen(uri, timeout=10)
-            img_bytes = req.read()
+            raise ValueError("Only gs:// URIs are allowed in verification paths.")
+
+        if not (img_bytes.startswith(b'\xff\xd8') or img_bytes.startswith(b'\x89PNG') or img_bytes.startswith(b'RIFF')):
+            raise ValueError("Invalid image signature. Only JPEG/PNG/WEBP allowed.")
 
         # Chain of Custody: hash the raw binary BEFORE decode
         raw_hash = hashlib.sha256(img_bytes).hexdigest()
@@ -745,6 +774,11 @@ def fetch_image_from_url(uri: str) -> tuple:
             
         if img is None:
             raise ValueError("Could not decode image.")
+            
+        h, w = img.shape[:2]
+        if h > 4096 or w > 4096:
+            raise ValueError("Image dimensions exceed 4096x4096.")
+            
         return img, raw_hash
     except HTTPException:
         raise
@@ -1451,7 +1485,7 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, np.n
 
 def compute_mark_correspondence(marks_gallery: list, marks_probe: list) -> dict:
     """
-    Bayesian Likelihood Ratio Mark Correspondence Engine (Daubert v3.0).
+    Bayesian Likelihood Ratio Mark Correspondence Engine (Scientific v3.0).
 
     Evaluates the LR for every potential mark match:
       - Numerator P(E|Hp): Multivariate Gaussian PDF at observed delta vector
@@ -1666,7 +1700,7 @@ def generate_wireframe_hud(image: np.ndarray, landmarks) -> str:
     """
     3DMM Wireframe HUD — Geometric Mesh Visualizer.
     Renders the full FACEMESH_TESSELATION (468-point mesh) in 24K Gold
-    over a darkened, desaturated copy of the input image to prove
+    over a darkened, desaturated copy of the input image to demonstrate
     geometric extraction to the operator.
 
     STYLING:
@@ -1810,7 +1844,8 @@ class UploadUrlsResponse(BaseModel):
     probe_gs_uri: str
 
 @app.post("/generate-upload-urls", response_model=UploadUrlsResponse)
-def generate_upload_urls(req: UploadUrlsRequest, _: dict = Depends(verify_jwt)):
+@limiter.limit("5/minute")
+def generate_upload_urls(request: Request, req: UploadUrlsRequest, _: dict = Depends(verify_jwt)):
     bucket_name = os.getenv("BUCKET_NAME") or "hoppwhistle-facial-raw-images-bucket"
     try:
         import google.auth
@@ -1891,7 +1926,7 @@ def analyze_frequency_domain(image: np.ndarray) -> float:
     normalized_score = max(0.0, min(1.0, anomaly_score * 0.4))
     return normalized_score
 
-@app.post("/verify/fuse", response_model=VerificationResponse)
+@app.post("/verify/fuse")
 @limiter.limit("5/minute")
 def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = Depends(verify_jwt)):
     # 1. Fetch images from GCS (with pre-decode binary hashing)
@@ -2019,7 +2054,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     mark_result = compute_mark_correspondence(valid_gallery_marks, valid_probe_marks)
     tier4_score = mark_result["score"]  # None if insufficient marks
 
-    # ── BAYESIAN EVIDENCE FUSION (Daubert v4.0) ──
+    # ── BAYESIAN EVIDENCE FUSION (Scientific v4.0) ──
     # Convert Fused Ensemble score to Likelihood Ratio
     lr_ensemble = score_to_lr_ensemble(structural_sim, temporal_delta=temporal_delta)
 
@@ -2197,6 +2232,10 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             occluded_regions=json.dumps(pro_vis["occluded_regions"]) if pro_vis["occluded_regions"] else None,
             effective_geometric_ratios_used=effective_ratios,
             receipt_url=receipt_url,
+            lr_arcface=round(lr_ensemble, 6),
+            lr_marks_product=round(lr_marks, 6),
+            lr_total=round(lr_total, 6),
+            posterior_probability=round(posterior, 8),
         )
         ledger_session.add(event)
         ledger_session.commit()
@@ -2206,7 +2245,33 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     finally:
         ledger_session.close()
 
-    return response
+    # Store job in database
+    job_id = str(uuid.uuid4())
+    db = SessionLocal()
+    try:
+        job = VerificationJob(
+            job_id=job_id,
+            status="pending",
+            result_payload=json.dumps(response.model_dump())
+        )
+        db.add(job)
+        db.commit()
+    except Exception as e:
+        print(f"Failed to create VerificationJob: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save verification job")
+    finally:
+        db.close()
+
+    return {
+        "job_id": job_id,
+        "locked": True,
+        "preview": {
+            "fused_identity_score": response.fused_identity_score,
+            "conclusion": response.conclusion,
+            "veto_triggered": response.veto_triggered
+        }
+    }
 
 # ---------------------------------------------------------
 # PHASE 2: 1:N VAULT SEARCH (TARGET ACQUISITION)
@@ -2240,7 +2305,7 @@ def _resolve_target_image(user_id: str) -> str | None:
     return None
 
 
-@app.post("/vault/search", response_model=VerificationResponse)
+@app.post("/vault/search")
 @limiter.limit("5/minute")
 def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depends(verify_jwt)):
     """
@@ -2394,7 +2459,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     mark_result = compute_mark_correspondence(valid_gallery_marks, valid_probe_marks)
     tier4_score = mark_result["score"]  # None if insufficient marks
 
-    # ── BAYESIAN EVIDENCE FUSION (Daubert v4.0) ──
+    # ── BAYESIAN EVIDENCE FUSION (Scientific v4.0) ──
     lr_ensemble = score_to_lr_ensemble(structural_sim, temporal_delta=temporal_delta)
     lr_marks = mark_result.get("lr_marks", 1.0)
     lr_total = lr_ensemble * lr_marks
@@ -2575,6 +2640,10 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             occluded_regions=json.dumps(pro_vis["occluded_regions"]) if pro_vis["occluded_regions"] else None,
             effective_geometric_ratios_used=effective_ratios,
             receipt_url=receipt_url,
+            lr_arcface=round(lr_ensemble, 6),
+            lr_marks_product=round(lr_marks, 6),
+            lr_total=round(lr_total, 6),
+            posterior_probability=round(posterior, 8),
         )
         ledger_session.add(event)
         ledger_session.commit()
@@ -2584,7 +2653,33 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     finally:
         ledger_session.close()
 
-    return response
+    # Store job in database
+    job_id = str(uuid.uuid4())
+    db = SessionLocal()
+    try:
+        job = VerificationJob(
+            job_id=job_id,
+            status="pending",
+            result_payload=json.dumps(response.model_dump())
+        )
+        db.add(job)
+        db.commit()
+    except Exception as e:
+        print(f"Failed to create VerificationJob: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to save verification job")
+    finally:
+        db.close()
+
+    return {
+        "job_id": job_id,
+        "locked": True,
+        "preview": {
+            "fused_identity_score": response.fused_identity_score,
+            "conclusion": response.conclusion,
+            "veto_triggered": response.veto_triggered
+        }
+    }
 
 
 # ---------------------------------------------------------
@@ -2667,9 +2762,11 @@ def vault_network(_: dict = Depends(verify_jwt)):
 class CheckoutRequest(BaseModel):
     success_url: Optional[str] = None
     cancel_url: Optional[str] = None
+    job_id: str
 
 @app.post("/checkout/create-session")
-def create_checkout_session(req: CheckoutRequest = None):
+@limiter.limit("5/minute")
+def create_checkout_session(request: Request, req: CheckoutRequest):
     """
     Creates a Stripe Checkout Session for a one-time $4.99 payment
     to unlock the biometric dossier results.
@@ -2678,8 +2775,17 @@ def create_checkout_session(req: CheckoutRequest = None):
         raise HTTPException(status_code=500, detail="Stripe is not configured.")
 
     frontend_origin = os.getenv("FRONTEND_URL", "http://localhost:3000")
-    success = req.success_url if req and req.success_url else f"{frontend_origin}/?session_id={{CHECKOUT_SESSION_ID}}&success=true"
-    cancel = req.cancel_url if req and req.cancel_url else f"{frontend_origin}/?canceled=true"
+    success = req.success_url if req.success_url else f"{frontend_origin}/?session_id={{CHECKOUT_SESSION_ID}}&success=true&job_id={req.job_id}"
+    cancel = req.cancel_url if req.cancel_url else f"{frontend_origin}/?canceled=true&job_id={req.job_id}"
+
+    # Verify job exists
+    db = SessionLocal()
+    try:
+        job = db.query(VerificationJob).filter(VerificationJob.job_id == req.job_id).first()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+    finally:
+        db.close()
 
     try:
         session = stripe.checkout.Session.create(
@@ -2698,7 +2804,110 @@ def create_checkout_session(req: CheckoutRequest = None):
             mode="payment",
             success_url=success,
             cancel_url=cancel,
+            metadata={"job_id": req.job_id}
         )
         return {"checkout_url": session.url, "session_id": session.id}
     except stripe.StripeError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/checkout/webhook")
+async def stripe_webhook(request: Request):
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+    endpoint_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+    
+    if not endpoint_secret:
+        return JSONResponse(status_code=400, content={"error": "Webhook secret not configured"})
+
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, endpoint_secret
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if event["type"] == "checkout.session.completed":
+        session = event["data"]["object"]
+        job_id = session.get("metadata", {}).get("job_id")
+        if job_id:
+            db = SessionLocal()
+            try:
+                job = db.query(VerificationJob).filter(VerificationJob.job_id == job_id).first()
+                if job and job.status != "paid":
+                    job.status = "paid"
+                    job.stripe_session_id = session.get("id")
+                    from sqlalchemy.sql import func
+                    job.paid_at = func.now()
+                    db.commit()
+            except Exception as e:
+                print(f"Error processing webhook for job {job_id}: {e}")
+                db.rollback()
+            finally:
+                db.close()
+
+    return {"status": "success"}
+
+@app.get("/verify/result/{job_id}")
+def get_verification_result(job_id: str, session_id: Optional[str] = None, bypass_code: Optional[str] = None):
+    db = SessionLocal()
+    try:
+        job = db.query(VerificationJob).filter(VerificationJob.job_id == job_id).first()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        # Admin bypass
+        op_pass = os.getenv("OPERATOR_PASSWORD")
+        if bypass_code and op_pass and bypass_code == op_pass:
+            return json.loads(job.result_payload)
+
+        # Check if already marked as paid via webhook
+        if job.status == "paid":
+            return json.loads(job.result_payload)
+
+        # Synchronous fallback: check Stripe session directly
+        if session_id:
+            try:
+                stripe_session = stripe.checkout.Session.retrieve(session_id)
+                if stripe_session.payment_status == "paid" and stripe_session.metadata.get("job_id") == job_id:
+                    job.status = "paid"
+                    job.stripe_session_id = session_id
+                    from sqlalchemy.sql import func
+                    job.paid_at = func.now()
+                    db.commit()
+                    return json.loads(job.result_payload)
+            except Exception as e:
+                print(f"Error validating stripe session {session_id}: {e}")
+        
+        # If not paid and no bypass
+        raise HTTPException(status_code=402, detail="Payment Required to decrypt biometric dossier")
+
+    finally:
+        db.close()
+
+def rebuild_faiss_index_task():
+    print("[FAISS] Starting background rebuild of FAISS index...", flush=True)
+    vault_index.clear_index()
+    session = SessionLocal()
+    try:
+        profiles = session.query(IdentityProfile.user_id, IdentityProfile.encrypted_facial_embedding).all()
+        for user_id, encrypted_emb in profiles:
+            try:
+                emb = decrypt_embedding(encrypted_emb)
+                vault_index.add_identity(user_id, emb)
+            except Exception as e:
+                print(f"[FAISS] Failed to decrypt/add {user_id} during rebuild: {e}", flush=True)
+        print(f"[FAISS] Rebuild complete. Index contains {vault_index.index.ntotal} records.", flush=True)
+    except Exception as e:
+        print(f"[FAISS] Rebuild task failed: {e}", flush=True)
+    finally:
+        session.close()
+
+@app.post("/admin/vault/reload-index", status_code=202)
+@limiter.limit("2/minute")
+def reload_vault_index(request: Request, background_tasks: BackgroundTasks, _ = Depends(verify_jwt)):
+    """
+    Clears and rebuilds the FAISS index from the database.
+    Runs asynchronously to avoid timeouts.
+    """
+    background_tasks.add_task(rebuild_faiss_index_task)
+    return {"status": "accepted", "detail": "FAISS index rebuild triggered in the background."}

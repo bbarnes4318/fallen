@@ -29,6 +29,8 @@ class VaultIndex:
         with self.index_lock:
             # Ensure shape and type
             if embedding.shape != (self.dimension,):
+                import logging
+                logging.getLogger("uvicorn.error").warning(f"VaultIndex: Skipped identity {user_id} due to dimension mismatch. Expected ({self.dimension},), got {embedding.shape}")
                 return # Skip dimension mismatch silently to handle legacy embeddings
             
             vec = embedding.astype(np.float32).copy()
@@ -38,6 +40,15 @@ class VaultIndex:
             self.index.add(vec.reshape(1, -1))
             self.faiss_id_to_user_id[self.current_id] = user_id
             self.current_id += 1
+
+    def clear_index(self):
+        """
+        Clears the FAISS index. Thread-safe.
+        """
+        with self.index_lock:
+            self.index.reset()
+            self.faiss_id_to_user_id.clear()
+            self.current_id = 0
 
     def search(self, query_embedding: np.ndarray, top_k: int = 5) -> list[tuple[str, float]]:
         """
@@ -54,8 +65,11 @@ class VaultIndex:
             q_vec = query_embedding.astype(np.float32).copy()
             faiss.normalize_L2(q_vec.reshape(1, -1))
             
+            # Bound top_k
+            bounded_top_k = max(1, min(top_k, 100))
+            
             # Search
-            distances, indices = self.index.search(q_vec.reshape(1, -1), min(top_k, self.index.ntotal))
+            distances, indices = self.index.search(q_vec.reshape(1, -1), min(bounded_top_k, self.index.ntotal))
             
             results = []
             for i in range(len(indices[0])):

@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Fallen — Biometric Architecture",
   description:
-    "High-grade identity verification fusing 512-D deep neural embeddings with Bayesian Likelihood Ratio forensics. Tier 1–4 pipeline architecture, AES-256-GCM envelope encryption.",
+    "High-reliability similarity analysis fusing 512-D deep neural embeddings with Bayesian Likelihood Ratio metrics. Tier 1–4 pipeline architecture, AES-256-GCM envelope encryption.",
 };
 
 /* ── Design Tokens ── */
@@ -134,7 +134,7 @@ const TIERS = [
         <line x1="2" y1="20" x2="22" y2="20" opacity="0.3" />
       </svg>
     ),
-    body: "The crown of the pipeline. Scars, moles, birthmarks, and surgical marks are detected, localized in Procrustes-normalized face space, and matched via Hungarian optimization. Each matched mark pair produces an individual Likelihood Ratio by comparing observed delta vectors against the background population (H_d) and intra-person (H_p) distributions. The product of all mark LRs is fused with LR_arcface to yield a courtroom-admissible posterior probability.",
+    body: "The crown of the pipeline. Scars, moles, birthmarks, and surgical marks are detected, localized in Procrustes-normalized face space, and matched via Hungarian optimization. Each matched mark pair produces an individual Likelihood Ratio by comparing observed delta vectors against the background population (H_d) and intra-person (H_p) distributions. The product of all mark LRs is fused with LR_arcface to yield a final posterior probability.",
     details: [
       "Population model: Multivariate Statistical Distributions",
       "Calibration: Institutional-scale calibration dataset",
@@ -171,7 +171,7 @@ const SECURITY_ITEMS = [
     ),
   },
   {
-    title: "Forensic Chain of Custody",
+    title: "Secure Chain of Custody",
     standard: "SHA-256 / RFC 3161",
     detail: "Pre-decode binary SHA-256 hashes of all evidentiary images are computed before any processing begins, establishing an immutable chain of custody. Pipeline version, dependency manifests, and all intermediate computations are logged to a PostgreSQL audit ledger with server-authoritative timestamps.",
     specs: ["Pre-decode SHA-256 image hashing", "Pipeline version pinning", "Dependency manifest locking", "Immutable PostgreSQL audit ledger"],
@@ -239,7 +239,7 @@ export default function ArchitecturePage() {
             className="text-[clamp(28px,4vw,48px)] font-bold leading-[1.1] tracking-tight mb-6"
             style={{ color: C.text }}
           >
-            Forensic-Grade<br />
+            High-Reliability<br />
             <span style={{ color: C.gold }}>Biometric Architecture</span>
           </h1>
 
@@ -248,11 +248,11 @@ export default function ArchitecturePage() {
             style={{ color: C.textMuted }}
           >
             Fallen fuses deep neural network embeddings with Bayesian
-            statistical inference to produce high-grade identity
-            verification. Four independent evidence channels — structural,
+            statistical inference to produce high-reliability similarity
+            analysis. Four independent evidence channels — structural,
             geometric, textural, and physical mark correspondence — are
-            combined through a mathematically rigorous Likelihood Ratio
-            framework to yield courtroom-admissible posterior probabilities.
+            combined through a rigorous Likelihood Ratio
+            framework to yield highly reliable posterior probabilities.
           </p>
 
           {/* Pipeline stats bar */}
@@ -304,7 +304,7 @@ export default function ArchitecturePage() {
           </div>
           <p className="text-center text-[12px] max-w-[600px] mx-auto" style={{ color: C.textDim }}>
             Each tier operates as an independent evidence channel. Tiers 1–3 contribute weighted
-            heuristic scores. Tier 4 applies Bayesian Likelihood Ratio fusion for forensic-grade inference.
+            heuristic scores. Tier 4 applies Bayesian Likelihood Ratio fusion for highly reliable inference.
           </p>
         </div>
       </section>
@@ -427,8 +427,8 @@ export default function ArchitecturePage() {
               <span style={{ color: C.gold }}>LR / (LR + 1)</span>
             </div>
             <p className="text-[11px] mt-3 max-w-[500px] mx-auto" style={{ color: C.textDim }}>
-              The posterior probability of same-identity given all observed evidence.
-              Values approaching 1.0 indicate near-certainty.
+              The similarity probability given all observed evidence.
+              Values approaching 1.0 indicate extremely strong similarity.
             </p>
           </div>
         </div>
@@ -525,7 +525,7 @@ export default function ArchitecturePage() {
             <div className="h-px w-12" style={{ background: C.borderGold }} />
           </div>
           <p className="text-[10px] leading-[1.8]" style={{ color: C.textDim }}>
-            Identity Verification · Forensic Engine · v3.0
+            Similarity Analysis · Verification Engine · v3.0
           </p>
           <p className="text-[9px] mt-2" style={{ color: C.textDim }}>
             This document constitutes a technical reference for qualified auditors and institutional evaluators.

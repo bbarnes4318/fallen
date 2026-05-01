@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
+import { VerificationResult, ForensicPoint } from '@/types/verification';
 
 interface SymmetryMergeProps {
-  results: any | null;
+  results: VerificationResult | null;
   isXrayMode?: boolean;
 }
 
@@ -56,7 +57,7 @@ function drawPane(
   baseOpacity?: number,
   overlayOpacity?: number,
   xrayFilter?: boolean,
-  points?: {x: number, y: number, lr?: number, isMatched?: boolean}[]
+  points?: ForensicPoint[]
 ) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -206,14 +207,14 @@ export default function SymmetryMerge({
   const baseOpacity = isXrayMode && hasOverlay ? 0.1 : 1.0;
   const overlayOpacity = isXrayMode && hasOverlay ? 1.0 : (mode === 'delta' ? 0.7 : 0.85);
 
-  const getPointCoords = (pt: any) => {
+  const getPointCoords = useCallback((pt: any) => {
     if (!pt) return { x: undefined, y: undefined, area: 0 };
     if (pt.centroid) return { x: pt.centroid[0], y: pt.centroid[1], area: pt.area || 0 };
     if (pt[0] !== undefined) return { x: pt[0], y: pt[1], area: pt[2] || 0 };
     return { x: pt.x, y: pt.y, area: pt.area || 0 };
-  };
+  }, []);
 
-  const getIsMatched = (pt: any, side: 'probe' | 'gallery') => {
+  const getIsMatched = useCallback((pt: any, side: 'probe' | 'gallery') => {
     if (!results?.correspondences) return false;
     const { x: pX, y: pY } = getPointCoords(pt);
     if (pX === undefined || pY === undefined) return false;
@@ -224,9 +225,9 @@ export default function SymmetryMerge({
       if (cx === undefined || cy === undefined) return false;
       return Math.abs(pX - cx) < 0.001 && Math.abs(pY - cy) < 0.001;
     });
-  };
+  }, [results?.correspondences, getPointCoords]);
 
-  const mapPoint = (m: any, side: 'probe' | 'gallery') => {
+  const mapPoint = useCallback((m: any, side: 'probe' | 'gallery') => {
     const { x, y, area } = getPointCoords(m);
     let lr = m.lr;
     if (lr === undefined && results?.correspondences) {
@@ -240,15 +241,13 @@ export default function SymmetryMerge({
       if (corr) lr = corr.lr;
     }
     return { x, y, area, lr, isMatched: getIsMatched(m, side) };
-  };
+  }, [results?.correspondences, getPointCoords, getIsMatched]);
 
   const probeMarksRaw = results?.raw_probe_marks || results?.probe_data?.marks || [];
   const galleryMarksRaw = results?.raw_gallery_marks || results?.gallery_data?.marks || [];
 
-  console.log("STRICT MARKS - LEFT:", results?.probe_data?.marks, "RIGHT:", results?.gallery_data?.marks);
-
-  const probePoints = probeMarksRaw.map((m: any) => mapPoint(m, 'probe'));
-  const galleryPoints = galleryMarksRaw.map((m: any) => mapPoint(m, 'gallery'));
+  const probePoints = useMemo(() => probeMarksRaw.map((m: any) => mapPoint(m, 'probe')), [probeMarksRaw, mapPoint]);
+  const galleryPoints = useMemo(() => galleryMarksRaw.map((m: any) => mapPoint(m, 'gallery')), [galleryMarksRaw, mapPoint]);
 
   // Draw dual panes — LEFT = PROBE, RIGHT = GALLERY (both get delta overlay in delta mode)
   useEffect(() => {
@@ -260,7 +259,7 @@ export default function SymmetryMerge({
     if (rightCanvasRef.current && galleryImg) {
       drawPane(rightCanvasRef.current, galleryImg, getRightOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, mode === 'delta' ? galleryPoints : undefined);
     }
-  });
+  }, [imagesReady, mode, probeImg, getLeftOverlay, zoom, pan, getBorderColor, baseOpacity, overlayOpacity, isXrayMode, probePoints, galleryImg, getRightOverlay, galleryPoints]);
 
   // Draw overlap panes — LEFT = PROBE, RIGHT = GALLERY
   useEffect(() => {
@@ -272,7 +271,7 @@ export default function SymmetryMerge({
     if (overlapRightRef.current && galleryImg) {
       drawPane(overlapRightRef.current, galleryImg, null, zoom, pan, undefined, undefined, undefined, isXrayMode, galleryPoints);
     }
-  });
+  }, [imagesReady, mode, probeImg, zoom, pan, isXrayMode, probePoints, galleryImg, galleryPoints]);
 
   // Pan handler
   const handlePointerDown = (cx: number, cy: number) => {

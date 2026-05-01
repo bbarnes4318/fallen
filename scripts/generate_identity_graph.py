@@ -267,8 +267,9 @@ def generate_graph():
                 # 2. Compute ArcFace Cosine Similarity
                 score = calculate_cosine_similarity(vec_a, vec_b) * 100
 
-                # 3. ArcFace Threshold Correction (>60% is a strong match)
-                if score > 60.0:
+                # 3. ArcFace Threshold Correction
+                threshold = float(os.getenv("GRAPH_LINK_THRESHOLD", "90.0"))
+                if score > threshold:
                     links.append({
                         "source": decrypted[i]["user_id"],
                         "target": decrypted[j]["user_id"],
@@ -277,7 +278,7 @@ def generate_graph():
 
         compute_elapsed = (time.perf_counter() - compute_start) * 1000
         print(f"[GRAPH] Computed {comparisons} pairwise comparisons in {compute_elapsed:.0f}ms")
-        print(f"[GRAPH] Found {len(links)} links above 90% threshold")
+        print(f"[GRAPH] Found {len(links)} links above {threshold}% threshold")
 
         # Cap links to strongest 5,000 for browser renderability
         MAX_LINKS = 5000

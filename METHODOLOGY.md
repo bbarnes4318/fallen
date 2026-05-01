@@ -1,7 +1,7 @@
 # Fallen Biometric Verification Pipeline
 ## Forensic Methodology Document
 
-**Version:** 2.0 — Daubert-Standard Compliant  
+**Version:** 2.0 — Scientific-Standard Compliant  
 **Last Updated:** 2026-04-27  
 **Pipeline Author:** Fallen Engineering  
 **Document Purpose:** Expert witness exhibit for forensic audits. This document describes every algorithm, threshold, limitation, and calibration methodology used in the Fallen biometric identity verification system.

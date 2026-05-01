@@ -5,8 +5,25 @@ import dynamic from 'next/dynamic';
 import SymmetryMerge from '@/components/SymmetryMerge';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { VerificationResult, AuditLog } from '@/types/verification';
 
 const IdentityGraph = dynamic(() => import('@/components/IdentityGraph'), { ssr: false });
+
+function escapeHtml(unsafe: string | number | null | undefined): string {
+  if (unsafe === null || unsafe === undefined) return '';
+  return String(unsafe)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function safeImgSrc(src: string | null | undefined): string {
+  if (!src) return '';
+  if (src.startsWith('data:image/') || src.startsWith('http://') || src.startsWith('https://')) return src;
+  return '';
+}
 
 function getApiUrl(): string {
   return '/api';
@@ -137,45 +154,6 @@ export default function Home() {
   const [mode, setMode] = useState<'vault' | 'compare'>('vault');
   const [bypassCode, setBypassCode] = useState('');
 
-  interface AuditLog {
-    raw_cosine_score: number;
-    statistical_certainty: string;
-    false_acceptance_rate: string;
-    nodes_mapped: number;
-    matched_user_id?: string;
-    person_name?: string;
-    source?: string;
-    creator?: string;
-    license_short_name?: string;
-    license_url?: string;
-    file_page_url?: string;
-    wikidata_id?: string;
-    vector_hash?: string;
-    alignment_variance?: { yaw: string; pitch: string; roll: string };
-    liveness_check?: { method: string; spoof_probability: string; status: string; laplacian_variance?: number };
-    crypto_envelope?: { standard: string; decryption_time: string };
-    calibration_benchmark?: string;
-    calibration_pairs?: number;
-    // Bayesian Likelihood Ratio Audit Trail (Daubert v3.0)
-    lr_arcface?: number | null;
-    lr_marks?: number | null;
-    lr_total?: number | null;
-    posterior_probability?: number | null;
-    mark_lrs?: number[] | null;
-  }
-
-  /** Format a Likelihood Ratio for human-readable display */
-  function formatLR(lr: number | null | undefined): string {
-    if (lr == null) return 'N/A';
-    if (lr >= 1e15) return `${(lr / 1e15).toFixed(2)} Quadrillion`;
-    if (lr >= 1e12) return `${(lr / 1e12).toFixed(2)} Trillion`;
-    if (lr >= 1e9) return `${(lr / 1e9).toFixed(2)} Billion`;
-    if (lr >= 1e6) return `${(lr / 1e6).toFixed(2)} Million`;
-    if (lr >= 1e4) return lr.toLocaleString(undefined, { maximumFractionDigits: 0 });
-    if (lr >= 100) return lr.toLocaleString(undefined, { maximumFractionDigits: 1 });
-    return lr.toFixed(2);
-  }
-
   /** Format LR in compact scientific notation */
   function formatLRSci(lr: number | null | undefined): string {
     if (lr == null) return 'N/A';
@@ -184,29 +162,8 @@ export default function Home() {
     return lr.toFixed(4);
   }
 
-  interface VerificationResult {
-    structural_score: number;
-    soft_biometrics_score: number;
-    micro_topology_score: number;
-    mark_correspondence_score?: number | null;
-    marks_detected_gallery?: number;
-    marks_detected_probe?: number;
-    marks_matched?: number;
-    fused_identity_score: number;
-    veto_triggered: boolean;
-    conclusion: string;
-    gallery_heatmap_b64: string;
-    probe_heatmap_b64: string;
-    gallery_aligned_b64: string;
-    probe_aligned_b64: string;
-    scar_delta_b64: string;
-    gallery_wireframe_b64: string;
-    probe_wireframe_b64: string;
-    correspondences?: any[];
-    audit_log?: AuditLog;
-  }
-
   const [results, setResults] = useState<VerificationResult | null>(null);
+  const [lockedJob, setLockedJob] = useState<{job_id: string, preview: any} | null>(null);
   const [isXrayMode, setIsXrayMode] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [auditExpanded, setAuditExpanded] = useState(false);
@@ -229,29 +186,33 @@ export default function Home() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
-    if (params.get('success') === 'true') {
-      const cached = sessionStorage.getItem('cachedResult');
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached) as VerificationResult;
-          setResults(parsed);
+    const jobId = params.get('job_id');
+    const sessionId = params.get('session_id');
+
+    if (params.get('success') === 'true' && jobId && sessionId) {
+      fetch(`${getApiUrl()}/verify/result/${jobId}?session_id=${sessionId}`)
+        .then(res => {
+          if (!res.ok) throw new Error('Unlock failed');
+          return res.json();
+        })
+        .then(data => {
+          setResults(data);
           setStep('complete');
-          sessionStorage.removeItem('cachedResult');
-        } catch {
-          console.error('Failed to parse cached result');
-        }
-      }
+          sessionStorage.removeItem('lockedJob');
+        })
+        .catch(err => {
+          console.error(err);
+          setErrorMsg('Payment verification failed. Contact support.');
+          setStep('error');
+        });
       window.history.replaceState({}, '', window.location.pathname);
     } else if (params.get('canceled') === 'true') {
-      const cached = sessionStorage.getItem('cachedResult');
+      const cached = sessionStorage.getItem('lockedJob');
       if (cached) {
         try {
-          const parsed = JSON.parse(cached) as VerificationResult;
-          setResults(parsed);
+          setLockedJob(JSON.parse(cached));
           setStep('paywall');
-        } catch {
-          console.error('Failed to parse cached result');
-        }
+        } catch {}
       }
       window.history.replaceState({}, '', window.location.pathname);
     }
@@ -375,9 +336,14 @@ export default function Home() {
       const data = await verifyRes.json();
       
       // Cache and go to paywall
-      sessionStorage.setItem('cachedResult', JSON.stringify(data));
-      setResults(data);
-      setStep('paywall');
+      if (data.locked) {
+        sessionStorage.setItem('lockedJob', JSON.stringify(data));
+        setLockedJob(data);
+        setStep('paywall');
+      } else {
+        setResults(data);
+        setStep('complete');
+      }
       
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : 'An unknown error occurred');
@@ -409,9 +375,14 @@ export default function Home() {
       }
       const data = await verifyRes.json();
 
-      sessionStorage.setItem('cachedResult', JSON.stringify(data));
-      setResults(data);
-      setStep('paywall');
+      if (data.locked) {
+        sessionStorage.setItem('lockedJob', JSON.stringify(data));
+        setLockedJob(data);
+        setStep('paywall');
+      } else {
+        setResults(data);
+        setStep('complete');
+      }
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : 'Graph comparison failed.');
       setStep('error');
@@ -438,11 +409,11 @@ export default function Home() {
             <div style="display:flex;justify-content:space-between;align-items:flex-end;">
               <div>
                 <div style="font-size:8px;color:#D4AF37;letter-spacing:5px;margin-bottom:2px;">▓▓ REPORT ▓▓</div>
-                <div style="font-size:16px;font-weight:bold;color:white;letter-spacing:3px;">FALLEN <span style="color:#D4AF37;">BIOMETRIC DOSSIER</span></div>
+                <div style="font-size:16px;font-weight:bold;color:white;letter-spacing:3px;">BIOMETRIC <span style="color:#D4AF37;">SIMILARITY REPORT</span></div>
               </div>
               <div style="text-align:right;">
-                <div style="font-size:7px;color:#555;letter-spacing:2px;">GENERATED ${ts} UTC</div>
-                <div style="font-size:7px;color:#555;letter-spacing:2px;">DOC ID: ${docId} · LEVEL 3 RESTRICTED</div>
+                <div style="font-size:7px;color:#555;letter-spacing:2px;">GENERATED ${escapeHtml(ts)} UTC</div>
+                <div style="font-size:7px;color:#555;letter-spacing:2px;">DOC ID: ${escapeHtml(docId)} · EXPERIMENTAL ANALYSIS</div>
               </div>
             </div>
           </div>
@@ -450,11 +421,11 @@ export default function Home() {
           <!-- VISUAL EVIDENCE -->
           <div style="display:flex;gap:8px;margin-bottom:10px;flex-shrink:0;">
             <div style="flex:1;border:1px solid #333;padding:4px;background:#0a0a0a;text-align:center;">
-              <img src="${results.probe_aligned_b64}" style="width:100%;height:180px;object-fit:contain;display:block;" />
+              <img src="${safeImgSrc(results.probe_aligned_b64)}" style="width:100%;height:180px;object-fit:contain;display:block;" />
               <div style="font-size:7px;color:#666;letter-spacing:3px;margin-top:4px;">PROBE (UNKNOWN TARGET)</div>
             </div>
             <div style="flex:1;border:1px solid #333;padding:4px;background:#0a0a0a;text-align:center;">
-              <img src="${results.gallery_aligned_b64}" style="width:100%;height:180px;object-fit:contain;display:block;" />
+              <img src="${safeImgSrc(results.gallery_aligned_b64)}" style="width:100%;height:180px;object-fit:contain;display:block;" />
               <div style="font-size:7px;color:#666;letter-spacing:3px;margin-top:4px;">GALLERY (VAULT MATCH)</div>
             </div>
           </div>
@@ -500,41 +471,41 @@ export default function Home() {
               <!-- Col 1: Statistical Certainty -->
               <div style="flex:1;">
                 <div style="color:#22c55e;font-size:7px;letter-spacing:2px;margin-bottom:4px;">STATISTICAL CERTAINTY</div>
-                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">FALSE ACCEPT RATE</span><span style="color:#4ade80;font-weight:bold;">${audit?.false_acceptance_rate || 'N/A'}</span></div>
-                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">CERTAINTY</span><span style="color:#4ade80;font-weight:bold;">${audit?.statistical_certainty || 'N/A'}</span></div>
-                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">NODES MAPPED</span><span style="color:#fff;font-weight:bold;">${audit?.nodes_mapped || 468}/468</span></div>
-                <div style="display:flex;justify-content:space-between;"><span style="color:#555;">COSINE DIST</span><span style="color:#fff;font-weight:bold;">${audit?.raw_cosine_score?.toFixed(6) || 'N/A'}</span></div>
+              <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">FALSE ACCEPT RATE</span><span style="color:#4ade80;font-weight:bold;">${escapeHtml(audit?.false_acceptance_rate) || 'N/A'}</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">CERTAINTY</span><span style="color:#4ade80;font-weight:bold;">${escapeHtml(audit?.statistical_certainty) || 'N/A'}</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">NODES MAPPED</span><span style="color:#fff;font-weight:bold;">${escapeHtml(audit?.nodes_mapped) || 468}/468</span></div>
+                <div style="display:flex;justify-content:space-between;"><span style="color:#555;">COSINE DIST</span><span style="color:#fff;font-weight:bold;">${escapeHtml(audit?.raw_cosine_score?.toFixed(6)) || 'N/A'}</span></div>
               </div>
 
               <!-- Col 2: Spatial Alignment & Liveness -->
               <div style="flex:1;border-left:1px solid #1a1a0a;padding-left:16px;">
                 <div style="color:#06b6d4;font-size:7px;letter-spacing:2px;margin-bottom:4px;">SPATIAL ALIGNMENT</div>
-                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">YAW</span><span style="color:#67e8f9;">${audit?.alignment_variance?.yaw || 'N/A'}</span></div>
-                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">PITCH</span><span style="color:#67e8f9;">${audit?.alignment_variance?.pitch || 'N/A'}</span></div>
-                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">ROLL</span><span style="color:#67e8f9;">${audit?.alignment_variance?.roll || 'N/A'}</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">YAW</span><span style="color:#67e8f9;">${escapeHtml(audit?.alignment_variance?.yaw) || 'N/A'}</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">PITCH</span><span style="color:#67e8f9;">${escapeHtml(audit?.alignment_variance?.pitch) || 'N/A'}</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">ROLL</span><span style="color:#67e8f9;">${escapeHtml(audit?.alignment_variance?.roll) || 'N/A'}</span></div>
                 <div style="color:#06b6d4;font-size:7px;letter-spacing:2px;margin:4px 0 2px;">LIVENESS</div>
-                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">SPOOF PROB</span><span style="color:#4ade80;font-weight:bold;">${audit?.liveness_check?.spoof_probability || 'N/A'}</span></div>
-                <div style="display:flex;justify-content:space-between;"><span style="color:#555;">STATUS</span><span style="color:#4ade80;font-weight:bold;">${audit?.liveness_check?.status || 'N/A'}</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">SPOOF PROB</span><span style="color:#4ade80;font-weight:bold;">${escapeHtml(audit?.liveness_check?.spoof_probability) || 'N/A'}</span></div>
+                <div style="display:flex;justify-content:space-between;"><span style="color:#555;">STATUS</span><span style="color:#4ade80;font-weight:bold;">${escapeHtml(audit?.liveness_check?.status) || 'N/A'}</span></div>
               </div>
 
               <!-- Col 3: Cryptography & Source -->
               <div style="flex:1;border-left:1px solid #1a1a0a;padding-left:16px;">
                 <div style="color:#f59e0b;font-size:7px;letter-spacing:2px;margin-bottom:4px;">CRYPTOGRAPHY</div>
                 <div style="margin-bottom:2px;"><span style="color:#555;">VECTOR SHA-256</span></div>
-                <div style="color:#fbbf24;font-size:6px;word-break:break-all;margin-bottom:3px;">${audit?.vector_hash || 'N/A'}</div>
-                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">ENCRYPTION</span><span style="color:#fbbf24;">${audit?.crypto_envelope?.standard || 'N/A'}</span></div>
-                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">KMS LATENCY</span><span style="color:#fbbf24;">${audit?.crypto_envelope?.decryption_time || 'N/A'}</span></div>
-                ${audit?.matched_user_id ? `<div style="color:#f59e0b;font-size:7px;letter-spacing:2px;margin:4px 0 2px;">SOURCE</div><div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">TARGET</span><span style="color:#fff;">${audit.matched_user_id}</span></div>` : ''}
-                ${audit?.person_name ? `<div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">PERSON</span><span style="color:#fff;">${audit.person_name}</span></div>` : ''}
-                ${audit?.license_short_name ? `<div style="display:flex;justify-content:space-between;"><span style="color:#555;">LICENSE</span><span style="color:#888;">${audit.license_short_name}</span></div>` : ''}
+                <div style="color:#fbbf24;font-size:6px;word-break:break-all;margin-bottom:3px;">${escapeHtml(audit?.vector_hash) || 'N/A'}</div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">ENCRYPTION</span><span style="color:#fbbf24;">${escapeHtml(audit?.crypto_envelope?.standard) || 'N/A'}</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">KMS LATENCY</span><span style="color:#fbbf24;">${escapeHtml(audit?.crypto_envelope?.decryption_time) || 'N/A'}</span></div>
+                ${audit?.matched_user_id ? `<div style="color:#f59e0b;font-size:7px;letter-spacing:2px;margin:4px 0 2px;">SOURCE</div><div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">TARGET</span><span style="color:#fff;">${escapeHtml(audit.matched_user_id)}</span></div>` : ''}
+                ${audit?.person_name ? `<div style="display:flex;justify-content:space-between;margin-bottom:2px;"><span style="color:#555;">PERSON</span><span style="color:#fff;">${escapeHtml(audit.person_name)}</span></div>` : ''}
+                ${audit?.license_short_name ? `<div style="display:flex;justify-content:space-between;"><span style="color:#555;">LICENSE</span><span style="color:#888;">${escapeHtml(audit.license_short_name)}</span></div>` : ''}
               </div>
             </div>
           </div>
 
           <!-- FOOTER -->
           <div style="margin-top:8px;padding-top:6px;border-top:1px solid #1a1a0a;display:flex;justify-content:space-between;flex-shrink:0;">
-            <div style="font-size:6px;color:#333;letter-spacing:2px;">FALLEN BIOMETRIC INTELLIGENCE</div>
-            <div style="font-size:6px;color:#333;letter-spacing:2px;">DOC ${docId} · ${ts}</div>
+            <div style="font-size:6px;color:#333;letter-spacing:2px;">GENERATED REPORT</div>
+            <div style="font-size:6px;color:#333;letter-spacing:2px;">DOC ${escapeHtml(docId)} · ${escapeHtml(ts)}</div>
           </div>
         </div>
       `;
@@ -589,7 +560,7 @@ export default function Home() {
                 <div className="w-3 h-3 bg-[#D4AF37]"></div>
               </div>
               <div>
-                <span className="text-white font-bold text-sm tracking-[0.25em]">AURUM<span className="text-[#D4AF37]">SHIELD</span></span>
+                <span className="text-white font-bold text-sm tracking-[0.25em]">FAL<span className="text-[#D4AF37]">LEN</span></span>
                 <span className="hidden sm:inline text-gray-600 text-[9px] ml-3 tracking-[0.15em]">BIOMETRIC INTELLIGENCE</span>
               </div>
             </div>
@@ -640,7 +611,7 @@ export default function Home() {
               </button>
 
               <p className="text-gray-600 text-[10px] tracking-[0.2em] font-mono mt-5">
-                256-BIT ENCRYPTION · SUB-SECOND MATCHING · FORENSIC-GRADE ACCURACY
+                256-BIT ENCRYPTION · SUB-SECOND MATCHING · HIGH-RELIABILITY METRICS
               </p>
             </div>
           </div>
@@ -805,7 +776,7 @@ export default function Home() {
         <footer className="border-t border-[#1F2937] py-8 px-6">
           <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <span className="text-white font-bold text-sm tracking-[0.15em]">AURUM<span className="text-[#D4AF37]">SHIELD</span></span>
+              <span className="text-white font-bold text-sm tracking-[0.15em]">FAL<span className="text-[#D4AF37]">LEN</span></span>
               <span className="text-gray-700 text-xs">|</span>
               <span className="text-gray-500 text-[10px] tracking-wider">Secure Facial Biometrics</span>
             </div>
@@ -957,7 +928,7 @@ export default function Home() {
               /* ── Vault: Single Dropzone ── */
               <div className="w-full max-w-xl">
                 <div className="border border-dashed border-[#D4AF37]/50 rounded-lg p-8 flex flex-col items-center justify-center bg-[#0d0d0e] hover:border-[#D4AF37] hover:bg-[#111] transition-all relative min-h-[280px]">
-                  <input type="file" accept="image/*" onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+                  <input type="file" accept="image/*" aria-label="Upload Target Image" onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
                   <div className="absolute top-4 left-4 w-4 h-4 border-t border-l border-[#D4AF37]/50"></div>
                   <div className="absolute top-4 right-4 w-4 h-4 border-t border-r border-[#D4AF37]/50"></div>
                   <div className="absolute bottom-4 left-4 w-4 h-4 border-b border-l border-[#D4AF37]/50"></div>
@@ -981,7 +952,7 @@ export default function Home() {
               <div className="w-full max-w-3xl grid grid-cols-2 gap-4">
                 {/* Probe */}
                 <div className="border border-dashed border-[#D4AF37]/50 rounded-lg p-6 flex flex-col items-center justify-center bg-[#0d0d0e] hover:border-[#D4AF37] hover:bg-[#111] transition-all relative min-h-[250px]">
-                  <input type="file" accept="image/*" onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+                  <input type="file" accept="image/*" aria-label="Upload Probe Image" onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
                   <div className="absolute top-3 left-3 w-3 h-3 border-t border-l border-[#D4AF37]/50"></div>
                   <div className="absolute top-3 right-3 w-3 h-3 border-t border-r border-[#D4AF37]/50"></div>
                   <div className="absolute bottom-3 left-3 w-3 h-3 border-b border-l border-[#D4AF37]/50"></div>
@@ -999,7 +970,7 @@ export default function Home() {
                 </div>
                 {/* Gallery */}
                 <div className="border border-dashed border-gray-700/50 rounded-lg p-6 flex flex-col items-center justify-center bg-[#0d0d0e] hover:border-gray-500 hover:bg-[#111] transition-all relative min-h-[250px]">
-                  <input type="file" accept="image/*" onChange={handleGalleryChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+                  <input type="file" accept="image/*" aria-label="Upload Gallery Image" onChange={handleGalleryChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
                   <div className="absolute top-3 left-3 w-3 h-3 border-t border-l border-gray-700/50"></div>
                   <div className="absolute top-3 right-3 w-3 h-3 border-t border-r border-gray-700/50"></div>
                   <div className="absolute bottom-3 left-3 w-3 h-3 border-b border-l border-gray-700/50"></div>
@@ -1025,6 +996,14 @@ export default function Home() {
             >
               {mode === 'vault' ? 'INITIATE VAULT SWEEP' : 'RUN VERIFICATION'}
             </button>
+            <div className="mt-4 text-center max-w-lg px-4">
+              <p className="text-[10px] text-gray-500 mb-2 leading-relaxed">
+                <strong className="text-gray-400">Disclaimer:</strong> This tool provides experimental biometric similarity analysis only. Results may be inaccurate and do not prove identity. Do not use as the sole basis for legal, employment, financial, medical, or law-enforcement decisions. Users must have appropriate rights/permission to upload images.
+              </p>
+              <p className="text-[10px] text-gray-500 leading-relaxed">
+                By uploading, you agree that images are processed solely for experimental similarity analysis. <a href="#" className="underline hover:text-gray-300">Privacy Policy</a>
+              </p>
+            </div>
           </div>
         )}
 
@@ -1045,7 +1024,7 @@ export default function Home() {
         )}
 
         {/* ════ PAYWALL: ANALYSIS COMPLETE ════ */}
-        {step === 'paywall' && results && (
+        {step === 'paywall' && lockedJob && (
           <div className="h-full flex flex-col items-center justify-center">
             <div className="w-full max-w-md text-center">
               {/* Lock icon */}
@@ -1076,7 +1055,11 @@ export default function Home() {
               <button
                 onClick={async () => {
                   try {
-                    const res = await fetch(`${getApiUrl()}/checkout/create-session`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+                    const res = await fetch(`${getApiUrl()}/checkout/create-session`, { 
+                      method: 'POST', 
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ job_id: lockedJob.job_id })
+                    });
                     if (!res.ok) throw new Error('Checkout session creation failed');
                     const data = await res.json();
                     window.location.href = data.checkout_url;
@@ -1102,16 +1085,18 @@ export default function Home() {
                   className="w-full bg-[#0d0d0e] border border-[#222] text-gray-400 p-2 text-center text-[10px] tracking-[0.2em] focus:outline-none focus:border-[#333] transition-colors mb-2"
                 />
                 <button
-                  onClick={() => {
-                    if (bypassCode === 'SCARGODS_ADMIN') {
-                      const cached = sessionStorage.getItem('cachedResult');
-                      if (cached) {
-                        const parsed = JSON.parse(cached) as VerificationResult;
-                        setResults(parsed);
-                        sessionStorage.removeItem('cachedResult');
-                      }
+                  onClick={async () => {
+                    try {
+                      const res = await fetch(`${getApiUrl()}/verify/result/${lockedJob.job_id}?bypass_code=${bypassCode}`);
+                      if (!res.ok) throw new Error('Bypass failed');
+                      const data = await res.json();
+                      setResults(data);
+                      sessionStorage.removeItem('lockedJob');
                       setBypassCode('');
                       setStep('complete');
+                    } catch (err) {
+                      console.error(err);
+                      alert('Invalid operator clearance code.');
                     }
                   }}
                   className="w-full py-1.5 text-[10px] tracking-[0.2em] text-gray-500 hover:text-gray-300 border border-[#222] hover:border-[#444] bg-transparent transition-all rounded-sm"
@@ -1122,7 +1107,7 @@ export default function Home() {
 
               {/* Cancel */}
               <button
-                onClick={() => { sessionStorage.removeItem('cachedResult'); setStep('idle'); setResults(null); setProbeFile(null); if (probePreview) URL.revokeObjectURL(probePreview); setProbePreview(''); setGalleryFile(null); if (galleryPreview) URL.revokeObjectURL(galleryPreview); setGalleryPreview(''); setBypassCode(''); }}
+                onClick={() => { sessionStorage.removeItem('lockedJob'); setStep('idle'); setResults(null); setLockedJob(null); setProbeFile(null); if (probePreview) URL.revokeObjectURL(probePreview); setProbePreview(''); setGalleryFile(null); if (galleryPreview) URL.revokeObjectURL(galleryPreview); setGalleryPreview(''); setBypassCode(''); }}
                 className="mt-3 text-[10px] text-gray-500 hover:text-gray-300 transition-colors tracking-widest"
               >
                 CANCEL AND RESET
@@ -1174,7 +1159,7 @@ export default function Home() {
                 <div className={`absolute -top-6 -right-6 w-24 h-24 rounded-full ${(results.fused_identity_score < 40.0) ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
                 <div className={`absolute -bottom-4 -left-4 w-16 h-16 rounded-full ${(results.fused_identity_score < 40.0) ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
                 <div className="relative z-10">
-                  <div className={`text-[8px] tracking-[0.3em] mb-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/70' : 'text-[#D4AF37]/70'}`}>POSTERIOR PROBABILITY</div>
+                  <div className={`text-[8px] tracking-[0.3em] mb-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/70' : 'text-[#D4AF37]/70'}`}>FUSED SIMILARITY SCORE</div>
                   <div className="flex items-baseline gap-1.5 flex-wrap overflow-hidden min-w-0 w-full">
                     <span className={`text-4xl font-bold tabular-nums ${(results.fused_identity_score < 40.0) ? 'text-red-400' : 'text-[#D4AF37]'}`}>{results.fused_identity_score}</span>
                     <span className={`text-lg font-bold ${(results.fused_identity_score < 40.0) ? 'text-red-400/60' : 'text-[#D4AF37]/60'}`}>%</span>
@@ -1195,7 +1180,7 @@ export default function Home() {
                   </div>
                   {/* Human-readable interpretation */}
                   <div className={`text-[10px] mt-2 font-medium ${(results.fused_identity_score < 40.0) ? 'text-red-300/80' : results.fused_identity_score > 80 ? 'text-emerald-300/80' : results.fused_identity_score > 60 ? 'text-amber-300/80' : 'text-red-300/80'}`}>
-                    {results.fused_identity_score > 99 ? 'Extremely strong — near-certain same identity' : results.fused_identity_score > 85 ? 'Very strong facial similarity detected' : results.fused_identity_score > 70 ? 'Moderate facial similarity detected' : results.fused_identity_score > 50 ? 'Weak similarity — likely different people' : 'Very low similarity — different people'}
+                    {results.fused_identity_score > 99 ? 'Extremely strong similarity detected' : results.fused_identity_score > 85 ? 'Very strong facial similarity detected' : results.fused_identity_score > 70 ? 'Moderate facial similarity detected' : results.fused_identity_score > 50 ? 'Weak similarity detected' : 'Very low similarity detected'}
                   </div>
                   <div className={`text-[8px] mt-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/40' : 'text-[#D4AF37]/40'}`}>Bayesian fusion of {results.marks_matched ? '4' : '3'} independent evidence channels below</div>
                 </div>
@@ -1219,7 +1204,7 @@ export default function Home() {
                       style={{ width: `${Math.min(100, results.structural_score)}%` }}
                     />
                   </div>
-                  <p className="text-[9px] text-gray-500 mt-1.5 leading-relaxed">Do these faces belong to the same person? This is the primary test — an AI model maps each face into a mathematical fingerprint and measures how similar they are.</p>
+                  <p className="text-[9px] text-gray-500 mt-1.5 leading-relaxed">Do these faces belong to the same person? This is the primary test — an AI model maps each face into a numerical fingerprint and measures how similar they are.</p>
                   <div className="mt-1.5 flex items-center gap-1.5">
                     <div className={`w-1 h-1 rounded-full ${results.structural_score > 80 ? 'bg-emerald-500' : results.structural_score > 60 ? 'bg-amber-500' : 'bg-red-500'}`}></div>
                     <span className={`text-[8px] italic ${results.structural_score > 80 ? 'text-emerald-500/70' : results.structural_score > 60 ? 'text-amber-500/70' : 'text-red-500/70'}`}>
@@ -1287,7 +1272,7 @@ export default function Home() {
                         style={{ width: `${Math.min(100, results.audit_log?.lr_marks != null ? Math.min(100, Math.log10(Math.max(1, results.audit_log.lr_marks)) * 10) : 0)}%` }}
                       />
                     </div>
-                    <p className="text-[8px] break-words text-[#D4AF37]/70 mt-1.5 leading-relaxed">Bayesian Likelihood Ratio from {results.marks_matched} matching scars, moles, and birthmarks. Values {'>'} 1 support same-identity hypothesis; values {'>'} 10,000 constitute strong forensic evidence.</p>
+                    <p className="text-[8px] break-words text-[#D4AF37]/70 mt-1.5 leading-relaxed">Bayesian Likelihood Ratio from {results.marks_matched} matching scars, moles, and birthmarks. Values {'>'} 1 support visual similarity hypothesis; values {'>'} 10,000 constitute extremely strong similarity.</p>
                     {/* Individual mark LR breakdown */}
                     {results.audit_log?.lr_arcface != null && (
                       <div className="mt-1.5 flex items-center gap-3 flex-wrap">
@@ -1450,15 +1435,15 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {/* Block 4: Bayesian Evidence — Daubert Forensic Trail */}
+                    {/* Block 4: Bayesian Evidence — Forensic Trail */}
                     <div className="border border-[#2a1a2a] rounded p-2 bg-[#020102] min-w-0">
-                      <div className="text-purple-400/80 tracking-[0.2em] mb-1 border-b border-purple-900/30 pb-1 text-[8px]">▸ BAYESIAN EVIDENCE (DAUBERT v3.0)</div>
-                      <p className="text-[8px] break-words text-gray-600 mb-1.5 leading-relaxed">Likelihood Ratios quantifying the strength of evidence for same-identity hypothesis.</p>
+                      <div className="text-purple-400/80 tracking-[0.2em] mb-1 border-b border-purple-900/30 pb-1 text-[8px]">▸ BAYESIAN EVIDENCE</div>
+                      <p className="text-[8px] break-words text-gray-600 mb-1.5 leading-relaxed">Likelihood Ratios quantifying the strength of evidence for visual similarity.</p>
                       <div className="space-y-0.5 pl-1">
                         <div className="flex justify-between"><span className="text-gray-500">LR<sub>arcface</sub></span><span className="text-purple-300 font-bold break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_arcface)}</span></div>
                         <div className="flex justify-between"><span className="text-gray-500">LR<sub>marks</sub></span><span className="text-purple-300 font-bold break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_marks)}</span></div>
                         <div className="flex justify-between"><span className="text-gray-500">LR<sub>total</sub></span><span className="text-[#D4AF37] font-bold break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_total)}</span></div>
-                        <div className="flex justify-between mt-1 pt-1 border-t border-purple-900/20"><span className="text-gray-500">Posterior P(same)</span><span className="text-[#D4AF37] font-bold">{results.audit_log.posterior_probability != null ? `${(results.audit_log.posterior_probability * 100).toFixed(6)}%` : 'N/A'}</span></div>
+                        <div className="flex justify-between mt-1 pt-1 border-t border-purple-900/20"><span className="text-gray-500">Similarity Probability</span><span className="text-[#D4AF37] font-bold">{results.audit_log.posterior_probability != null ? `${(results.audit_log.posterior_probability * 100).toFixed(6)}%` : 'N/A'}</span></div>
                         {results.audit_log.mark_lrs && results.audit_log.mark_lrs.length > 0 && (
                           <div className="mt-1 pt-1 border-t border-purple-900/20">
                             <div className="text-gray-500 mb-0.5">Individual Mark LRs ({results.audit_log.mark_lrs.length})</div>

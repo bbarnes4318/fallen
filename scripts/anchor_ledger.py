@@ -1,5 +1,5 @@
 """
-Fallen — Immutable Ledger Anchoring (Legal Non-Repudiation)
+Fallen — Immutable Ledger Anchoring
 ============================================================
 Cryptographically anchors the mutable PostgreSQL VerificationEvent
 ledger to an immutable GCS Immutable bucket to prove records were not
