@@ -12,7 +12,7 @@ export default function PrivacyPolicy() {
         <section className="space-y-6 text-sm md:text-base leading-relaxed">
           <h2 className="text-2xl font-bold text-white border-b border-[#333333] pb-2">1. EXPERIMENTAL NATURE</h2>
           <p>
-            The Fallen biometric analysis platform is provided strictly for experimental, research, and entertainment purposes. It does not provide legally binding, forensic-grade, or "Daubert compliant" identity verification. 
+            The Fallen biometric analysis platform is provided strictly for experimental, research, and entertainment purposes. It does not provide legally binding, forensic-grade, or &quot;Daubert compliant&quot; identity verification. 
           </p>
           <p>
             The similarity metrics presented by this system are statistically generated estimates and must never be used as the sole basis for legal, financial, or employment decisions.
@@ -32,7 +32,7 @@ export default function PrivacyPolicy() {
         <section className="space-y-6 text-sm md:text-base leading-relaxed">
           <h2 className="text-2xl font-bold text-white border-b border-[#333333] pb-2">3. LIMITATION OF LIABILITY</h2>
           <p>
-            The operators of this platform assume no liability for the misinterpretation, misuse, or overreliance on the similarity scores or "Delta" visualizations provided. By utilizing this system, you explicitly acknowledge that biometric similarity does not definitively prove identity.
+            The operators of this platform assume no liability for the misinterpretation, misuse, or overreliance on the similarity scores or &quot;Delta&quot; visualizations provided. By utilizing this system, you explicitly acknowledge that biometric similarity does not definitively prove identity.
           </p>
         </section>
 

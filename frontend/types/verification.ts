@@ -24,9 +24,14 @@ export interface AuditLog {
   mark_lrs?: number[] | null;
 }
 
+export type RawPoint = 
+  | [number, number, number?] 
+  | { x: number; y: number; area?: number; lr?: number }
+  | { centroid: [number, number]; area?: number; lr?: number };
+
 export interface Correspondence {
-  gallery_pt: any;
-  probe_pt: any;
+  gallery_pt: RawPoint;
+  probe_pt: RawPoint;
   lr: number;
 }
 
@@ -52,13 +57,13 @@ export interface VerificationResult {
   probe_wireframe_b64: string;
   correspondences?: Correspondence[];
   audit_log?: AuditLog;
-  probe_data?: any;
-  gallery_data?: any;
+  probe_data?: Record<string, unknown>;
+  gallery_data?: Record<string, unknown>;
   occluded_regions?: string[];
   occlusion_percentage?: number;
   effective_geometric_ratios_used?: number;
-  raw_probe_marks?: any[];
-  raw_gallery_marks?: any[];
+  raw_probe_marks?: RawPoint[];
+  raw_gallery_marks?: RawPoint[];
 }
 
 export interface ForensicPoint {

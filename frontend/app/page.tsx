@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
+import Image from 'next/image';
 import SymmetryMerge from '@/components/SymmetryMerge';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import { VerificationResult, AuditLog } from '@/types/verification';
+import { VerificationResult } from '@/types/verification';
 
 const IdentityGraph = dynamic(() => import('@/components/IdentityGraph'), { ssr: false });
 
@@ -34,24 +35,29 @@ function TelemetryLoader() {
   const [hash, setHash] = useState<string>('');
   const [progress, setProgress] = useState(0);
 
-  const PIPELINE_STEPS = [
-    "[sys] Initializing secure TLS enclave...",
-    "[sys] Injecting payload into volatile memory...",
-    "[tier_1] Verifying image integrity and EXIF metadata...",
-    "[tier_1] Normalizing cross-spectral variants...",
-    "[tier_1] Executing MTCNN face detection...",
-    "[tier_1] Extracting 512-D neural embeddings (ArcFace)...",
-    "[tier_2] Extracting 468-point 3D facial mesh...",
-    "[tier_2] Executing 3D Procrustes rigid alignment...",
-    "[tier_2] Computing geometric ratios and soft biometrics...",
-    "[tier_3] Mapping micro-topology LBP textures...",
-    "[tier_3] Scanning for synthetic GAN anomalies...",
-    "[tier_4] Extracting localized facial marks and scars...",
-    "[tier_4] Querying population frequency database...",
-    "[tier_4] Calculating Bayesian Likelihood Ratios...",
-    "[sys] Fusing independent identity scores...",
-    "[sys] Finalizing audit trail..."
-  ];
+const PIPELINE_STEPS = [
+  "[sys] Initializing secure TLS enclave...",
+  "[sys] Injecting payload into volatile memory...",
+  "[tier_1] Verifying image integrity and EXIF metadata...",
+  "[tier_1] Normalizing cross-spectral variants...",
+  "[tier_1] Executing MTCNN face detection...",
+  "[tier_1] Extracting 512-D neural embeddings (ArcFace)...",
+  "[tier_2] Extracting 468-point 3D facial mesh...",
+  "[tier_2] Executing 3D Procrustes rigid alignment...",
+  "[tier_2] Computing geometric ratios and soft biometrics...",
+  "[tier_3] Mapping micro-topology LBP textures...",
+  "[tier_3] Scanning for synthetic GAN anomalies...",
+  "[tier_4] Extracting localized facial marks and scars...",
+  "[tier_4] Querying population frequency database...",
+  "[tier_4] Calculating Bayesian Likelihood Ratios...",
+  "[sys] Fusing independent identity scores...",
+  "[sys] Finalizing audit trail..."
+];
+
+function TelemetryLoader() {
+  const [logs, setLogs] = useState<string[]>([]);
+  const [hash, setHash] = useState<string>('');
+  const [progress, setProgress] = useState(0);
 
   useEffect(() => {
     let currentIndex = 0;
@@ -163,7 +169,7 @@ export default function Home() {
   }
 
   const [results, setResults] = useState<VerificationResult | null>(null);
-  const [lockedJob, setLockedJob] = useState<{job_id: string, preview: any} | null>(null);
+  const [lockedJob, setLockedJob] = useState<{job_id: string, preview: Record<string, unknown>} | null>(null);
   const [isXrayMode, setIsXrayMode] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [auditExpanded, setAuditExpanded] = useState(false);
@@ -210,8 +216,11 @@ export default function Home() {
       const cached = sessionStorage.getItem('lockedJob');
       if (cached) {
         try {
-          setLockedJob(JSON.parse(cached));
-          setStep('paywall');
+          const parsed = JSON.parse(cached);
+          setTimeout(() => {
+            setLockedJob(parsed);
+            setStep('paywall');
+          }, 0);
         } catch {}
       }
       window.history.replaceState({}, '', window.location.pathname);
@@ -352,7 +361,7 @@ export default function Home() {
   };
 
   // ── Graph-to-Comparison bridge: receives URLs from IdentityGraph ──
-  const handleGraphCompare = async (galleryUrl: string, probeUrl: string, galleryName: string, probeName: string) => {
+  const handleGraphCompare = async (galleryUrl: string, probeUrl: string) => {
     try {
       setViewMode('acquisition');
       setMode('compare');
@@ -934,8 +943,7 @@ export default function Home() {
                   <div className="absolute bottom-4 left-4 w-4 h-4 border-b border-l border-[#D4AF37]/50"></div>
                   <div className="absolute bottom-4 right-4 w-4 h-4 border-b border-r border-[#D4AF37]/50"></div>
                   {probePreview ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img src={probePreview} alt="Target" className="max-h-[200px] object-contain rounded shadow-[0_0_20px_rgba(212,175,55,0.15)] z-0 relative" />
+                    <Image src={probePreview} alt="Target" width={400} height={200} className="max-h-[200px] w-auto object-contain rounded shadow-[0_0_20px_rgba(212,175,55,0.15)] z-0 relative" unoptimized />
                   ) : (
                     <div className="flex flex-col items-center text-[#D4AF37]/80">
                       <div className="w-14 h-14 rounded-full border-2 border-dotted border-[#D4AF37] flex items-center justify-center mb-3 animate-[spin_15s_linear_infinite]">
@@ -958,8 +966,7 @@ export default function Home() {
                   <div className="absolute bottom-3 left-3 w-3 h-3 border-b border-l border-[#D4AF37]/50"></div>
                   <div className="absolute bottom-3 right-3 w-3 h-3 border-b border-r border-[#D4AF37]/50"></div>
                   {probePreview ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img src={probePreview} alt="Probe" className="max-h-[160px] object-contain rounded shadow-[0_0_15px_rgba(212,175,55,0.1)] z-0 relative" />
+                    <Image src={probePreview} alt="Probe" width={400} height={160} className="max-h-[160px] w-auto object-contain rounded shadow-[0_0_15px_rgba(212,175,55,0.1)] z-0 relative" unoptimized />
                   ) : (
                     <div className="flex flex-col items-center text-[#D4AF37]/80">
                       <svg className="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 4v16m8-8H4"></path></svg>
@@ -976,8 +983,7 @@ export default function Home() {
                   <div className="absolute bottom-3 left-3 w-3 h-3 border-b border-l border-gray-700/50"></div>
                   <div className="absolute bottom-3 right-3 w-3 h-3 border-b border-r border-gray-700/50"></div>
                   {galleryPreview ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img src={galleryPreview} alt="Gallery" className="max-h-[160px] object-contain rounded shadow-[0_0_15px_rgba(255,255,255,0.05)] z-0 relative" />
+                    <Image src={galleryPreview} alt="Gallery" width={400} height={160} className="max-h-[160px] w-auto object-contain rounded shadow-[0_0_15px_rgba(255,255,255,0.05)] z-0 relative" unoptimized />
                   ) : (
                     <div className="flex flex-col items-center text-gray-500">
                       <svg className="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 4v16m8-8H4"></path></svg>
@@ -1168,7 +1174,7 @@ export default function Home() {
                   {results.audit_log?.lr_total != null && (
                     <div className="mt-1.5 flex items-center gap-2 max-w-full">
                       <span className="text-[8px] text-gray-500 tracking-wider shrink-0">LR<sub>total</sub></span>
-                      <span className={`text-[11px] font-bold tabular-nums truncate ${(results.fused_identity_score < 40.0) ? 'text-red-400/80' : 'text-[#D4AF37]/90'}`}>{formatLR(results.audit_log.lr_total)}</span>
+                      <span className={`text-[11px] font-bold tabular-nums truncate ${(results.fused_identity_score < 40.0) ? 'text-red-400/80' : 'text-[#D4AF37]/90'}`}>{formatLRSci(results.audit_log.lr_total)}</span>
                     </div>
                   )}
                   {/* Score bar */}
@@ -1263,7 +1269,7 @@ export default function Home() {
                   <div className="p-2.5 border-t border-[#1a1a1a]">
                     <div className="flex items-baseline justify-between">
                       <h3 className="text-[#D4AF37] text-[9px] tracking-wider font-bold">MARK EVIDENCE (LR)</h3>
-                      <span className="text-lg font-bold tabular-nums text-[#D4AF37] break-all whitespace-normal overflow-hidden">{formatLR(results.audit_log?.lr_marks)}</span>
+                      <span className="text-lg font-bold tabular-nums text-[#D4AF37] break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log?.lr_marks)}</span>
                     </div>
                     {/* LR magnitude bar — log-scaled */}
                     <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden border border-[#D4AF37]/20">
@@ -1278,17 +1284,17 @@ export default function Home() {
                       <div className="mt-1.5 flex items-center gap-3 flex-wrap">
                         <div className="flex items-center gap-1">
                           <span className="text-[7px] text-gray-500">LR<sub>arcface</sub></span>
-                          <span className="text-[8px] font-bold text-[#D4AF37]/80 tabular-nums break-all whitespace-normal overflow-hidden">{formatLR(results.audit_log.lr_arcface)}</span>
+                          <span className="text-[8px] font-bold text-[#D4AF37]/80 tabular-nums break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_arcface)}</span>
                         </div>
                         <span className="text-[7px] text-gray-600">×</span>
                         <div className="flex items-center gap-1">
                           <span className="text-[7px] text-gray-500">LR<sub>marks</sub></span>
-                          <span className="text-[8px] font-bold text-[#D4AF37]/80 tabular-nums break-all whitespace-normal overflow-hidden">{formatLR(results.audit_log.lr_marks)}</span>
+                          <span className="text-[8px] font-bold text-[#D4AF37]/80 tabular-nums break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_marks)}</span>
                         </div>
                         <span className="text-[7px] text-gray-600">=</span>
                         <div className="flex items-center gap-1">
                           <span className="text-[7px] text-gray-500">LR<sub>total</sub></span>
-                          <span className="text-[8px] font-bold text-[#D4AF37] tabular-nums break-all whitespace-normal overflow-hidden">{formatLR(results.audit_log.lr_total)}</span>
+                          <span className="text-[8px] font-bold text-[#D4AF37] tabular-nums break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_total)}</span>
                         </div>
                       </div>
                     )}

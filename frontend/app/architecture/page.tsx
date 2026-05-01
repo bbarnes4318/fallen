@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-
+import Link from "next/link";
 export const metadata: Metadata = {
   title: "Fallen — Biometric Architecture",
   description:
@@ -215,9 +215,9 @@ export default function ArchitecturePage() {
         <div className="relative max-w-[1200px] mx-auto px-6 pt-16 pb-20">
           {/* Breadcrumb */}
           <div className="flex items-center gap-2 mb-10" style={{ color: C.textDim }}>
-            <a href="/" className="text-[11px] tracking-[0.2em] uppercase hover:underline" style={{ color: C.goldMuted }}>
+            <Link href="/" className="text-[11px] tracking-[0.2em] uppercase hover:underline" style={{ color: C.goldMuted }}>
               Fallen
-            </a>
+            </Link>
             <span className="text-[10px]">/</span>
             <span className="text-[11px] tracking-[0.2em] uppercase">Architecture</span>
           </div>

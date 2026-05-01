@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
+import Image from 'next/image';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -152,16 +153,20 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
   // ── Fetch live graph data OR fall back to dummy ──
   useEffect(() => {
     const token = localStorage.getItem('operator_token');
-    setHasToken(!!token);
     const isDemo = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
 
     if (!token) {
       queueMicrotask(() => {
+        setHasToken(!!token);
         setGraphData(isDemo ? DUMMY_GRAPH : { nodes: [], links: [] });
         setLoading(false);
       });
       return;
     }
+    
+    queueMicrotask(() => {
+      setHasToken(true);
+    });
 
     const fetchWithRetry = async (attempt = 0): Promise<void> => {
       const MAX_RETRIES = 3;
@@ -616,7 +621,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
               {targetA ? (
                 <div className="relative group">
                   <div className="w-10 h-10 rounded-lg overflow-hidden border-2 border-[#D4AF37]">
-                    <img src={targetA.thumbnail} alt={targetA.name} className="w-full h-full object-cover" crossOrigin="anonymous" />
+                    <Image src={targetA.thumbnail} alt={targetA.name} width={40} height={40} className="w-full h-full object-cover" unoptimized crossOrigin="anonymous" />
                   </div>
                   <button
                     onClick={() => setTargetA(null)}
@@ -639,7 +644,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
               {targetB ? (
                 <div className="relative group">
                   <div className="w-10 h-10 rounded-lg overflow-hidden border-2 border-cyan-500">
-                    <img src={targetB.thumbnail} alt={targetB.name} className="w-full h-full object-cover" crossOrigin="anonymous" />
+                    <Image src={targetB.thumbnail} alt={targetB.name} width={40} height={40} className="w-full h-full object-cover" unoptimized crossOrigin="anonymous" />
                   </div>
                   <button
                     onClick={() => setTargetB(null)}
