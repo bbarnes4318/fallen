@@ -435,17 +435,7 @@ class AuditLog(BaseModel):
     # Pipeline reproducibility
     pipeline_version: str = PIPELINE_VERSION
     dependency_versions: Optional[dict] = None
-    # Bayesian Likelihood Ratio Audit Trail (Scientific v3.0)
-    lr_arcface: Optional[float] = None
-    lr_marks: Optional[float] = None
-    lr_total: Optional[float] = None
-    posterior_probability: Optional[float] = None
-    mark_lrs: Optional[list] = None  # Individual LR per matched mark
-    bayesian_fused_score: Optional[float] = None
-    veto_reason: Optional[str] = None
-    veto_override_applied: bool = False
-    veto_override_reason: Optional[str] = None
-    scoring_trace: Optional[dict] = None
+
 
 class VerificationResponse(BaseModel):
     structural_score: float
@@ -646,7 +636,14 @@ def percent_to_x100(value: float | None) -> int | None:
     return round(value * 100)
 
 
-def evaluate_mark_veto_override(mark_result: dict, lr_marks: float) -> bool:
+def raw_to_x10000(value: float | None) -> int | None:
+    value = finite_or_none(value)
+    if value is None:
+        return None
+    return round(value * 10000)
+
+
+def evaluate_mark_veto_override(mark_result: dict, lr_marks: float) -> dict:
     """
     Evaluates whether independent forensic mark correspondence provides enough 
     evidence to override an ArcFace veto.
@@ -656,16 +653,38 @@ def evaluate_mark_veto_override(mark_result: dict, lr_marks: float) -> bool:
     - malformed / non-numeric mark LRs are ignored
     - one extreme mark LR alone must not override
     """
-    if lr_marks < 100.0:
-        return False
-        
     mark_lrs_raw = mark_result.get("mark_lrs", [])
     positive_mark_lrs = []
     for lr in mark_lrs_raw:
-        if isinstance(lr, (int, float)) and lr > 1.0:
-            positive_mark_lrs.append(lr)
+        lr_val = finite_or_none(lr)
+        if lr_val is not None and lr_val > 1.0:
+            positive_mark_lrs.append(lr_val)
             
-    return len(positive_mark_lrs) >= 3
+    count = len(positive_mark_lrs)
+    lr_marks_val = finite_or_none(lr_marks)
+    
+    if lr_marks_val is None or lr_marks_val < 100.0:
+        return {
+            "eligible": False,
+            "positive_mark_count": count,
+            "positive_mark_lrs": positive_mark_lrs,
+            "reason": f"Aggregate lr_marks < 100.0 (got {lr_marks_val})"
+        }
+        
+    if count < 3:
+        return {
+            "eligible": False,
+            "positive_mark_count": count,
+            "positive_mark_lrs": positive_mark_lrs,
+            "reason": f"Fewer than 3 positive mark LRs (got {count})"
+        }
+        
+    return {
+        "eligible": True,
+        "positive_mark_count": count,
+        "positive_mark_lrs": positive_mark_lrs,
+        "reason": f"Mark override eligible: {count} positive mark LRs, aggregate lr_marks={lr_marks_val:.2f}"
+    }
 
 
 def score_to_lr_ensemble(ensemble_score: float, temporal_delta: float = 0.0) -> float:
@@ -2409,7 +2428,9 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     # If ArcFace veto triggers but 3+ independent mark correspondences
     # with positive individual LRs provide aggregate LR >= 100,
     # the hard-zero policy is lifted. ArcFace itself did NOT pass.
-    mark_override_eligible = evaluate_mark_veto_override(mark_result, lr_marks)
+    mark_override_eval = evaluate_mark_veto_override(mark_result, lr_marks)
+    mark_override_eligible = mark_override_eval["eligible"]
+    positive_mark_count = mark_override_eval["positive_mark_count"]
 
     veto_reason = None
     veto_override_applied = False
@@ -2419,11 +2440,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             # Override lifts the hard-zero — ArcFace veto still flagged
             veto_reason = "ARCFACE_VETO_MARK_OVERRIDE"
             veto_override_applied = True
-            positive_mark_lrs = [lr for lr in mark_result.get("mark_lrs", []) if isinstance(lr, (int, float)) and lr > 1.0]
-            veto_override_reason = (
-                f"Mark override: {len(positive_mark_lrs)} positive mark LRs, "
-                f"aggregate lr_marks={lr_marks:.2f}"
-            )
+            veto_override_reason = mark_override_eval["reason"]
             conclusion = (
                 "Bayesian Match — ArcFace veto overridden by independent "
                 "mark correspondence evidence"
@@ -2622,6 +2639,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             "veto_override_applied": veto_override_applied,
             "veto_override_reason": veto_override_reason,
             "mark_override_eligible": mark_override_eligible,
+            "positive_mark_count": positive_mark_count,
             "temporal_delta_years": finite_or_none(temporal_delta),
             "ensemble_thresholds_key": (
                 "ensemble" if CALIBRATION and "ensemble" in CALIBRATION
@@ -2693,8 +2711,8 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             false_acceptance_rate=stats["false_acceptance_rate"],
             veto_triggered=veto_triggered,
             structural_score_x100=percent_to_x100(tier1_score) or 0,
-            arcface_score_x10000=percent_to_x100(arcface_sim * 100) or 0,
-            secondary_score_x10000=percent_to_x100(secondary_sim * 100) or 0,
+            arcface_score_x10000=raw_to_x10000(arcface_sim) or 0,
+            secondary_score_x10000=raw_to_x10000(secondary_sim) or 0,
             ensemble_model_secondary="Facenet512",
             geometric_score_x100=percent_to_x100(tier2_score) or 0,
             micro_topology_score_x100=percent_to_x100(tier3_score) or 0,
@@ -2977,7 +2995,9 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     veto_arcface = best_score < 0.40
 
     # ── MARK OVERRIDE PROTOCOL (v1.0) ──
-    mark_override_eligible = evaluate_mark_veto_override(mark_result, lr_marks)
+    mark_override_eval = evaluate_mark_veto_override(mark_result, lr_marks)
+    mark_override_eligible = mark_override_eval["eligible"]
+    positive_mark_count = mark_override_eval["positive_mark_count"]
 
     veto_reason = None
     veto_override_applied = False
@@ -2986,11 +3006,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         if mark_override_eligible:
             veto_reason = "ARCFACE_VETO_MARK_OVERRIDE"
             veto_override_applied = True
-            positive_mark_lrs = [lr for lr in mark_result.get("mark_lrs", []) if isinstance(lr, (int, float)) and lr > 1.0]
-            veto_override_reason = (
-                f"Mark override: {len(positive_mark_lrs)} positive mark LRs, "
-                f"aggregate lr_marks={lr_marks:.2f}"
-            )
+            veto_override_reason = mark_override_eval["reason"]
             conclusion = (
                 f"Bayesian Match — ArcFace veto overridden by independent "
                 f"mark correspondence evidence ({best_user_id})"
@@ -3194,6 +3210,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             "veto_override_applied": veto_override_applied,
             "veto_override_reason": veto_override_reason,
             "mark_override_eligible": mark_override_eligible,
+            "positive_mark_count": positive_mark_count,
             "temporal_delta_years": finite_or_none(temporal_delta),
             "ensemble_thresholds_key": (
                 "ensemble" if CALIBRATION and "ensemble" in CALIBRATION
@@ -3265,8 +3282,8 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             false_acceptance_rate=stats["false_acceptance_rate"],
             veto_triggered=veto_arcface,
             structural_score_x100=percent_to_x100(tier1_score) or 0,
-            arcface_score_x10000=percent_to_x100(arcface_sim * 100) or 0,
-            secondary_score_x10000=percent_to_x100(secondary_sim * 100) or 0,
+            arcface_score_x10000=raw_to_x10000(arcface_sim) or 0,
+            secondary_score_x10000=raw_to_x10000(secondary_sim) or 0,
             ensemble_model_secondary="Facenet512",
             geometric_score_x100=percent_to_x100(tier2_score) or 0,
             micro_topology_score_x100=percent_to_x100(tier3_score) or 0,
