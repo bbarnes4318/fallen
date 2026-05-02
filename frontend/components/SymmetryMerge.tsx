@@ -222,6 +222,10 @@ export default function SymmetryMerge({
   const baseOpacity = isXrayMode && hasOverlay ? 0.1 : 1.0;
   const overlayOpacity = isXrayMode && hasOverlay ? 1.0 : (mode === 'delta' ? 0.7 : 0.85);
 
+  const normalizeMarks = (marks: unknown): RawPoint[] => {
+    return Array.isArray(marks) ? (marks as RawPoint[]) : [];
+  };
+
   const getPointCoords = useCallback((pt: RawPoint) => {
     if (!pt) return { x: undefined, y: undefined, area: 0 };
     if ('centroid' in pt && pt.centroid) return { x: pt.centroid[0], y: pt.centroid[1], area: ('area' in pt ? pt.area : 0) || 0 };
@@ -277,14 +281,20 @@ export default function SymmetryMerge({
   }, [results, getPointCoords, getIsMatched]);
 
   const probePoints = useMemo((): ForensicPoint[] => {
-    const marks = results?.raw_probe_marks || results?.probe_data?.marks || [];
+    const rawProbeMarks = normalizeMarks(results?.raw_probe_marks);
+    const fallbackProbeMarks = normalizeMarks(results?.probe_data?.marks);
+    const marks = rawProbeMarks.length > 0 ? rawProbeMarks : fallbackProbeMarks;
+
     return marks
       .map((m: RawPoint) => mapPoint(m, 'probe'))
       .filter((p): p is ForensicPoint => p !== null);
   }, [results, mapPoint]);
   
   const galleryPoints = useMemo((): ForensicPoint[] => {
-    const marks = results?.raw_gallery_marks || results?.gallery_data?.marks || [];
+    const rawGalleryMarks = normalizeMarks(results?.raw_gallery_marks);
+    const fallbackGalleryMarks = normalizeMarks(results?.gallery_data?.marks);
+    const marks = rawGalleryMarks.length > 0 ? rawGalleryMarks : fallbackGalleryMarks;
+
     return marks
       .map((m: RawPoint) => mapPoint(m, 'gallery'))
       .filter((p): p is ForensicPoint => p !== null);
