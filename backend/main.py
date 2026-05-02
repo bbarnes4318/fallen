@@ -399,6 +399,7 @@ class AuditLog(BaseModel):
     # Calibration provenance
     calibration_benchmark: Optional[str] = None
     calibration_pairs: Optional[int] = None
+    calibration_status: Optional[str] = None
     # Chain of Custody — Pre-decode binary hashes
     probe_file_hash: Optional[str] = None
     gallery_file_hash: Optional[str] = None
@@ -411,6 +412,11 @@ class AuditLog(BaseModel):
     lr_total: Optional[float] = None
     posterior_probability: Optional[float] = None
     mark_lrs: Optional[list] = None  # Individual LR per matched mark
+    bayesian_fused_score: Optional[float] = None
+    veto_reason: Optional[str] = None
+    veto_override_applied: bool = False
+    veto_override_reason: Optional[str] = None
+    scoring_trace: Optional[dict] = None
 
 class VerificationResponse(BaseModel):
     structural_score: float
@@ -602,6 +608,35 @@ def finite_or_none(value) -> float | None:
     except Exception:
         pass
     return None
+
+
+def percent_to_x100(value: float | None) -> int | None:
+    value = finite_or_none(value)
+    if value is None:
+        return None
+    return round(value * 100)
+
+
+def evaluate_mark_veto_override(mark_result: dict, lr_marks: float) -> bool:
+    """
+    Evaluates whether independent forensic mark correspondence provides enough 
+    evidence to override an ArcFace veto.
+    Rules:
+    - at least 3 individual positive mark LRs > 1.0
+    - aggregate lr_marks >= 100.0
+    - malformed / non-numeric mark LRs are ignored
+    - one extreme mark LR alone must not override
+    """
+    if lr_marks < 100.0:
+        return False
+        
+    mark_lrs_raw = mark_result.get("mark_lrs", [])
+    positive_mark_lrs = []
+    for lr in mark_lrs_raw:
+        if isinstance(lr, (int, float)) and lr > 1.0:
+            positive_mark_lrs.append(lr)
+            
+    return len(positive_mark_lrs) >= 3
 
 
 def score_to_lr_ensemble(ensemble_score: float, temporal_delta: float = 0.0) -> float:
@@ -2345,9 +2380,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     # If ArcFace veto triggers but 3+ independent mark correspondences
     # with positive individual LRs provide aggregate LR >= 100,
     # the hard-zero policy is lifted. ArcFace itself did NOT pass.
-    mark_lrs_raw = mark_result.get("mark_lrs", [])
-    positive_mark_lrs = [lr for lr in mark_lrs_raw if isinstance(lr, (int, float)) and lr > 1.0]
-    mark_override_eligible = len(positive_mark_lrs) >= 3 and lr_marks >= 100.0
+    mark_override_eligible = evaluate_mark_veto_override(mark_result, lr_marks)
 
     veto_reason = None
     veto_override_applied = False
@@ -2357,6 +2390,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             # Override lifts the hard-zero — ArcFace veto still flagged
             veto_reason = "ARCFACE_VETO_MARK_OVERRIDE"
             veto_override_applied = True
+            positive_mark_lrs = [lr for lr in mark_result.get("mark_lrs", []) if isinstance(lr, (int, float)) and lr > 1.0]
             veto_override_reason = (
                 f"Mark override: {len(positive_mark_lrs)} positive mark LRs, "
                 f"aggregate lr_marks={lr_marks:.2f}"
@@ -2617,19 +2651,19 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             probe_hash=probe_file_hash,
             gallery_hash=gallery_file_hash,
             matched_user_id=None,
-            fused_score_x100=round(fused_score * 100),
+            fused_score_x100=percent_to_x100(fused_score) or 0,
             conclusion=conclusion,
             pipeline_version=PIPELINE_VERSION,
             calibration_benchmark=stats.get("benchmark"),
             false_acceptance_rate=stats["false_acceptance_rate"],
             veto_triggered=veto_triggered,
-            structural_score_x100=round(tier1_score * 100),
-            arcface_score_x10000=round(arcface_sim * 10000),
-            secondary_score_x10000=round(secondary_sim * 10000),
+            structural_score_x100=percent_to_x100(tier1_score) or 0,
+            arcface_score_x10000=percent_to_x100(arcface_sim * 100) or 0,
+            secondary_score_x10000=percent_to_x100(secondary_sim * 100) or 0,
             ensemble_model_secondary="Facenet512",
-            geometric_score_x100=round(tier2_score * 100),
-            micro_topology_score_x100=round(tier3_score * 100),
-            mark_correspondence_x100=round(tier4_score * 100) if tier4_score is not None else None,
+            geometric_score_x100=percent_to_x100(tier2_score) or 0,
+            micro_topology_score_x100=percent_to_x100(tier3_score) or 0,
+            mark_correspondence_x100=percent_to_x100(tier4_score),
             pose_corrected_3d=True,
             probe_pose_angles=json.dumps(pro_angles) if pro_angles else None,
             gallery_pose_angles=json.dumps(gal_angles) if gal_angles else None,
@@ -2641,7 +2675,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             lr_marks_product=finite_or_none(lr_marks),
             lr_total=finite_or_none(lr_total),
             posterior_probability=finite_or_none(posterior),
-            bayesian_fused_score_x100=round(bayesian_fused_score * 100) if bayesian_fused_score is not None else None,
+            bayesian_fused_score_x100=percent_to_x100(bayesian_fused_score),
             marks_matched=mark_result.get("matched", 0),
             calibration_status=_calibration_status,
             veto_reason=veto_reason,
@@ -2908,9 +2942,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     veto_arcface = best_score < 0.40
 
     # ── MARK OVERRIDE PROTOCOL (v1.0) ──
-    mark_lrs_raw = mark_result.get("mark_lrs", [])
-    positive_mark_lrs = [lr for lr in mark_lrs_raw if isinstance(lr, (int, float)) and lr > 1.0]
-    mark_override_eligible = len(positive_mark_lrs) >= 3 and lr_marks >= 100.0
+    mark_override_eligible = evaluate_mark_veto_override(mark_result, lr_marks)
 
     veto_reason = None
     veto_override_applied = False
@@ -2919,6 +2951,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         if mark_override_eligible:
             veto_reason = "ARCFACE_VETO_MARK_OVERRIDE"
             veto_override_applied = True
+            positive_mark_lrs = [lr for lr in mark_result.get("mark_lrs", []) if isinstance(lr, (int, float)) and lr > 1.0]
             veto_override_reason = (
                 f"Mark override: {len(positive_mark_lrs)} positive mark LRs, "
                 f"aggregate lr_marks={lr_marks:.2f}"
@@ -3184,19 +3217,19 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             probe_hash=probe_file_hash,
             gallery_hash=gallery_file_hash,
             matched_user_id=best_user_id,
-            fused_score_x100=round(fused_score * 100),
+            fused_score_x100=percent_to_x100(fused_score) or 0,
             conclusion=conclusion,
             pipeline_version=PIPELINE_VERSION,
             calibration_benchmark=stats.get("benchmark"),
             false_acceptance_rate=stats["false_acceptance_rate"],
             veto_triggered=veto_arcface,
-            structural_score_x100=round(tier1_score * 100),
-            arcface_score_x10000=round(arcface_sim * 10000),
-            secondary_score_x10000=round(secondary_sim * 10000),
+            structural_score_x100=percent_to_x100(tier1_score) or 0,
+            arcface_score_x10000=percent_to_x100(arcface_sim * 100) or 0,
+            secondary_score_x10000=percent_to_x100(secondary_sim * 100) or 0,
             ensemble_model_secondary="Facenet512",
-            geometric_score_x100=round(tier2_score * 100),
-            micro_topology_score_x100=round(tier3_score * 100),
-            mark_correspondence_x100=round(tier4_score * 100) if tier4_score is not None else None,
+            geometric_score_x100=percent_to_x100(tier2_score) or 0,
+            micro_topology_score_x100=percent_to_x100(tier3_score) or 0,
+            mark_correspondence_x100=percent_to_x100(tier4_score),
             pose_corrected_3d=True,
             probe_pose_angles=json.dumps(pro_angles) if pro_angles else None,
             gallery_pose_angles=json.dumps(gal_angles) if gal_angles else None,
@@ -3208,7 +3241,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             lr_marks_product=finite_or_none(lr_marks),
             lr_total=finite_or_none(lr_total),
             posterior_probability=finite_or_none(posterior),
-            bayesian_fused_score_x100=round(bayesian_fused_score * 100) if bayesian_fused_score is not None else None,
+            bayesian_fused_score_x100=percent_to_x100(bayesian_fused_score),
             marks_matched=mark_result.get("matched", 0),
             calibration_status=_calibration_status,
             veto_reason=veto_reason,
