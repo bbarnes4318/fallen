@@ -134,12 +134,18 @@ function drawPane(
       ctx.beginPath();
       ctx.arc(px, py, r, 0, 2 * Math.PI);
       
-      if (p.isMatched === false) {
-        ctx.strokeStyle = 'rgba(0, 200, 220, 0.9)'; // Yellow
+      if (p.isMatched === true) {
+        // Green — explicit matched correspondence
+        ctx.strokeStyle = 'rgba(0, 220, 80, 0.9)';
+        ctx.lineWidth = 2 / scale;
+      } else if (p.isMatched === false) {
+        // Cyan — detected but not matched by index
+        ctx.strokeStyle = 'rgba(0, 200, 220, 0.9)';
         ctx.lineWidth = 1 / scale;
       } else {
-        ctx.strokeStyle = 'rgba(0, 220, 80, 0.9)'; // Green
-        ctx.lineWidth = 2 / scale;
+        // Gray — unknown (no index correspondence data)
+        ctx.strokeStyle = 'rgba(150, 150, 150, 0.6)';
+        ctx.lineWidth = 1 / scale;
       }
       
       ctx.stroke();
@@ -244,73 +250,87 @@ export default function SymmetryMerge({
     return { x: undefined, y: undefined, area: 0 };
   }, []);
 
-  const getIsMatched = useCallback((pt: RawPoint, side: 'probe' | 'gallery') => {
+  // ── Compute canonical mark source arrays once ──
+  const probeMarksSource = useMemo((): RawPoint[] => {
+    const raw = normalizeMarks(results?.raw_probe_marks);
+    return raw.length > 0 ? raw : normalizeMarks(results?.probe_data?.marks);
+  }, [results]);
+
+  const galleryMarksSource = useMemo((): RawPoint[] => {
+    const raw = normalizeMarks(results?.raw_gallery_marks);
+    return raw.length > 0 ? raw : normalizeMarks(results?.gallery_data?.marks);
+  }, [results]);
+
+  // ── Build matched index sets and LR maps from explicit correspondence indices ──
+  const markMatchData = useMemo(() => {
     const corrs = normalizeCorrespondences(results?.correspondences);
-    if (corrs.length === 0) return false;
-    const { x: pX, y: pY } = getPointCoords(pt);
-    if (pX === undefined || pY === undefined) return false;
-    return corrs.some((c: Correspondence) => {
-      const cPt = c[side === 'probe' ? 'probe_pt' : 'gallery_pt'];
-      if (!cPt) return false;
-      const { x: cx, y: cy } = getPointCoords(cPt);
-      if (cx === undefined || cy === undefined) return false;
-      return Math.abs(pX - cx) < 0.001 && Math.abs(pY - cy) < 0.001;
-    });
-  }, [results, getPointCoords]);
 
-  const mapPoint = useCallback((m: RawPoint, side: 'probe' | 'gallery'): ForensicPoint | null => {
-    const { x, y, area } = getPointCoords(m);
+    const matchedProbeIndices = new Set<number>();
+    const matchedGalleryIndices = new Set<number>();
+    const probeLrByIndex = new Map<number, number>();
+    const galleryLrByIndex = new Map<number, number>();
 
-    if (x === undefined || y === undefined) {
-      return null;
-    }
+    for (const c of corrs) {
+      const lr = typeof c.lr === "number" ? c.lr : undefined;
 
-    const pointWithLr = m as { lr?: number };
-    let lr = pointWithLr.lr;
+      if (Number.isInteger(c.probe_idx) && (c.probe_idx as number) >= 0 && (c.probe_idx as number) < probeMarksSource.length) {
+        matchedProbeIndices.add(c.probe_idx as number);
+        if (lr !== undefined) probeLrByIndex.set(c.probe_idx as number, lr);
+      }
 
-    if (lr === undefined) {
-      const corrs = normalizeCorrespondences(results?.correspondences);
-      const corr = corrs.find((c: Correspondence) => {
-        const cPt = c[side === 'probe' ? 'probe_pt' : 'gallery_pt'];
-        if (!cPt) return false;
-
-        const { x: cx, y: cy } = getPointCoords(cPt);
-        if (cx === undefined || cy === undefined) return false;
-
-        return Math.abs(x - cx) < 0.001 && Math.abs(y - cy) < 0.001;
-      });
-
-      if (corr) lr = corr.lr;
+      if (Number.isInteger(c.gallery_idx) && (c.gallery_idx as number) >= 0 && (c.gallery_idx as number) < galleryMarksSource.length) {
+        matchedGalleryIndices.add(c.gallery_idx as number);
+        if (lr !== undefined) galleryLrByIndex.set(c.gallery_idx as number, lr);
+      }
     }
 
     return {
-      x,
-      y,
-      area,
-      lr,
-      isMatched: getIsMatched(m, side),
+      corrs,
+      matchedProbeIndices,
+      matchedGalleryIndices,
+      probeLrByIndex,
+      galleryLrByIndex,
+      hasIndexCorrespondences: matchedProbeIndices.size > 0 || matchedGalleryIndices.size > 0,
     };
-  }, [results, getPointCoords, getIsMatched]);
+  }, [results, probeMarksSource.length, galleryMarksSource.length]);
+
+  const mapPoint = useCallback(
+    (m: RawPoint, index: number, side: "probe" | "gallery"): ForensicPoint | null => {
+      const { x, y, area } = getPointCoords(m);
+      if (x === undefined || y === undefined) return null;
+
+      const isProbe = side === "probe";
+      const matchedSet = isProbe
+        ? markMatchData.matchedProbeIndices
+        : markMatchData.matchedGalleryIndices;
+      const lrMap = isProbe
+        ? markMatchData.probeLrByIndex
+        : markMatchData.galleryLrByIndex;
+
+      return {
+        x,
+        y,
+        area,
+        lr: lrMap.get(index),
+        isMatched: markMatchData.hasIndexCorrespondences
+          ? matchedSet.has(index)
+          : undefined,
+      };
+    },
+    [getPointCoords, markMatchData]
+  );
 
   const probePoints = useMemo((): ForensicPoint[] => {
-    const rawProbeMarks = normalizeMarks(results?.raw_probe_marks);
-    const fallbackProbeMarks = normalizeMarks(results?.probe_data?.marks);
-    const marks = rawProbeMarks.length > 0 ? rawProbeMarks : fallbackProbeMarks;
-
-    return marks
-      .map((m: RawPoint) => mapPoint(m, 'probe'))
+    return probeMarksSource
+      .map((m: RawPoint, i: number) => mapPoint(m, i, "probe"))
       .filter((p): p is ForensicPoint => p !== null);
-  }, [results, mapPoint]);
-  
+  }, [probeMarksSource, mapPoint]);
+
   const galleryPoints = useMemo((): ForensicPoint[] => {
-    const rawGalleryMarks = normalizeMarks(results?.raw_gallery_marks);
-    const fallbackGalleryMarks = normalizeMarks(results?.gallery_data?.marks);
-    const marks = rawGalleryMarks.length > 0 ? rawGalleryMarks : fallbackGalleryMarks;
-
-    return marks
-      .map((m: RawPoint) => mapPoint(m, 'gallery'))
+    return galleryMarksSource
+      .map((m: RawPoint, i: number) => mapPoint(m, i, "gallery"))
       .filter((p): p is ForensicPoint => p !== null);
-  }, [results, mapPoint]);
+  }, [galleryMarksSource, mapPoint]);
 
   // Draw dual panes — LEFT = PROBE, RIGHT = GALLERY (both get delta overlay in delta mode)
   useEffect(() => {
@@ -583,6 +603,35 @@ export default function SymmetryMerge({
           >
             <canvas ref={rightCanvasRef} className="block w-full h-full" />
             <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">GALLERY + DELTA</span> : 'GALLERY (B)'}</div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Debug Forensic Panel ── */}
+      {process.env.NEXT_PUBLIC_DEBUG_FORENSIC === "true" && results && (
+        <div className="shrink-0 mt-1 p-2 border border-yellow-800/50 bg-[#0e0e00] text-[8px] font-mono text-yellow-500/80 overflow-auto max-h-40">
+          <div className="font-bold tracking-widest mb-1 text-yellow-400">DEBUG FORENSIC — DELTA CORRESPONDENCE INTEGRITY</div>
+          <div>raw_probe_marks: {probeMarksSource.length}</div>
+          <div>raw_gallery_marks: {galleryMarksSource.length}</div>
+          <div>correspondences: {markMatchData.corrs.length}</div>
+          <div>matchedProbeIdx: [{[...markMatchData.matchedProbeIndices].join(', ')}]</div>
+          <div>matchedGalleryIdx: [{[...markMatchData.matchedGalleryIndices].join(', ')}]</div>
+          <div>hasIndexCorrespondences: {String(markMatchData.hasIndexCorrespondences)}</div>
+          <div className={JSON.stringify(probeMarksSource) === JSON.stringify(galleryMarksSource) ? 'text-red-400 font-bold' : 'text-green-400'}>
+            IDENTICAL ARRAYS: {JSON.stringify(probeMarksSource) === JSON.stringify(galleryMarksSource) ? '⚠ YES — BUG' : '✓ NO'}
+          </div>
+          <div className="mt-1 border-t border-yellow-800/30 pt-1">
+            <div>First 5 probe pts: {JSON.stringify(probeMarksSource.slice(0, 5).map(p => {
+              const c = (() => { if (!p) return null; if ('centroid' in p && p.centroid) return { x: p.centroid[0], y: p.centroid[1] }; if (Array.isArray(p)) return { x: p[0], y: p[1] }; if ('x' in p) return { x: p.x, y: p.y }; return null; })();
+              return c;
+            }))}</div>
+            <div>First 5 gallery pts: {JSON.stringify(galleryMarksSource.slice(0, 5).map(p => {
+              const c = (() => { if (!p) return null; if ('centroid' in p && p.centroid) return { x: p.centroid[0], y: p.centroid[1] }; if (Array.isArray(p)) return { x: p[0], y: p[1] }; if ('x' in p) return { x: p.x, y: p.y }; return null; })();
+              return c;
+            }))}</div>
+            <div>First 5 corrs: {JSON.stringify(markMatchData.corrs.slice(0, 5).map(c => ({
+              probe_idx: c.probe_idx, gallery_idx: c.gallery_idx, lr: typeof c.lr === 'number' ? c.lr.toFixed(2) : 'N/A'
+            })))}</div>
           </div>
         </div>
       )}

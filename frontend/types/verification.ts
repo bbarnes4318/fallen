@@ -30,8 +30,10 @@ export type RawPoint =
   | { centroid: [number, number]; area?: number; lr?: number };
 
 export interface Correspondence {
-  gallery_pt: RawPoint;
-  probe_pt: RawPoint;
+  gallery_idx?: number;
+  probe_idx?: number;
+  gallery_pt?: RawPoint;
+  probe_pt?: RawPoint;
   lr: number;
 }
 

@@ -2162,12 +2162,36 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
 
     # Build correspondences list for the UI
     correspondences = []
-    for g_idx, p_idx, individual_lr in mark_result.get("matches", []):
+    for match_entry in mark_result.get("matches", []):
+        # Support both tuple (g_idx, p_idx, lr) and dict {gallery_idx, probe_idx, lr} shapes
+        if isinstance(match_entry, dict):
+            g_idx = match_entry.get("gallery_idx")
+            p_idx = match_entry.get("probe_idx")
+            individual_lr = match_entry.get("lr", 0)
+        else:
+            try:
+                g_idx, p_idx, individual_lr = match_entry
+            except (ValueError, TypeError):
+                continue
+        # Validate indices are integers and in bounds
+        if not isinstance(g_idx, int) or not isinstance(p_idx, int):
+            continue
+        if g_idx < 0 or g_idx >= len(valid_gallery_marks) or p_idx < 0 or p_idx >= len(valid_probe_marks):
+            continue
         correspondences.append({
+            "gallery_idx": g_idx,
+            "probe_idx": p_idx,
             "gallery_pt": valid_gallery_marks[g_idx]["centroid"],
             "probe_pt": valid_probe_marks[p_idx]["centroid"],
             "lr": individual_lr
         })
+
+    if os.getenv("DEBUG_FORENSIC") == "true" or os.getenv("ENVIRONMENT") == "development":
+        print(f"[FORENSIC DEBUG] raw_probe_marks: {len(valid_probe_marks)}, "
+              f"raw_gallery_marks: {len(valid_gallery_marks)}, "
+              f"correspondences: {len(correspondences)}", flush=True)
+        for ci, c in enumerate(correspondences[:5]):
+            print(f"  corr[{ci}]: probe_idx={c['probe_idx']}, gallery_idx={c['gallery_idx']}, lr={c['lr']:.4f}", flush=True)
 
     response = VerificationResponse(
         structural_score=round(tier1_score, 2),
@@ -2570,12 +2594,36 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
 
     # Build correspondences list for the UI
     correspondences = []
-    for g_idx, p_idx, individual_lr in mark_result.get("matches", []):
+    for match_entry in mark_result.get("matches", []):
+        # Support both tuple (g_idx, p_idx, lr) and dict {gallery_idx, probe_idx, lr} shapes
+        if isinstance(match_entry, dict):
+            g_idx = match_entry.get("gallery_idx")
+            p_idx = match_entry.get("probe_idx")
+            individual_lr = match_entry.get("lr", 0)
+        else:
+            try:
+                g_idx, p_idx, individual_lr = match_entry
+            except (ValueError, TypeError):
+                continue
+        # Validate indices are integers and in bounds
+        if not isinstance(g_idx, int) or not isinstance(p_idx, int):
+            continue
+        if g_idx < 0 or g_idx >= len(valid_gallery_marks) or p_idx < 0 or p_idx >= len(valid_probe_marks):
+            continue
         correspondences.append({
+            "gallery_idx": g_idx,
+            "probe_idx": p_idx,
             "gallery_pt": valid_gallery_marks[g_idx]["centroid"],
             "probe_pt": valid_probe_marks[p_idx]["centroid"],
             "lr": individual_lr
         })
+
+    if os.getenv("DEBUG_FORENSIC") == "true" or os.getenv("ENVIRONMENT") == "development":
+        print(f"[FORENSIC DEBUG] raw_probe_marks: {len(valid_probe_marks)}, "
+              f"raw_gallery_marks: {len(valid_gallery_marks)}, "
+              f"correspondences: {len(correspondences)}", flush=True)
+        for ci, c in enumerate(correspondences[:5]):
+            print(f"  corr[{ci}]: probe_idx={c['probe_idx']}, gallery_idx={c['gallery_idx']}, lr={c['lr']:.4f}", flush=True)
 
     response = VerificationResponse(
         structural_score=round(tier1_score, 2),
