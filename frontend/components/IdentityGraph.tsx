@@ -69,6 +69,25 @@ const DUMMY_GRAPH: GraphData = {
 };
 
 // ─── Helpers ─────────────────────────────────────────────
+const getNodeName = (node?: GraphNode | null, fallback = "Unknown Identity"): string => {
+  const name = node?.name?.trim();
+  if (name) return name;
+
+  const id = typeof node?.id === "string" ? node.id.trim() : "";
+  if (id) return id;
+
+  return fallback;
+};
+
+const getNodeThumbnail = (node?: GraphNode | null): string | null => {
+  const thumbnail = node?.thumbnail?.trim();
+  return thumbnail || null;
+};
+
+const getNumber = (value?: number | null): number => {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+};
+
 function getApiUrl(): string {
   return '/api';
 }
@@ -83,7 +102,7 @@ function getNodeConnections(nodeId: string, links: GraphLink[]) {
     const tgt = typeof l.target === 'object' ? l.target.id : l.target;
     return {
       entity: src === nodeId ? tgt : src,
-      score: l.value ?? 0,
+      score: getNumber(l.value),
     };
   });
 }
@@ -220,12 +239,21 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
   // Pre-load all node thumbnails when graph data arrives
   useEffect(() => {
     graphData.nodes.forEach((node: GraphNode) => {
-      if (node.thumbnail) loadImage(node.thumbnail);
+      const thumb = getNodeThumbnail(node);
+      if (thumb) loadImage(thumb);
     });
   }, [graphData, loadImage]);
 
 
   const connections = selectedNode ? getNodeConnections(selectedNode.id, graphData.links) : [];
+  
+  const selectedName = getNodeName(selectedNode);
+  const selectedThumb = getNodeThumbnail(selectedNode);
+
+  const targetAName = getNodeName(targetA, "Target A");
+  const targetBName = getNodeName(targetB, "Target B");
+  const targetAThumb = getNodeThumbnail(targetA);
+  const targetBThumb = getNodeThumbnail(targetB);
 
   // Build thumbnail lookup for dossier panel
   const nodeMap = useMemo(() => {
@@ -279,9 +307,10 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
           const graphNode = node as GraphNode;
           const x = graphNode.x ?? 0;
           const y = graphNode.y ?? 0;
-          const isGold = graphNode.group === 2;
+          const group = getNumber(graphNode.group);
+          const isGold = group === 2;
           const radius = 12;
-          const thumbUrl = graphNode.thumbnail;
+          const thumbUrl = getNodeThumbnail(graphNode);
 
           // Try to get cached image
           const img = thumbUrl ? loadImage(thumbUrl) : null;
@@ -321,7 +350,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
             ctx.save();
             ctx.font = '5px "JetBrains Mono", Courier, monospace';
             const hashText = `HASH: ${graphNode.id}`;
-            const nameText = `ID:   ${graphNode.name || 'UNKNOWN'}`;
+            const nameText = `ID:   ${getNodeName(graphNode)}`;
             const m1 = ctx.measureText(hashText);
             const m2 = ctx.measureText(nameText);
             const tw = Math.max(m1.width, m2.width) + 8;
@@ -348,7 +377,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
             ctx.fillStyle = isGold ? 'rgba(212,175,55,0.6)' : 'rgba(120,130,140,0.5)';
             ctx.textAlign = 'left';
             ctx.textBaseline = 'middle';
-            ctx.fillText(graphNode.name ?? graphNode.id, x + radius + 4, y);
+            ctx.fillText(getNodeName(graphNode), x + radius + 4, y);
           }
         }}
         nodePointerAreaPaint={(node: NodeObject, color: string, ctx: CanvasRenderingContext2D) => {
@@ -362,18 +391,18 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
         }}
         linkColor={(link: LinkObject<NodeObject>) => {
           const graphLink = link as GraphLink;
-          const value = Number(graphLink.value ?? 0);
+          const value = getNumber(graphLink.value);
           return value > 95 ? 'rgba(212,175,55,0.7)' : 'rgba(80,90,100,0.4)';
         }}
         linkWidth={(link: LinkObject<NodeObject>) => {
           const graphLink = link as GraphLink;
-          const value = Number(graphLink.value ?? 0);
+          const value = getNumber(graphLink.value);
           return value > 95 ? 1.5 : 0.6;
         }}
         linkDirectionalParticles={1}
         linkDirectionalParticleWidth={(link: LinkObject<NodeObject>) => {
           const graphLink = link as GraphLink;
-          const value = Number(graphLink.value ?? 0);
+          const value = getNumber(graphLink.value);
           return value > 95 ? 1.5 : 0;
         }}
         linkDirectionalParticleColor={() => 'rgba(212,175,55,0.8)'}
@@ -484,11 +513,11 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
               <div className="flex justify-between items-start">
                 <div className="flex items-center gap-3">
                   {/* Large face thumbnail */}
-                  {selectedNode.thumbnail ? (
+                  {selectedThumb ? (
                     <div className="w-16 h-16 rounded-lg overflow-hidden border-2 border-[#D4AF37]/50 shrink-0">
                       <Image
-                        src={selectedNode.thumbnail}
-                        alt={selectedNode.name ?? "Identity graph profile"}
+                        src={selectedThumb}
+                        alt={selectedName}
                         width={64}
                         height={64}
                         unoptimized
@@ -497,14 +526,14 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
                       />
                     </div>
                   ) : (
-                    <div className="w-16 h-16 rounded-lg border border-[#333] bg-[#111] flex items-center justify-center shrink-0">
+                    <div className="h-16 w-16 rounded bg-neutral-900 border border-neutral-800 flex items-center justify-center shrink-0">
                       <span className="text-gray-600 text-lg">◆</span>
                     </div>
                   )}
                   <div>
                     <p className="text-[9px] text-gray-600 tracking-widest mb-1">ENTITY DOSSIER</p>
                     <h2 className="text-[#D4AF37] text-sm font-bold tracking-wider leading-tight">
-                      {selectedNode.name}
+                      {selectedName}
                     </h2>
                     <p className="text-[8px] text-gray-600 mt-0.5 break-all">{selectedNode.id}</p>
                   </div>
@@ -519,8 +548,8 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
               <div className="mt-3 flex gap-3">
                 <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded px-3 py-1.5">
                   <p className="text-[8px] text-gray-600 tracking-wider">GROUP</p>
-                  <p className={`text-sm font-bold ${(selectedNode.group ?? 0) === 2 ? 'text-[#D4AF37]' : 'text-gray-300'}`}>
-                    {(selectedNode.group ?? 0) === 2 ? 'ANOMALY' : 'STANDARD'}
+                  <p className={`text-sm font-bold ${getNumber(selectedNode.group) === 2 ? 'text-[#D4AF37]' : 'text-gray-300'}`}>
+                    {getNumber(selectedNode.group) === 2 ? 'ANOMALY' : 'STANDARD'}
                   </p>
                 </div>
                 <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded px-3 py-1.5">
@@ -530,7 +559,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
               </div>
 
               {/* ── Set as Target Buttons ── */}
-              {selectedNode.thumbnail && (
+              {selectedThumb && (
                 <div className="mt-3 flex gap-2">
                   <button
                     onClick={() => { setTargetA(selectedNode); setSelectedNode(null); }}
@@ -563,16 +592,20 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
               <p className="text-[9px] text-gray-600 tracking-widest mb-3">VERIFIED BIOMETRIC LINKS</p>
               <div className="space-y-2">
                 {connections
-                  .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+                  .sort((a, b) => getNumber(b.score) - getNumber(a.score))
                   .map((conn) => {
                     const connNode = nodeMap.get(conn.entity);
+                    const score = getNumber(conn.score);
+                    const connName = getNodeName(connNode, conn.entity);
+                    const connThumb = getNodeThumbnail(connNode);
+                    
                     return (
                       <div
                         key={conn.entity}
                         className={`flex items-center gap-2.5 p-2 rounded border cursor-pointer hover:opacity-80 transition-opacity ${
-                          conn.score > 95
+                          score > 95
                             ? 'border-red-900/60 bg-red-950/20'
-                            : conn.score > 85
+                            : score > 85
                             ? 'border-[#D4AF37]/30 bg-[#D4AF37]/5'
                             : 'border-[#1f1f1f] bg-[#0d0d0e]'
                         }`}
@@ -581,11 +614,11 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
                         }}
                       >
                         {/* Connected entity thumbnail */}
-                        {connNode?.thumbnail ? (
+                        {connThumb ? (
                           <div className="w-8 h-8 rounded overflow-hidden border border-[#333] shrink-0">
                             <Image
-                              src={connNode.thumbnail}
-                              alt={connNode.name ?? "Identity connection"}
+                              src={connThumb}
+                              alt={connName}
                               width={32}
                               height={32}
                               unoptimized
@@ -600,17 +633,17 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
                         )}
                         <div className="flex-1 min-w-0">
                           <p className="text-[10px] text-gray-300 tracking-wider truncate">
-                            {connNode?.name || conn.entity}
+                            {connName}
                           </p>
                         </div>
                         <span className={`text-xs font-bold tracking-wider shrink-0 ${
-                          conn.score > 95
+                          score > 95
                             ? 'text-red-400'
-                            : conn.score > 85
+                            : score > 85
                             ? 'text-[#D4AF37]'
                             : 'text-gray-400'
                         }`}>
-                          {conn.score.toFixed(1)}%
+                          {score.toFixed(1)}%
                         </span>
                       </div>
                     );
@@ -637,9 +670,9 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
             <div className="flex items-center gap-2">
               {targetA ? (
                 <div className="relative group">
-                  {targetA.thumbnail ? (
+                  {targetAThumb ? (
                     <div className="w-10 h-10 rounded-lg overflow-hidden border-2 border-[#D4AF37]">
-                      <Image src={targetA.thumbnail} alt={targetA.name ?? "Target A"} width={40} height={40} className="w-full h-full object-cover" unoptimized crossOrigin="anonymous" />
+                      <Image src={targetAThumb} alt={targetAName} width={40} height={40} className="w-full h-full object-cover" unoptimized crossOrigin="anonymous" />
                     </div>
                   ) : (
                     <div className="w-10 h-10 rounded-lg border-2 border-[#D4AF37] bg-[#111] flex items-center justify-center">
@@ -650,7 +683,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
                     onClick={() => setTargetA(null)}
                     className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-900 border border-red-700 rounded-full text-[8px] text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                   >✕</button>
-                  <p className="text-[7px] text-[#D4AF37] tracking-wider text-center mt-1 truncate max-w-[60px]">{targetA.name ?? targetA.id}</p>
+                  <p className="text-[7px] text-[#D4AF37] tracking-wider text-center mt-1 truncate max-w-[60px]">{targetAName}</p>
                 </div>
               ) : (
                 <div className="w-10 h-10 rounded-lg border-2 border-dashed border-[#333] flex items-center justify-center">
@@ -666,9 +699,9 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
             <div className="flex items-center gap-2">
               {targetB ? (
                 <div className="relative group">
-                  {targetB.thumbnail ? (
+                  {targetBThumb ? (
                     <div className="w-10 h-10 rounded-lg overflow-hidden border-2 border-cyan-500">
-                      <Image src={targetB.thumbnail} alt={targetB.name ?? "Target B"} width={40} height={40} className="w-full h-full object-cover" unoptimized crossOrigin="anonymous" />
+                      <Image src={targetBThumb} alt={targetBName} width={40} height={40} className="w-full h-full object-cover" unoptimized crossOrigin="anonymous" />
                     </div>
                   ) : (
                     <div className="w-10 h-10 rounded-lg border-2 border-cyan-500 bg-[#111] flex items-center justify-center">
@@ -679,7 +712,7 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
                     onClick={() => setTargetB(null)}
                     className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-900 border border-red-700 rounded-full text-[8px] text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                   >✕</button>
-                  <p className="text-[7px] text-cyan-400 tracking-wider text-center mt-1 truncate max-w-[60px]">{targetB.name ?? targetB.id}</p>
+                  <p className="text-[7px] text-cyan-400 tracking-wider text-center mt-1 truncate max-w-[60px]">{targetBName}</p>
                 </div>
               ) : (
                 <div className="w-10 h-10 rounded-lg border-2 border-dashed border-[#333] flex items-center justify-center">
@@ -690,14 +723,19 @@ export default function IdentityGraph({ onCompare }: IdentityGraphProps) {
 
             {/* Launch Button */}
             <button
-              disabled={!targetA || !targetB || !targetA.thumbnail || !targetB.thumbnail}
+              disabled={!targetAThumb || !targetBThumb}
               onClick={() => {
-                if (targetA?.thumbnail && targetB?.thumbnail && onCompare) {
-                  onCompare(targetA.thumbnail, targetB.thumbnail, targetA.name, targetB.name);
+                const clickTargetAThumb = getNodeThumbnail(targetA);
+                const clickTargetBThumb = getNodeThumbnail(targetB);
+                const clickTargetAName = getNodeName(targetA, "Target A");
+                const clickTargetBName = getNodeName(targetB, "Target B");
+
+                if (clickTargetAThumb && clickTargetBThumb && onCompare) {
+                  onCompare(clickTargetAThumb, clickTargetBThumb, clickTargetAName, clickTargetBName);
                 }
               }}
               className={`ml-2 px-5 py-2.5 rounded-lg text-[10px] tracking-[0.2em] font-bold transition-all ${
-                targetA && targetB && targetA.thumbnail && targetB.thumbnail
+                targetAThumb && targetBThumb
                   ? 'bg-[#D4AF37] text-black hover:bg-[#e5c544] shadow-[0_0_20px_rgba(212,175,55,0.3)] cursor-pointer'
                   : 'bg-[#1a1a1a] text-gray-600 border border-[#222] cursor-not-allowed'
               }`}
