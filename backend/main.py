@@ -478,6 +478,7 @@ class VerificationResponse(BaseModel):
     mark_match_overlay_b64: Optional[str] = None
     mark_detector_version: Optional[str] = None
     mark_matcher_version: Optional[str] = None
+    exact_image_match: bool = False  # True when probe and gallery are byte-identical
     # Veto transparency
     bayesian_fused_score: Optional[float] = None
     veto_reason: Optional[str] = None
@@ -2582,7 +2583,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         tier4_score = mark_result["score"]  # None if insufficient marks
 
         # Determine mark_match_status
-        if len(valid_probe_marks) < 2 and len(valid_gallery_marks) < 2:
+        if len(valid_probe_marks) < 2 or len(valid_gallery_marks) < 2:
             mark_match_status = "INSUFFICIENT_MARKS"
         elif mark_result.get("matched", 0) > 0:
             mark_match_status = "MATCHED"
@@ -2887,6 +2888,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         mark_lrs=mark_result.get("mark_lrs", []),
         mark_detector_version=MARK_DETECTOR_VERSION,
         mark_matcher_version=MARK_MATCHER_VERSION,
+        exact_image_match=exact_image_match,
         # Veto transparency
         bayesian_fused_score=round(bayesian_fused_score, 2),
         veto_reason=veto_reason,
@@ -3225,7 +3227,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         }
     else:
         # Determine mark_match_status
-        if len(valid_probe_marks) < 2 and len(valid_gallery_marks) < 2:
+        if len(valid_probe_marks) < 2 or len(valid_gallery_marks) < 2:
             mark_match_status = "INSUFFICIENT_MARKS"
         elif mark_result.get("matched", 0) > 0:
             mark_match_status = "MATCHED"
@@ -3524,6 +3526,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         mark_lrs=mark_result.get("mark_lrs", []),
         mark_detector_version=MARK_DETECTOR_VERSION,
         mark_matcher_version=MARK_MATCHER_VERSION,
+        exact_image_match=exact_image_match,
         # Veto transparency
         bayesian_fused_score=round(bayesian_fused_score, 2),
         veto_reason=veto_reason,

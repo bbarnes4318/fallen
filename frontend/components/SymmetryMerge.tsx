@@ -654,7 +654,7 @@ export default function SymmetryMerge({
             let statusLabel = 'UNKNOWN';
             let statusColor = 'text-gray-400 border-gray-700 bg-[#0a0a0a]';
             if (status === 'EXACT_SELF_MATCH') {
-              statusLabel = 'EXACT SELF-MATCH — Identical images';
+              statusLabel = 'Exact image self-match. Mark evidence is self-corresponding by identity.';
               statusColor = 'text-emerald-300 border-emerald-700 bg-emerald-950/40';
             } else if (status === 'MATCHED') {
               statusLabel = 'Shared facial marks detected';
@@ -682,6 +682,13 @@ export default function SymmetryMerge({
                     {lrMarks != null && <span>LR_MARKS: {lrMarks.toFixed(4)}</span>}
                   </div>
                 </div>
+
+                {/* Self-match LR transparency note */}
+                {status === 'EXACT_SELF_MATCH' && (
+                  <div className="px-3 py-1.5 border border-emerald-900/30 rounded bg-emerald-950/20 font-mono text-[9px] text-emerald-400/70 leading-relaxed">
+                    Mark LR is neutral (1.0) for exact byte-identical image comparisons. The probe and gallery are the same source image, so mark evidence is self-corresponding by identity rather than independent forensic evidence. Identity confidence is handled by the exact-image sanity path.
+                  </div>
+                )}
 
                 {/* Correspondence Evidence Cards */}
                 {(() => {

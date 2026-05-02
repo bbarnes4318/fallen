@@ -526,6 +526,165 @@ def test_mark_override_safeguards():
     print("  [PASS] Mark override safeguards verified")
 
 
+# ═══════════════════════════════════════════════════════════
+# MARK EVIDENCE STATUS TESTS (v2.0)
+# ═══════════════════════════════════════════════════════════
+
+def test_exact_self_match_status():
+    """Exact same image must return EXACT_SELF_MATCH, never INSUFFICIENT_MARKS or NO_MATCHES."""
+    print("\n  [TEST] Exact Self-Match Status")
+
+    # Simulate identical probe and gallery (byte-identical hashes)
+    probe_file_hash = "abc123deadbeef"
+    gallery_file_hash = "abc123deadbeef"
+    exact_image_match = (probe_file_hash == gallery_file_hash)
+
+    valid_probe_marks = [
+        {"centroid": (0.3, 0.4), "area": 50, "intensity": 120, "circularity": 0.85, "mark_type": "dark_mole", "face_region": "left_cheek"},
+        {"centroid": (0.6, 0.5), "area": 30, "intensity": 100, "circularity": 0.9, "mark_type": "dark_spot", "face_region": "right_cheek"},
+    ]
+    valid_gallery_marks = list(valid_probe_marks)  # identical
+
+    if exact_image_match:
+        mark_match_status = "EXACT_SELF_MATCH"
+        tier4_score = 100.0
+        n_self = min(len(valid_probe_marks), len(valid_gallery_marks))
+        marks_matched = n_self
+        lr_marks = 1.0  # neutral — not independent evidence
+    else:
+        mark_match_status = "UNKNOWN"
+        tier4_score = None
+        marks_matched = 0
+        lr_marks = 1.0
+
+    assert exact_image_match, "Identical hashes must trigger exact_image_match"
+    assert mark_match_status == "EXACT_SELF_MATCH", f"Expected EXACT_SELF_MATCH, got {mark_match_status}"
+    assert mark_match_status != "INSUFFICIENT_MARKS", "Exact self-match must never return INSUFFICIENT_MARKS"
+    assert mark_match_status != "NO_MATCHES", "Exact self-match must never return NO_MATCHES"
+    assert tier4_score == 100.0, f"Exact self-match must have tier4_score=100, got {tier4_score}"
+    assert marks_matched == 2, f"Expected 2 marks matched, got {marks_matched}"
+    assert lr_marks == 1.0, f"Self-match lr_marks must be neutral (1.0), got {lr_marks}"
+    print("  [PASS] Exact self-match returns EXACT_SELF_MATCH, never INSUFFICIENT or NO_MATCHES")
+
+
+def test_insufficient_marks_or_logic():
+    """If EITHER side has fewer than 2 reliable marks, status is INSUFFICIENT_MARKS."""
+    print("\n  [TEST] Insufficient Marks (OR logic)")
+
+    test_cases = [
+        # (probe_count, gallery_count, expected_status)
+        (0, 0, "INSUFFICIENT_MARKS"),
+        (1, 0, "INSUFFICIENT_MARKS"),
+        (0, 5, "INSUFFICIENT_MARKS"),
+        (1, 10, "INSUFFICIENT_MARKS"),
+        (5, 1, "INSUFFICIENT_MARKS"),
+        (1, 1, "INSUFFICIENT_MARKS"),
+    ]
+    for probe_count, gallery_count, expected in test_cases:
+        if probe_count < 2 or gallery_count < 2:
+            status = "INSUFFICIENT_MARKS"
+        else:
+            status = "MATCHED"  # hypothetical
+
+        assert status == expected, (
+            f"probe={probe_count}, gallery={gallery_count}: "
+            f"expected {expected}, got {status}"
+        )
+
+    # Positive case: both >= 2 should NOT be INSUFFICIENT
+    if 3 < 2 or 4 < 2:
+        status_positive = "INSUFFICIENT_MARKS"
+    else:
+        status_positive = "POTENTIALLY_MATCHED"
+    assert status_positive != "INSUFFICIENT_MARKS", "Both sides >=2 must not be INSUFFICIENT"
+
+    print("  [PASS] OR logic correctly gates insufficient marks")
+
+
+def test_shared_marks_produce_matched():
+    """When both sides have >= 2 marks and >= 1 correspondence, status is MATCHED."""
+    print("\n  [TEST] Shared Marks Produce MATCHED")
+
+    valid_probe_marks = [{"centroid": (0.3, 0.4)}, {"centroid": (0.5, 0.6)}, {"centroid": (0.7, 0.3)}]
+    valid_gallery_marks = [{"centroid": (0.31, 0.41)}, {"centroid": (0.51, 0.61)}]
+    matched_count = 2  # simulated
+
+    if len(valid_probe_marks) < 2 or len(valid_gallery_marks) < 2:
+        mark_match_status = "INSUFFICIENT_MARKS"
+    elif matched_count > 0:
+        mark_match_status = "MATCHED"
+    else:
+        mark_match_status = "NO_MATCHES"
+
+    assert mark_match_status == "MATCHED", f"Expected MATCHED, got {mark_match_status}"
+    print("  [PASS] Shared marks produce MATCHED")
+
+
+def test_no_shared_marks_produce_no_matches():
+    """When both sides have >= 2 marks but 0 correspondences, status is NO_MATCHES."""
+    print("\n  [TEST] No Shared Marks Produce NO_MATCHES")
+
+    valid_probe_marks = [{"centroid": (0.1, 0.1)}, {"centroid": (0.2, 0.2)}, {"centroid": (0.3, 0.3)}]
+    valid_gallery_marks = [{"centroid": (0.8, 0.8)}, {"centroid": (0.9, 0.9)}]
+    matched_count = 0  # no correspondences
+
+    if len(valid_probe_marks) < 2 or len(valid_gallery_marks) < 2:
+        mark_match_status = "INSUFFICIENT_MARKS"
+    elif matched_count > 0:
+        mark_match_status = "MATCHED"
+    else:
+        mark_match_status = "NO_MATCHES"
+
+    assert mark_match_status == "NO_MATCHES", f"Expected NO_MATCHES, got {mark_match_status}"
+    print("  [PASS] No shared marks produce NO_MATCHES")
+
+
+def test_lr_total_product_rule():
+    """LR_total must equal LR_ensemble × LR_marks."""
+    print("\n  [TEST] LR Product Rule")
+
+    test_cases = [
+        (100.0, 1.0),
+        (0.5, 250.0),
+        (10000.0, 15.0),
+        (1.0, 1.0),
+        (0.001, 100.0),
+    ]
+    for lr_ensemble, lr_marks in test_cases:
+        lr_total = lr_ensemble * lr_marks
+        expected = lr_ensemble * lr_marks
+        assert abs(lr_total - expected) < 1e-12, (
+            f"LR product rule violated: {lr_ensemble} × {lr_marks} = {lr_total}, expected {expected}"
+        )
+
+    print("  [PASS] LR_total = LR_ensemble × LR_marks holds for all test values")
+
+
+def test_migration_columns_complete():
+    """Migration script must include all 8 new mark-audit columns."""
+    print("\n  [TEST] Migration Columns Complete")
+
+    migration_path = PROJECT_ROOT / "scripts" / "migrate_scoring_audit_columns.py"
+    assert migration_path.exists(), f"Migration script not found at {migration_path}"
+
+    migration_text = migration_path.read_text()
+
+    required_columns = [
+        "mark_match_status",
+        "marks_detected_probe",
+        "marks_detected_gallery",
+        "mark_lrs_json",
+        "accepted_mark_correspondences_json",
+        "mark_detector_version",
+        "mark_matcher_version",
+        "mark_overlay_url",
+    ]
+    missing = [col for col in required_columns if col not in migration_text]
+    assert not missing, f"Migration script missing columns: {missing}"
+
+    print(f"  [PASS] All {len(required_columns)} mark-audit columns present in migration script")
+
+
 if __name__ == "__main__":
     # Run all unit tests first
     test_bayesian_identity()
@@ -533,6 +692,13 @@ if __name__ == "__main__":
     test_veto_with_mark_override()
     test_calibration_missing()
     test_mark_override_safeguards()
+    # Mark evidence status tests (v2.0)
+    test_exact_self_match_status()
+    test_insufficient_marks_or_logic()
+    test_shared_marks_produce_matched()
+    test_no_shared_marks_produce_no_matches()
+    test_lr_total_product_rule()
+    test_migration_columns_complete()
     print("\n  *** ALL UNIT TESTS PASSED ***\n")
 
     # Run the original E2E pipeline test

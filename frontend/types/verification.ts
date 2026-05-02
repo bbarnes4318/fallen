@@ -206,6 +206,7 @@ export interface VerificationResult {
   mark_match_overlay_b64?: string | null;
   mark_detector_version?: string | null;
   mark_matcher_version?: string | null;
+  exact_image_match?: boolean;
 }
 
 export interface ForensicPoint {

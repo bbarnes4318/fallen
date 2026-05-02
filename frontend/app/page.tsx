@@ -1120,7 +1120,7 @@ export default function Home() {
 
         {/* ════ RESULTS DASHBOARD — Zero-Scroll 70/30 Grid ════ */}
         {step === 'complete' && results && (
-          <div className="h-full flex flex-col gap-3 min-h-0 overflow-hidden">
+          <div className="h-full flex flex-col gap-3 min-h-0 overflow-y-auto">
             <div className="flex-1 flex gap-3 min-h-0">
 
             {/* ── LEFT PANEL (70%): Dual-Pane Visualizer ── */}
@@ -1394,7 +1394,7 @@ export default function Home() {
 
               {/* ── Technical Details (3-column) ── */}
               {auditExpanded && results.audit_log && (
-                <div className="border border-[#1a1a0a] bg-[#000000] rounded p-2.5 font-mono text-[9px] leading-relaxed shadow-[inset_0_0_30px_rgba(0,0,0,0.5)]">
+                <div className="border border-[#1a1a0a] bg-[#000000] rounded p-2.5 font-mono text-[9px] leading-relaxed shadow-[inset_0_0_30px_rgba(0,0,0,0.5)] max-h-[60vh] overflow-y-auto">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-1 w-full min-w-0">
 
                     {/* Block 1: Confidence & Accuracy */}
