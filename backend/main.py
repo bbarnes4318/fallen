@@ -426,6 +426,9 @@ class VerificationResponse(BaseModel):
     scar_delta_b64: str
     gallery_wireframe_b64: str
     probe_wireframe_b64: str
+    probe_mark_debug_b64: Optional[str] = None
+    gallery_mark_debug_b64: Optional[str] = None
+    mark_debug: Optional[dict] = None
     # Tier 2: Geometry telemetry
     geometry_status: Optional[str] = None  # OK, NO_VALID_RATIOS, INVALID_IOD
     geometric_ratio_distance: Optional[float] = None
@@ -1439,11 +1442,11 @@ def _build_skin_mask(shape: tuple, landmarks, margin: int = 5) -> np.ndarray:
 
 def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, np.ndarray]:
     """
-    Detects discrete facial anomalies (scars, moles, birthmarks) on
-    the skin surface of an aligned 256×256 face crop.
-
+    Detects discrete facial anomalies (scars, moles, birthmarks, texture clusters)
+    on the skin surface using multi-scale detection.
+    
     Returns a tuple:
-        - list of mark descriptors: [{"centroid": (cx, cy), "area": float, "intensity": float, "circularity": float}, ...]
+        - list of mark descriptors: [{"centroid": (cx, cy), "area": float, "intensity": float, ...}, ...]
         - occlusion_mask (np.ndarray): Mask of occluded regions
     """
     h, w = aligned_crop.shape[:2]
@@ -1461,67 +1464,205 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, np.n
     for pt in pts:
         cv2.circle(occ_mask, pt, int(min(h, w) * 0.05), 255, -1)
 
-    # Adaptive threshold to detect dark anomalies on skin
-    thresh = cv2.adaptiveThreshold(
+    # Valid mask for detection
+    valid_mask = cv2.bitwise_and(skin_mask, cv2.bitwise_not(occ_mask))
+
+    marks = []
+
+    # 1. Dark spots (moles/freckles)
+    dark_thresh = cv2.adaptiveThreshold(
         gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY_INV, blockSize=15, C=5
     )
-
-    # Apply skin mask — only keep marks on skin surface
-    masked = cv2.bitwise_and(thresh, skin_mask)
-
-    # Apply occlusion mask to avoid detecting shadows as marks
-    masked[occ_mask > 0] = 0
-
-    # Morphological opening to remove speckle noise
+    dark_masked = cv2.bitwise_and(dark_thresh, valid_mask)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    cleaned = cv2.morphologyEx(masked, cv2.MORPH_OPEN, kernel)
+    dark_cleaned = cv2.morphologyEx(dark_masked, cv2.MORPH_OPEN, kernel)
+    dark_contours, _ = cv2.findContours(dark_cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Find contours
-    contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # 2. Light spots (hypopigmented scars)
+    light_thresh = cv2.adaptiveThreshold(
+        255 - gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV, blockSize=15, C=5
+    )
+    light_masked = cv2.bitwise_and(light_thresh, valid_mask)
+    light_cleaned = cv2.morphologyEx(light_masked, cv2.MORPH_OPEN, kernel)
+    light_contours, _ = cv2.findContours(light_cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    marks = []
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        # Filter by area: min 8px² (noise), max 500px² (shadows/large regions)
-        if area < 8 or area > 500:
-            continue
+    # 3. Linear scars (Canny edges inside skin)
+    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 30, 100)
+    edges_masked = cv2.bitwise_and(edges, valid_mask)
+    edges_closed = cv2.morphologyEx(edges_masked, cv2.MORPH_CLOSE, kernel)
+    linear_contours, _ = cv2.findContours(edges_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        perimeter = cv2.arcLength(cnt, True)
-        circularity = (4 * np.pi * area / (perimeter * perimeter)) if perimeter > 0 else 0
+    all_contours = [
+        (dark_contours, "dark_spot"),
+        (light_contours, "light_spot"),
+        (linear_contours, "linear_scar")
+    ]
 
-        # Centroid
-        M = cv2.moments(cnt)
-        if M["m00"] == 0:
-            continue
-        cx = M["m10"] / M["m00"]
-        cy = M["m01"] / M["m00"]
+    # We will build a spatial grid to prevent overlapping duplicate detections
+    used_mask = np.zeros((h, w), dtype=np.uint8)
 
-        # Mean intensity of the mark region
-        mark_mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.drawContours(mark_mask, [cnt], -1, 255, -1)
-        mean_intensity = float(cv2.mean(gray, mask=mark_mask)[0])
+    for cnt_list, m_type in all_contours:
+        for cnt in cnt_list:
+            area = cv2.contourArea(cnt)
+            # Filter by area: min 8px² (noise), max 500px² (shadows/large regions)
+            if area < 8 or area > 500:
+                continue
 
-        marks.append({
-            "centroid": (cx / w, cy / h),  # normalized [0,1]
-            "area": area,
-            "intensity": mean_intensity,
-            "circularity": circularity,
-            "contour": cnt,  # keep for visualization
-        })
+            M = cv2.moments(cnt)
+            if M["m00"] == 0:
+                continue
+            cx = M["m10"] / M["m00"]
+            cy = M["m01"] / M["m00"]
+
+            # Check for overlap
+            if used_mask[int(cy), int(cx)] > 0:
+                continue
+
+            perimeter = cv2.arcLength(cnt, True)
+            circularity = (4 * np.pi * area / (perimeter * perimeter)) if perimeter > 0 else 0
+
+            # Bounding box and aspect ratio/eccentricity
+            x, y, bw, bh = cv2.boundingRect(cnt)
+            aspect_ratio = float(bw) / bh if bh > 0 else 0
+
+            # Orientation via fitEllipse (requires >= 5 points)
+            orientation = 0.0
+            if len(cnt) >= 5:
+                ellipse = cv2.fitEllipse(cnt)
+                orientation = ellipse[2] # angle
+
+            # Mean intensity of the mark region
+            mark_mask = np.zeros((h, w), dtype=np.uint8)
+            cv2.drawContours(mark_mask, [cnt], -1, 255, -1)
+            mean_intensity = float(cv2.mean(gray, mask=mark_mask)[0])
+
+            # Mark it used to prevent overlaps
+            cv2.drawContours(used_mask, [cnt], -1, 255, -1)
+
+            # Nearest landmark
+            min_dist = float('inf')
+            nearest_lm_idx = -1
+            for idx, lm in enumerate(landmarks):
+                lm_x = int(lm.x * w)
+                lm_y = int(lm.y * h)
+                dist = (lm_x - cx)**2 + (lm_y - cy)**2
+                if dist < min_dist:
+                    min_dist = dist
+                    nearest_lm_idx = idx
+
+            # Face region heuristic based on nearest lm
+            face_region = "unknown"
+            if nearest_lm_idx in _LEFT_EYE_IDX or nearest_lm_idx in _LEFT_BROW_IDX:
+                face_region = "left_periocular"
+            elif nearest_lm_idx in _RIGHT_EYE_IDX or nearest_lm_idx in _RIGHT_BROW_IDX:
+                face_region = "right_periocular"
+            elif nearest_lm_idx in _NOSE_IDX:
+                face_region = "nose"
+            elif nearest_lm_idx in _LIPS_IDX:
+                face_region = "mouth"
+            else:
+                if cy < h * 0.33:
+                    face_region = "forehead"
+                elif cy > h * 0.66:
+                    face_region = "chin/jaw"
+                elif cx < w * 0.5:
+                    face_region = "left_cheek"
+                else:
+                    face_region = "right_cheek"
+
+            marks.append({
+                "centroid": (cx / w, cy / h),  # normalized [0,1]
+                "area": area,
+                "intensity": mean_intensity,
+                "circularity": circularity,
+                "aspect_ratio": aspect_ratio,
+                "orientation": orientation,
+                "mark_type": m_type,
+                "nearest_landmark_index": nearest_lm_idx,
+                "face_region": face_region,
+                "bbox": (x, y, bw, bh),
+                "contour": cnt,  # keep for visualization
+            })
 
     return marks, occ_mask
 
 
-def compute_mark_correspondence(marks_gallery: list, marks_probe: list) -> dict:
+def match_facial_marks(marks_gallery: list, marks_probe: list, dist_threshold: float = 0.20):
+    """
+    Cost-matrix based Hungarian assignment for marks.
+    Returns:
+        matches: list of (gal_idx, pro_idx)
+        unmatched_gallery: list of gal_idx
+        unmatched_probe: list of pro_idx
+        rejected_candidates: list of dicts with reasons
+    """
+    from scipy.optimize import linear_sum_assignment
+    
+    n_gal = len(marks_gallery)
+    n_pro = len(marks_probe)
+    
+    if n_gal == 0 or n_pro == 0:
+        return [], list(range(n_gal)), list(range(n_pro)), []
+        
+    cost_matrix = np.full((n_gal, n_pro), 1e6)
+    reasons = {}
+    
+    for i, mg in enumerate(marks_gallery):
+        for j, mp in enumerate(marks_probe):
+            delta_x = mg["centroid"][0] - mp["centroid"][0]
+            delta_y = mg["centroid"][1] - mp["centroid"][1]
+            spatial_dist = np.sqrt(delta_x**2 + delta_y**2)
+            
+            if spatial_dist > dist_threshold:
+                reasons[(i, j)] = f"Too far (dist={spatial_dist:.2f})"
+                continue
+                
+            # Cost based on descriptor differences
+            area_ratio = min(mg["area"], mp["area"]) / max(mg["area"], mp["area"])
+            if area_ratio < 0.2:
+                reasons[(i, j)] = f"Area mismatch (ratio={area_ratio:.2f})"
+                continue
+                
+            intensity_diff = abs(mg["intensity"] - mp["intensity"])
+            
+            cost = (spatial_dist * 5) + (1.0 - area_ratio) + (intensity_diff / 255.0)
+            if mg.get("mark_type") != mp.get("mark_type"):
+                cost += 0.5 # Penalty for type mismatch
+                
+            cost_matrix[i, j] = cost
+            
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    
+    matches = []
+    unmatched_gallery = set(range(n_gal))
+    unmatched_probe = set(range(n_pro))
+    rejected_candidates = []
+    
+    MAX_COST = 2.0
+    for r, c in zip(row_ind, col_ind):
+        cost = cost_matrix[r, c]
+        if cost < MAX_COST:
+            matches.append((int(r), int(c)))
+            unmatched_gallery.remove(int(r))
+            unmatched_probe.remove(int(c))
+        else:
+            if cost < 1e5:
+                rejected_candidates.append({"gallery_idx": int(r), "probe_idx": int(c), "reason": f"Cost too high ({cost:.2f})"})
+            elif (int(r), int(c)) in reasons:
+                rejected_candidates.append({"gallery_idx": int(r), "probe_idx": int(c), "reason": reasons[(int(r), int(c))]})
+                
+    return matches, list(unmatched_gallery), list(unmatched_probe), rejected_candidates
+
+
+def compute_mark_correspondence(marks_gallery: list, marks_probe: list, matched_pairs: list = None) -> dict:
     """
     Bayesian Likelihood Ratio Mark Correspondence Engine (Scientific v3.0).
 
-    Evaluates the LR for every potential mark match:
+    Evaluates the LR for explicitly matched mark pairs:
       - Numerator P(E|Hp): Multivariate Gaussian PDF at observed delta vector
       - Denominator P(E|Hd): KDE spatial density × morphological PDFs
-
-    Uses Hungarian optimal matching on -log(LR) to maximize the joint LR.
 
     Returns:
         {
@@ -1534,14 +1675,12 @@ def compute_mark_correspondence(marks_gallery: list, marks_probe: list) -> dict:
             "mark_lrs": [float, ...] — individual LR per matched mark,
         }
     """
-    from scipy.optimize import linear_sum_assignment
     from scipy.stats import multivariate_normal as mvn
 
     n_gal = len(marks_gallery)
     n_pro = len(marks_probe)
 
-    # Minimum mark threshold: 1 (the math filters noise via LR ≈ 1)
-    if n_gal < 1 or n_pro < 1:
+    if n_gal < 1 or n_pro < 1 or not matched_pairs:
         return {
             "score": None, "matched": 0,
             "total_gallery": n_gal, "total_probe": n_pro,
@@ -1567,77 +1706,61 @@ def compute_mark_correspondence(marks_gallery: list, marks_probe: list) -> dict:
     delta_mean = np.array(delta_model["mean"])
     delta_cov = np.array(delta_model["covariance"])
 
-    # Build NxM LR matrix
-    lr_matrix = np.ones((n_gal, n_pro))
-    neg_log_lr_matrix = np.full((n_gal, n_pro), 1e6)  # For Hungarian minimization
-
-    for i, mg in enumerate(marks_gallery):
-        for j, mp_mark in enumerate(marks_probe):
-            # Delta vector: gallery - probe
-            delta_v = np.array([
-                mg["centroid"][0] - mp_mark["centroid"][0],
-                mg["centroid"][1] - mp_mark["centroid"][1],
-                mg["area"] - mp_mark["area"],
-                mg["intensity"] - mp_mark["intensity"],
-                mg["circularity"] - mp_mark["circularity"],
-            ])
-
-            # Spatial proximity gate: skip pairs too far apart (> 20% of face)
-            spatial_dist = np.sqrt(delta_v[0]**2 + delta_v[1]**2)
-            if spatial_dist > 0.20:
-                continue
-
-            # NUMERATOR: P(delta | Hp) — how likely is this delta for same person
-            try:
-                numerator = mvn.pdf(delta_v, mean=delta_mean, cov=delta_cov)
-            except Exception:
-                numerator = EPSILON
-            numerator = max(numerator, EPSILON)
-
-            # DENOMINATOR: P(E | Hd) — population frequency of this mark
-            # Product of: spatial KDE × area PDF × intensity PDF × circularity PDF
-            try:
-                p_spatial = float(spatial_kde.evaluate(
-                    np.array([[mp_mark["centroid"][0]], [mp_mark["centroid"][1]]])
-                )[0])
-            except Exception:
-                p_spatial = EPSILON
-            p_spatial = max(p_spatial, EPSILON)
-
-            from scipy.stats import lognorm as _lognorm, norm as _norm
-            p_area = max(float(_lognorm.pdf(
-                mp_mark["area"],
-                area_dist["shape"], loc=area_dist["loc"], scale=area_dist["scale"]
-            )), EPSILON)
-            p_intensity = max(float(_norm.pdf(
-                mp_mark["intensity"],
-                loc=int_dist["mean"], scale=int_dist["std"]
-            )), EPSILON)
-            p_circularity = max(float(_norm.pdf(
-                mp_mark["circularity"],
-                loc=circ_dist["mean"], scale=circ_dist["std"]
-            )), EPSILON)
-
-            denominator = max(p_spatial * p_area * p_intensity * p_circularity, EPSILON)
-
-            # Individual Likelihood Ratio
-            lr = numerator / denominator
-            lr_matrix[i, j] = lr
-
-            # -log(LR) for Hungarian minimization (maximize LR → minimize -log LR)
-            neg_log_lr_matrix[i, j] = -np.log(max(lr, EPSILON))
-
-    # Hungarian optimal matching to maximize joint LR
-    row_ind, col_ind = linear_sum_assignment(neg_log_lr_matrix)
-
-    # Accept matches where LR > 1 (evidence supports same-source)
     matches = []
     mark_lrs = []
-    for r, c in zip(row_ind, col_ind):
-        lr_val = float(lr_matrix[r, c])
-        if lr_val > 1.0:
-            matches.append((int(r), int(c), lr_val))
-            mark_lrs.append(lr_val)
+    
+    for r, c in matched_pairs:
+        mg = marks_gallery[r]
+        mp_mark = marks_probe[c]
+        
+        # Delta vector: gallery - probe
+        delta_v = np.array([
+            mg["centroid"][0] - mp_mark["centroid"][0],
+            mg["centroid"][1] - mp_mark["centroid"][1],
+            mg["area"] - mp_mark["area"],
+            mg["intensity"] - mp_mark["intensity"],
+            mg["circularity"] - mp_mark["circularity"],
+        ])
+
+        # NUMERATOR: P(delta | Hp) — how likely is this delta for same person
+        try:
+            numerator = mvn.pdf(delta_v, mean=delta_mean, cov=delta_cov)
+        except Exception:
+            numerator = EPSILON
+        numerator = max(numerator, EPSILON)
+
+        # DENOMINATOR: P(E | Hd) — population frequency of this mark
+        try:
+            p_spatial = float(spatial_kde.evaluate(
+                np.array([[mp_mark["centroid"][0]], [mp_mark["centroid"][1]]])
+            )[0])
+        except Exception:
+            p_spatial = EPSILON
+        p_spatial = max(p_spatial, EPSILON)
+
+        from scipy.stats import lognorm as _lognorm, norm as _norm
+        p_area = max(float(_lognorm.pdf(
+            mp_mark["area"],
+            area_dist["shape"], loc=area_dist["loc"], scale=area_dist["scale"]
+        )), EPSILON)
+        p_intensity = max(float(_norm.pdf(
+            mp_mark["intensity"],
+            loc=int_dist["mean"], scale=int_dist["std"]
+        )), EPSILON)
+        p_circularity = max(float(_norm.pdf(
+            mp_mark["circularity"],
+            loc=circ_dist["mean"], scale=circ_dist["std"]
+        )), EPSILON)
+
+        denominator = max(p_spatial * p_area * p_intensity * p_circularity, EPSILON)
+
+        # Individual Likelihood Ratio
+        lr = max(numerator / denominator, EPSILON)
+        
+        # Only accept if LR > 1.0 (evidence supports same-source)
+        if lr > 1.0:
+            matches.append((r, c, float(lr)))
+            mark_lrs.append(float(lr))
 
     # Combined LR = product of individual mark LRs
     lr_marks = 1.0
@@ -2104,7 +2227,8 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             clean_m = {k: v for k, v in m.items() if k != "contour"}
             valid_probe_marks.append(clean_m)
 
-    mark_result = compute_mark_correspondence(valid_gallery_marks, valid_probe_marks)
+    assigned_pairs, unmatched_gal, unmatched_pro, rejected_cands = match_facial_marks(valid_gallery_marks, valid_probe_marks)
+    mark_result = compute_mark_correspondence(valid_gallery_marks, valid_probe_marks, matched_pairs=assigned_pairs)
     tier4_score = mark_result["score"]  # None if insufficient marks
 
     # ── BAYESIAN EVIDENCE FUSION (Scientific v4.0) ──
@@ -2242,6 +2366,54 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             "lr": individual_lr
         })
 
+    probe_mark_debug_b64 = None
+    gallery_mark_debug_b64 = None
+    mark_debug_payload = None
+
+    if os.getenv("DEBUG_FORENSIC") == "true":
+        gal_debug_img = gallery_aligned.copy()
+        pro_debug_img = probe_aligned.copy()
+        
+        gal_matched_idx = {m[0] for m in mark_result.get("matches", [])}
+        pro_matched_idx = {m[1] for m in mark_result.get("matches", [])}
+        
+        for idx, m in enumerate(valid_gallery_marks):
+            cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
+            color = (0, 255, 0) if idx in gal_matched_idx else ((255, 255, 0) if idx in unmatched_gal else (128, 128, 128))
+            cv2.circle(gal_debug_img, (cx, cy), 4, color, 2)
+            cv2.putText(gal_debug_img, str(idx), (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
+            
+        for idx, m in enumerate(valid_probe_marks):
+            cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
+            color = (0, 255, 0) if idx in pro_matched_idx else ((255, 255, 0) if idx in unmatched_pro else (128, 128, 128))
+            cv2.circle(pro_debug_img, (cx, cy), 4, color, 2)
+            cv2.putText(pro_debug_img, str(idx), (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
+            
+        _, gal_dbuf = cv2.imencode('.png', gal_debug_img)
+        gallery_mark_debug_b64 = f"data:image/png;base64,{base64.b64encode(gal_dbuf).decode('utf-8')}"
+        _, pro_dbuf = cv2.imencode('.png', pro_debug_img)
+        probe_mark_debug_b64 = f"data:image/png;base64,{base64.b64encode(pro_dbuf).decode('utf-8')}"
+        
+        mark_debug_payload = {
+            "probe_marks_count": len(valid_probe_marks),
+            "gallery_marks_count": len(valid_gallery_marks),
+            "correspondences_count": len(mark_result.get("matches", [])),
+            "probe_marks_first_20": valid_probe_marks[:20],
+            "gallery_marks_first_20": valid_gallery_marks[:20],
+            "correspondences_first_20": [
+                {
+                    "gallery_idx": m[0],
+                    "probe_idx": m[1],
+                    "lr": m[2]
+                } for m in mark_result.get("matches", [])
+            ][:20],
+            "unmatched_probe_indices": list(unmatched_pro),
+            "unmatched_gallery_indices": list(unmatched_gal),
+            "rejected_candidates": rejected_cands,
+            "detector_version": "v2.0 (multi-scale)",
+            "matcher_version": "v2.0 (Hungarian + LR)"
+        }
+
     if os.getenv("DEBUG_FORENSIC") == "true" or os.getenv("ENVIRONMENT") == "development":
         print(f"[FORENSIC DEBUG] raw_probe_marks: {len(valid_probe_marks)}, "
               f"raw_gallery_marks: {len(valid_gallery_marks)}, "
@@ -2263,12 +2435,15 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         scar_delta_b64=scar_delta,
         gallery_wireframe_b64=gallery_wireframe,
         probe_wireframe_b64=probe_wireframe,
+        probe_mark_debug_b64=probe_mark_debug_b64,
+        gallery_mark_debug_b64=gallery_mark_debug_b64,
+        mark_debug=mark_debug_payload,
         geometry_status=geometry_status,
         geometric_ratio_distance=round(ratio_l2, 6) if ratio_l2 is not None else None,
         mark_correspondence_score=tier4_score,
-        marks_detected_gallery=mark_result["total_gallery"],
-        marks_detected_probe=mark_result["total_probe"],
-        marks_matched=mark_result["matched"],
+        marks_detected_gallery=mark_result.get("total_gallery", 0),
+        marks_detected_probe=mark_result.get("total_probe", 0),
+        marks_matched=mark_result.get("matched", 0),
         correspondences=correspondences,
         raw_probe_marks=valid_probe_marks,
         raw_gallery_marks=valid_gallery_marks,
@@ -2557,7 +2732,8 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             clean_m = {k: v for k, v in m.items() if k != "contour"}
             valid_probe_marks.append(clean_m)
 
-    mark_result = compute_mark_correspondence(valid_gallery_marks, valid_probe_marks)
+    assigned_pairs, unmatched_gal, unmatched_pro, rejected_cands = match_facial_marks(valid_gallery_marks, valid_probe_marks)
+    mark_result = compute_mark_correspondence(valid_gallery_marks, valid_probe_marks, matched_pairs=assigned_pairs)
     tier4_score = mark_result["score"]  # None if insufficient marks
 
     # ── BAYESIAN EVIDENCE FUSION (Scientific v4.0) ──
@@ -2698,6 +2874,54 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             "lr": individual_lr
         })
 
+    probe_mark_debug_b64 = None
+    gallery_mark_debug_b64 = None
+    mark_debug_payload = None
+
+    if os.getenv("DEBUG_FORENSIC") == "true":
+        gal_debug_img = gallery_aligned.copy()
+        pro_debug_img = probe_aligned.copy()
+        
+        gal_matched_idx = {m[0] for m in mark_result.get("matches", [])}
+        pro_matched_idx = {m[1] for m in mark_result.get("matches", [])}
+        
+        for idx, m in enumerate(valid_gallery_marks):
+            cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
+            color = (0, 255, 0) if idx in gal_matched_idx else ((255, 255, 0) if idx in unmatched_gal else (128, 128, 128))
+            cv2.circle(gal_debug_img, (cx, cy), 4, color, 2)
+            cv2.putText(gal_debug_img, str(idx), (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
+            
+        for idx, m in enumerate(valid_probe_marks):
+            cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
+            color = (0, 255, 0) if idx in pro_matched_idx else ((255, 255, 0) if idx in unmatched_pro else (128, 128, 128))
+            cv2.circle(pro_debug_img, (cx, cy), 4, color, 2)
+            cv2.putText(pro_debug_img, str(idx), (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
+            
+        _, gal_dbuf = cv2.imencode('.png', gal_debug_img)
+        gallery_mark_debug_b64 = f"data:image/png;base64,{base64.b64encode(gal_dbuf).decode('utf-8')}"
+        _, pro_dbuf = cv2.imencode('.png', pro_debug_img)
+        probe_mark_debug_b64 = f"data:image/png;base64,{base64.b64encode(pro_dbuf).decode('utf-8')}"
+        
+        mark_debug_payload = {
+            "probe_marks_count": len(valid_probe_marks),
+            "gallery_marks_count": len(valid_gallery_marks),
+            "correspondences_count": len(mark_result.get("matches", [])),
+            "probe_marks_first_20": valid_probe_marks[:20],
+            "gallery_marks_first_20": valid_gallery_marks[:20],
+            "correspondences_first_20": [
+                {
+                    "gallery_idx": m[0],
+                    "probe_idx": m[1],
+                    "lr": m[2]
+                } for m in mark_result.get("matches", [])
+            ][:20],
+            "unmatched_probe_indices": list(unmatched_pro),
+            "unmatched_gallery_indices": list(unmatched_gal),
+            "rejected_candidates": rejected_cands,
+            "detector_version": "v2.0 (multi-scale)",
+            "matcher_version": "v2.0 (Hungarian + LR)"
+        }
+
     if os.getenv("DEBUG_FORENSIC") == "true" or os.getenv("ENVIRONMENT") == "development":
         print(f"[FORENSIC DEBUG] raw_probe_marks: {len(valid_probe_marks)}, "
               f"raw_gallery_marks: {len(valid_gallery_marks)}, "
@@ -2719,12 +2943,15 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         scar_delta_b64=scar_delta,
         gallery_wireframe_b64=gallery_wireframe_b64,
         probe_wireframe_b64=probe_wireframe_b64,
+        probe_mark_debug_b64=probe_mark_debug_b64,
+        gallery_mark_debug_b64=gallery_mark_debug_b64,
+        mark_debug=mark_debug_payload,
         geometry_status=geometry_status,
         geometric_ratio_distance=round(ratio_l2, 6) if ratio_l2 is not None else None,
         mark_correspondence_score=tier4_score,
-        marks_detected_gallery=mark_result["total_gallery"],
-        marks_detected_probe=mark_result["total_probe"],
-        marks_matched=mark_result["matched"],
+        marks_detected_gallery=mark_result.get("total_gallery", 0),
+        marks_detected_probe=mark_result.get("total_probe", 0),
+        marks_matched=mark_result.get("matched", 0),
         correspondences=correspondences,
         raw_probe_marks=valid_probe_marks,
         raw_gallery_marks=valid_gallery_marks,

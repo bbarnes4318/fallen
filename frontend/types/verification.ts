@@ -59,6 +59,9 @@ export interface VerificationResult {
   scar_delta_b64: string;
   gallery_wireframe_b64: string;
   probe_wireframe_b64: string;
+  probe_mark_debug_b64?: string | null;
+  gallery_mark_debug_b64?: string | null;
+  mark_debug?: Record<string, any> | null;
   correspondences?: Correspondence[];
   audit_log?: AuditLog;
   probe_data?: Record<string, unknown>;

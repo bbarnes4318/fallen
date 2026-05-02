@@ -16,7 +16,7 @@ interface SymmetryMergeProps {
   isXrayMode?: boolean;
 }
 
-type ViewMode = 'aligned' | 'mesh' | 'delta' | 'overlap';
+type ViewMode = 'aligned' | 'mesh' | 'delta' | 'overlap' | 'debug';
 
 /* ── Tooltip descriptions for each view mode ── */
 const VIEW_TOOLTIPS: Record<ViewMode, string> = {
@@ -24,6 +24,7 @@ const VIEW_TOOLTIPS: Record<ViewMode, string> = {
   mesh: '468-point MediaPipe face mesh overlay. Visualizes landmark positions used for alignment and geometric ratio extraction.',
   delta: 'Edge-based differential overlay between aligned gallery and probe crops. Highlights persistent structural deviations.',
   overlap: 'Alpha-blended composite layout for manual symmetry verification.',
+  debug: 'Raw backend mark debug visualization with OpenCV overlays.',
 };
 
 function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
@@ -200,6 +201,8 @@ export default function SymmetryMerge({
   const deltaImg = useImageLoader(deltaImageSrc);
   const gWireImg = useImageLoader(galleryWireframeSrc);
   const pWireImg = useImageLoader(probeWireframeSrc);
+  const pMarkDebugImg = useImageLoader(results?.probe_mark_debug_b64 ?? undefined);
+  const gMarkDebugImg = useImageLoader(results?.gallery_mark_debug_b64 ?? undefined);
 
   const imagesReady = !!galleryImg && !!probeImg;
 
@@ -207,15 +210,17 @@ export default function SymmetryMerge({
   const getLeftOverlay = useCallback((): HTMLImageElement | null => {
     if (mode === 'mesh' && pWireImg) return pWireImg;
     if (mode === 'delta' && deltaImg) return deltaImg;
+    if (mode === 'debug' && pMarkDebugImg) return pMarkDebugImg;
     return null;
-  }, [mode, pWireImg, deltaImg]);
+  }, [mode, pWireImg, deltaImg, pMarkDebugImg]);
 
   // ── RIGHT PANE = GALLERY (+ delta overlay in delta mode, + wireframe in mesh mode) ──
   const getRightOverlay = useCallback((): HTMLImageElement | null => {
     if (mode === 'mesh' && gWireImg) return gWireImg;
     if (mode === 'delta' && deltaImg) return deltaImg;
+    if (mode === 'debug' && gMarkDebugImg) return gMarkDebugImg;
     return null;
-  }, [mode, gWireImg, deltaImg]);
+  }, [mode, gWireImg, deltaImg, gMarkDebugImg]);
 
   const getBorderColor = useCallback((): string | undefined => {
     if (mode === 'delta') return 'rgba(180, 0, 30, 0.5)';
@@ -224,7 +229,7 @@ export default function SymmetryMerge({
   }, [mode]);
 
   // X-RAY opacity values — active when overlays are present
-  const hasOverlay = mode === 'mesh' || mode === 'delta';
+  const hasOverlay = mode === 'mesh' || mode === 'delta' || mode === 'debug';
   const baseOpacity = isXrayMode && hasOverlay ? 0.1 : 1.0;
   const overlayOpacity = isXrayMode && hasOverlay ? 1.0 : (mode === 'delta' ? 0.7 : 0.85);
 
@@ -431,6 +436,13 @@ export default function SymmetryMerge({
                 OVERLAP
               </button>
             </Tooltip>
+            {results?.probe_mark_debug_b64 && results?.gallery_mark_debug_b64 && (
+              <Tooltip text={VIEW_TOOLTIPS.debug}>
+                <button onClick={() => setMode('debug')} className={`px-3 py-1 transition-colors border-l ${mode === 'debug' ? 'bg-[#D4AF37] text-black font-bold border-[#D4AF37]' : 'text-gray-400 hover:text-[#D4AF37] border-[#333]'}`}>
+                  DEBUG
+                </button>
+              </Tooltip>
+            )}
           </div>
 
           {/* Zoom Controls */}
@@ -593,7 +605,7 @@ export default function SymmetryMerge({
             {...commonPaneEvents}
           >
             <canvas ref={leftCanvasRef} className="block w-full h-full" />
-            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">PROBE + DELTA</span> : 'PROBE (A)'}</div>
+            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">PROBE + DELTA</span> : mode === 'debug' ? <span className="text-yellow-500">PROBE + DEBUG</span> : 'PROBE (A)'}</div>
           </div>
 
           {/* Right Pane: Gallery */}
@@ -602,13 +614,36 @@ export default function SymmetryMerge({
             {...commonPaneEvents}
           >
             <canvas ref={rightCanvasRef} className="block w-full h-full" />
-            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">GALLERY + DELTA</span> : 'GALLERY (B)'}</div>
+            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">GALLERY + DELTA</span> : mode === 'debug' ? <span className="text-yellow-500">GALLERY + DEBUG</span> : 'GALLERY (B)'}</div>
           </div>
         </div>
       )}
 
       {/* ── Debug Forensic Panel ── */}
-      {process.env.NEXT_PUBLIC_DEBUG_FORENSIC === "true" && results && (
+      {process.env.NEXT_PUBLIC_DEBUG_FORENSIC === "true" && results?.mark_debug ? (
+        <div className="shrink-0 mt-1 p-2 border border-yellow-800/50 bg-[#0e0e00] text-[8px] font-mono text-yellow-500/80 overflow-auto max-h-40">
+          <div className="font-bold tracking-widest mb-1 text-yellow-400">DEBUG FORENSIC — BAYESIAN HUNGARIAN MATCHER ({results.mark_debug.version as string})</div>
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <div className="text-yellow-600 mb-0.5">METRICS</div>
+              <div>PROBE MARKS: {results.mark_debug.probe_marks_count as number}</div>
+              <div>GALLERY MARKS: {results.mark_debug.gallery_marks_count as number}</div>
+              <div>CORRESPONDENCES: {results.mark_debug.correspondences_count as number}</div>
+            </div>
+            <div>
+              <div className="text-yellow-600 mb-0.5">UNMATCHED INDICES</div>
+              <div>PROBE: {JSON.stringify(results.mark_debug.probe_unmatched_indices)}</div>
+              <div>GALLERY: {JSON.stringify(results.mark_debug.gallery_unmatched_indices)}</div>
+            </div>
+            <div>
+              <div className="text-yellow-600 mb-0.5">TOP CORRESPONDENCES (LR)</div>
+              {Array.isArray(results.mark_debug.correspondences) && results.mark_debug.correspondences.slice(0, 3).map((c: any, i: number) => (
+                <div key={i}>P[{c.probe_idx}] ↔ G[{c.gallery_idx}] (LR: {typeof c.lr === 'number' ? c.lr.toFixed(2) : 'N/A'})</div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : process.env.NEXT_PUBLIC_DEBUG_FORENSIC === "true" && results ? (
         <div className="shrink-0 mt-1 p-2 border border-yellow-800/50 bg-[#0e0e00] text-[8px] font-mono text-yellow-500/80 overflow-auto max-h-40">
           <div className="font-bold tracking-widest mb-1 text-yellow-400">DEBUG FORENSIC — DELTA CORRESPONDENCE INTEGRITY</div>
           <div>raw_probe_marks: {probeMarksSource.length}</div>
@@ -634,7 +669,7 @@ export default function SymmetryMerge({
             })))}</div>
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* ── Footer ── */}
       <div className="flex w-full justify-between pt-1 text-[9px] font-mono text-gray-600 tracking-widest shrink-0">
@@ -643,6 +678,7 @@ export default function SymmetryMerge({
           {mode === 'mesh' && <span className="text-[#D4AF37]">3DMM WIREFRAME HUD</span>}
           {mode === 'delta' && <span className="text-red-500">BIOLOGICAL TOPOGRAPHY DELTA</span>}
           {mode === 'overlap' && <span className="text-[#D4AF37]">DRAG TO COMPARE OVERLAP</span>}
+          {mode === 'debug' && <span className="text-yellow-500">FORENSIC MARK DEBUGGER OVERLAY</span>}
           {isXrayMode && <span className="ml-2 text-[#D4AF37] animate-pulse">· X-RAY ACTIVE</span>}
         </span>
         <span>SYNCHRONIZED · {Math.round(zoom * 100)}%</span>
