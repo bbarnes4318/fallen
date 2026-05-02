@@ -37,6 +37,61 @@ export interface Correspondence {
   lr: number;
 }
 
+export type MarkType =
+  | "dark_blob"
+  | "light_blob"
+  | "linear_scar"
+  | "texture_cluster"
+  | "unknown";
+
+export interface MarkDescriptor {
+  index?: number;
+  centroid?: [number, number];
+  x?: number;
+  y?: number;
+  area?: number;
+  intensity?: number;
+  circularity?: number;
+  bbox?: [number, number, number, number];
+  contour_area?: number;
+  source_side?: "probe" | "gallery";
+  mark_type?: MarkType;
+  nearest_landmark_index?: number;
+  face_region?: string;
+  lr?: number;
+  [key: string]: unknown;
+}
+
+export interface MarkDebugCorrespondence {
+  gallery_idx?: number;
+  probe_idx?: number;
+  gallery_pt?: RawPoint;
+  probe_pt?: RawPoint;
+  lr?: number;
+  match_cost?: number;
+  position_distance?: number;
+  area_ratio?: number;
+  type_match?: boolean;
+  region_match?: boolean;
+  rejection_reason?: string;
+  [key: string]: unknown;
+}
+
+export interface MarkDebugPayload {
+  probe_marks_count?: number;
+  gallery_marks_count?: number;
+  correspondences_count?: number;
+  probe_marks_first_20?: MarkDescriptor[];
+  gallery_marks_first_20?: MarkDescriptor[];
+  correspondences_first_20?: MarkDebugCorrespondence[];
+  unmatched_probe_indices?: number[];
+  unmatched_gallery_indices?: number[];
+  rejected_candidates?: MarkDebugCorrespondence[];
+  detector_version?: string;
+  matcher_version?: string;
+  [key: string]: unknown;
+}
+
 export interface VerificationResult {
   structural_score: number;
   soft_biometrics_score: number;
@@ -61,7 +116,7 @@ export interface VerificationResult {
   probe_wireframe_b64: string;
   probe_mark_debug_b64?: string | null;
   gallery_mark_debug_b64?: string | null;
-  mark_debug?: Record<string, any> | null;
+  mark_debug?: MarkDebugPayload | null;
   correspondences?: Correspondence[];
   audit_log?: AuditLog;
   probe_data?: Record<string, unknown>;

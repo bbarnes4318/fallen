@@ -1,7 +1,13 @@
 'use client';
 
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
-import { VerificationResult, RawPoint, Correspondence } from '@/types/verification';
+import {
+  VerificationResult,
+  RawPoint,
+  Correspondence,
+  MarkDebugCorrespondence,
+  MarkDescriptor
+} from '@/types/verification';
 
 type ForensicPoint = {
   x: number;
@@ -620,30 +626,60 @@ export default function SymmetryMerge({
       )}
 
       {/* ── Debug Forensic Panel ── */}
-      {process.env.NEXT_PUBLIC_DEBUG_FORENSIC === "true" && results?.mark_debug ? (
-        <div className="shrink-0 mt-1 p-2 border border-yellow-800/50 bg-[#0e0e00] text-[8px] font-mono text-yellow-500/80 overflow-auto max-h-40">
-          <div className="font-bold tracking-widest mb-1 text-yellow-400">DEBUG FORENSIC — BAYESIAN HUNGARIAN MATCHER ({results.mark_debug.version as string})</div>
-          <div className="grid grid-cols-3 gap-2">
-            <div>
-              <div className="text-yellow-600 mb-0.5">METRICS</div>
-              <div>PROBE MARKS: {results.mark_debug.probe_marks_count as number}</div>
-              <div>GALLERY MARKS: {results.mark_debug.gallery_marks_count as number}</div>
-              <div>CORRESPONDENCES: {results.mark_debug.correspondences_count as number}</div>
-            </div>
-            <div>
-              <div className="text-yellow-600 mb-0.5">UNMATCHED INDICES</div>
-              <div>PROBE: {JSON.stringify(results.mark_debug.probe_unmatched_indices)}</div>
-              <div>GALLERY: {JSON.stringify(results.mark_debug.gallery_unmatched_indices)}</div>
-            </div>
-            <div>
-              <div className="text-yellow-600 mb-0.5">TOP CORRESPONDENCES (LR)</div>
-              {Array.isArray(results.mark_debug.correspondences) && results.mark_debug.correspondences.slice(0, 3).map((c: any, i: number) => (
-                <div key={i}>P[{c.probe_idx}] ↔ G[{c.gallery_idx}] (LR: {typeof c.lr === 'number' ? c.lr.toFixed(2) : 'N/A'})</div>
-              ))}
+      {(() => {
+        if (!(process.env.NEXT_PUBLIC_DEBUG_FORENSIC === "true" && results?.mark_debug)) return null;
+        
+        const debugProbeMarks: MarkDescriptor[] =
+          Array.isArray(results.mark_debug.probe_marks_first_20)
+            ? results.mark_debug.probe_marks_first_20
+            : [];
+
+        const debugGalleryMarks: MarkDescriptor[] =
+          Array.isArray(results.mark_debug.gallery_marks_first_20)
+            ? results.mark_debug.gallery_marks_first_20
+            : [];
+
+        const debugCorrespondences: MarkDebugCorrespondence[] =
+          Array.isArray(results.mark_debug.correspondences_first_20)
+            ? results.mark_debug.correspondences_first_20
+            : (Array.isArray(results.mark_debug.correspondences) ? results.mark_debug.correspondences as MarkDebugCorrespondence[] : []);
+
+        const unmatchedProbeIndices: number[] =
+          Array.isArray(results.mark_debug.unmatched_probe_indices)
+            ? results.mark_debug.unmatched_probe_indices.filter((n): n is number => typeof n === "number")
+            : (Array.isArray(results.mark_debug.probe_unmatched_indices) ? results.mark_debug.probe_unmatched_indices.filter((n): n is number => typeof n === "number") : []);
+
+        const unmatchedGalleryIndices: number[] =
+          Array.isArray(results.mark_debug.unmatched_gallery_indices)
+            ? results.mark_debug.unmatched_gallery_indices.filter((n): n is number => typeof n === "number")
+            : (Array.isArray(results.mark_debug.gallery_unmatched_indices) ? results.mark_debug.gallery_unmatched_indices.filter((n): n is number => typeof n === "number") : []);
+
+        return (
+          <div className="shrink-0 mt-1 p-2 border border-yellow-800/50 bg-[#0e0e00] text-[8px] font-mono text-yellow-500/80 overflow-auto max-h-40">
+            <div className="font-bold tracking-widest mb-1 text-yellow-400">DEBUG FORENSIC — BAYESIAN HUNGARIAN MATCHER ({results.mark_debug.version as string})</div>
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <div className="text-yellow-600 mb-0.5">METRICS</div>
+                <div>PROBE MARKS: {results.mark_debug.probe_marks_count as number}</div>
+                <div>GALLERY MARKS: {results.mark_debug.gallery_marks_count as number}</div>
+                <div>CORRESPONDENCES: {results.mark_debug.correspondences_count as number}</div>
+              </div>
+              <div>
+                <div className="text-yellow-600 mb-0.5">UNMATCHED INDICES</div>
+                <div>PROBE: {JSON.stringify(unmatchedProbeIndices)}</div>
+                <div>GALLERY: {JSON.stringify(unmatchedGalleryIndices)}</div>
+              </div>
+              <div>
+                <div className="text-yellow-600 mb-0.5">TOP CORRESPONDENCES (LR)</div>
+                {debugCorrespondences.slice(0, 3).map((c: MarkDebugCorrespondence, i: number) => (
+                  <div key={i}>P[{c.probe_idx}] ↔ G[{c.gallery_idx}] (LR: {typeof c.lr === 'number' ? c.lr.toFixed(2) : 'N/A'})</div>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      ) : process.env.NEXT_PUBLIC_DEBUG_FORENSIC === "true" && results ? (
+        );
+      })()}
+      {process.env.NEXT_PUBLIC_DEBUG_FORENSIC === "true" && results && !results.mark_debug ? (
         <div className="shrink-0 mt-1 p-2 border border-yellow-800/50 bg-[#0e0e00] text-[8px] font-mono text-yellow-500/80 overflow-auto max-h-40">
           <div className="font-bold tracking-widest mb-1 text-yellow-400">DEBUG FORENSIC — DELTA CORRESPONDENCE INTEGRITY</div>
           <div>raw_probe_marks: {probeMarksSource.length}</div>
