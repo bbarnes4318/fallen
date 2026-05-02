@@ -103,6 +103,29 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - name: Deploy Scoring Audit Migration Job
+        run: |
+          gcloud run jobs deploy scoring-audit-migration-job \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }} \
+            --image=${{ env.BACKEND_IMAGE }}:${{ github.sha }} \
+            --command="python" \
+            --args="scripts/migrate_scoring_audit_columns.py" \
+            --service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com \
+            --memory=1Gi \
+            --cpu=1 \
+            --task-timeout=600 \
+            --max-retries=0 \
+            --set-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance \
+            --set-env-vars="DB_USER=facial_app,DB_PASS=${{ secrets.DB_PASS }},DB_NAME=facial_db,CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance,ENVIRONMENT=production"
+
+      - name: Execute Scoring Audit Migration Job
+        run: |
+          gcloud run jobs execute scoring-audit-migration-job \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }} \
+            --wait
+
       - name: Deploy Backend to Cloud Run
         id: deploy-backend
         uses: google-github-actions/deploy-cloudrun@v2

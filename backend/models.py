@@ -85,8 +85,10 @@ class VerificationEvent(Base):
     """
     Immutable, append-only audit ledger for every biometric verification.
     Each row is a server-authoritative record of a pipeline transaction.
-    fused_score_x100: Integer representation of percentage × 100
-        (e.g. 99.50% → 9950) to eliminate floating-point drift in forensic records.
+    
+    fused_score_x100:
+    Displayed fused score stored as percent × 100.
+    Example: 86.74% -> 8674.
     """
     __tablename__ = "verification_events"
 
@@ -140,7 +142,10 @@ class VerificationEvent(Base):
     lr_marks_product = Column(Float, nullable=True)
     lr_total = Column(Float, nullable=True)
     posterior_probability = Column(Float, nullable=True)
-    bayesian_fused_score_x100 = Column(Integer, nullable=True)  # Pre-veto posterior × 100 × 100
+    bayesian_fused_score_x100 = Column(Integer, nullable=True)
+    # bayesian_fused_score_x100:
+    # Pre-veto Bayesian fused score stored as percent × 100.
+    # Example: 86.74% -> 8674.
     marks_matched = Column(Integer, nullable=True)
     calibration_status = Column(String(32), nullable=True)       # LOADED | MISSING
 

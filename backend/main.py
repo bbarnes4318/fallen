@@ -78,6 +78,24 @@ def on_startup():
     print("Starting database initialization (init_db)...", flush=True)
     init_db()
     print("Database initialization complete.", flush=True)
+    
+    # ── SCHEMA GUARD ──
+    from models import engine
+    from sqlalchemy import inspect
+    inspector = inspect(engine)
+    if "verification_events" in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns("verification_events")]
+        required_columns = [
+            "lr_arcface", "lr_marks_product", "lr_total", "posterior_probability",
+            "bayesian_fused_score_x100", "marks_matched", "calibration_status",
+            "veto_reason", "veto_override_applied"
+        ]
+        missing_cols = [c for c in required_columns if c not in columns]
+        if missing_cols:
+            import logging
+            logging.critical(f"CRITICAL: Missing required columns in verification_events: {missing_cols}")
+            raise RuntimeError(f"CRITICAL SCHEMA ERROR: Missing columns {missing_cols}. Run scripts/migrate_scoring_audit_columns.py before deploying.")
+    
     print("Hydrating FAISS Vault Index...", flush=True)
     session = SessionLocal()
     try:
@@ -400,6 +418,17 @@ class AuditLog(BaseModel):
     calibration_benchmark: Optional[str] = None
     calibration_pairs: Optional[int] = None
     calibration_status: Optional[str] = None
+    # Bayesian Likelihood Ratio Audit Trail
+    lr_arcface: Optional[float] = None
+    lr_marks: Optional[float] = None
+    lr_total: Optional[float] = None
+    posterior_probability: Optional[float] = None
+    mark_lrs: Optional[list] = None
+    bayesian_fused_score: Optional[float] = None
+    veto_reason: Optional[str] = None
+    veto_override_applied: bool = False
+    veto_override_reason: Optional[str] = None
+    scoring_trace: Optional[dict] = None
     # Chain of Custody — Pre-decode binary hashes
     probe_file_hash: Optional[str] = None
     gallery_file_hash: Optional[str] = None
@@ -2600,6 +2629,12 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             ),
         }
 
+    audit.veto_reason = veto_reason
+    audit.veto_override_applied = veto_override_applied
+    audit.veto_override_reason = veto_override_reason
+    audit.scoring_trace = scoring_trace
+    audit.calibration_status = _calibration_status
+
     response = VerificationResponse(
         structural_score=round(tier1_score, 2),
         soft_biometrics_score=round(tier2_score, 2),
@@ -3165,6 +3200,12 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
                 else ("arcface" if CALIBRATION and "arcface" in CALIBRATION else "NONE")
             ),
         }
+
+    audit.veto_reason = veto_reason
+    audit.veto_override_applied = veto_override_applied
+    audit.veto_override_reason = veto_override_reason
+    audit.scoring_trace = scoring_trace
+    audit.calibration_status = _calibration_status
 
     response = VerificationResponse(
         structural_score=round(tier1_score, 2),
