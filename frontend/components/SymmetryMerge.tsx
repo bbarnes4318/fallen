@@ -7,7 +7,8 @@ import {
   Correspondence,
   MarkDebugCorrespondence,
   MarkDescriptor,
-  ScoringTrace
+  ScoringTrace,
+  MarkMatchStatus
 } from '@/types/verification';
 
 type ForensicPoint = {
@@ -23,7 +24,7 @@ interface SymmetryMergeProps {
   isXrayMode?: boolean;
 }
 
-type ViewMode = 'aligned' | 'mesh' | 'delta' | 'overlap' | 'debug';
+type ViewMode = 'aligned' | 'mesh' | 'delta' | 'overlap' | 'marks' | 'debug';
 
 /* ── Tooltip descriptions for each view mode ── */
 const VIEW_TOOLTIPS: Record<ViewMode, string> = {
@@ -31,6 +32,7 @@ const VIEW_TOOLTIPS: Record<ViewMode, string> = {
   mesh: '468-point MediaPipe face mesh overlay. Visualizes landmark positions used for alignment and geometric ratio extraction.',
   delta: 'Edge-based differential overlay between aligned gallery and probe crops. Highlights persistent structural deviations.',
   overlap: 'Alpha-blended composite layout for manual symmetry verification.',
+  marks: 'Accepted forensic mark correspondences. Shows confirmed shared marks (scars, moles, blemishes) between probe and gallery.',
   debug: 'Raw backend mark debug visualization with OpenCV overlays.',
 };
 
@@ -458,6 +460,11 @@ export default function SymmetryMerge({
                 OVERLAP
               </button>
             </Tooltip>
+            <Tooltip text={VIEW_TOOLTIPS.marks}>
+              <button onClick={() => setMode('marks')} className={`px-3 py-1 transition-colors border-l ${mode === 'marks' ? 'bg-emerald-900 text-emerald-200 font-bold border-emerald-700' : 'text-gray-400 hover:text-emerald-300 border-[#333]'}`}>
+                MARKS
+              </button>
+            </Tooltip>
             {results?.probe_mark_debug_b64 && results?.gallery_mark_debug_b64 && (
               <Tooltip text={VIEW_TOOLTIPS.debug}>
                 <button onClick={() => setMode('debug')} className={`px-3 py-1 transition-colors border-l ${mode === 'debug' ? 'bg-[#D4AF37] text-black font-bold border-[#D4AF37]' : 'text-gray-400 hover:text-[#D4AF37] border-[#333]'}`}>
@@ -518,13 +525,13 @@ export default function SymmetryMerge({
           <div className="grid grid-cols-2 gap-[2px]">
             {/* Provenance Module */}
             <div className={`px-2 py-1 border flex justify-between items-center ${results.failed_provenance_veto ? 'bg-[#1a0005] border-[#5a0015] text-[#ff2040]' : 'bg-[#050505] border-[#222] text-gray-500'}`}>
-               <span className="tracking-widest text-[9px]">SYNTH_ANOMALY:</span>
+               <span className="tracking-widest text-[9px]">PROVENANCE CHECK:</span>
                <span className="font-bold text-gray-300">{results.synthetic_anomaly_score !== undefined ? results.synthetic_anomaly_score.toFixed(4) : 'N/A'}</span>
             </div>
 
             {/* Occlusion Module */}
             <div className="px-2 py-1 border bg-[#050505] border-[#222] text-gray-500 flex justify-between items-center">
-              <span className="tracking-widest text-[9px]">OCCLUSION (RATIOS):</span>
+              <span className="tracking-widest text-[9px]">GEOMETRY COVERAGE:</span>
               <span className="font-bold text-gray-300">
                 {results.occlusion_percentage !== undefined ? `${(results.occlusion_percentage).toFixed(1)}% (${results.effective_geometric_ratios_used ?? 0} ACTIVE)` : 'N/A'}
               </span>
@@ -632,6 +639,95 @@ export default function SymmetryMerge({
           {/* Labels */}
           <div className="absolute top-2 left-3 text-[9px] font-mono text-[#D4AF37]/60 tracking-widest pointer-events-none">PROBE</div>
           <div className="absolute top-2 right-3 text-[9px] font-mono text-[#D4AF37]/60 tracking-widest pointer-events-none">GALLERY</div>
+        </div>
+      ) : mode === 'marks' ? (
+        /* ── MARKS MODE: Professional Correspondence Evidence Card ── */
+        <div className="flex-1 min-h-0 flex flex-col overflow-y-auto bg-[#050505] border border-emerald-900/40 rounded p-3 gap-3">
+          {/* Status Banner */}
+          {(() => {
+            const status = results?.mark_match_status as MarkMatchStatus | null | undefined;
+            const probeCount = results?.marks_detected_probe ?? 0;
+            const galCount = results?.marks_detected_gallery ?? 0;
+            const matchCount = results?.marks_matched ?? 0;
+            const lrMarks = results?.lr_marks;
+
+            let statusLabel = 'UNKNOWN';
+            let statusColor = 'text-gray-400 border-gray-700 bg-[#0a0a0a]';
+            if (status === 'EXACT_SELF_MATCH') {
+              statusLabel = 'EXACT SELF-MATCH — Identical images';
+              statusColor = 'text-emerald-300 border-emerald-700 bg-emerald-950/40';
+            } else if (status === 'MATCHED') {
+              statusLabel = 'Shared facial marks detected';
+              statusColor = 'text-emerald-300 border-emerald-700 bg-emerald-950/40';
+            } else if (status === 'INSUFFICIENT_MARKS') {
+              statusLabel = 'Insufficient marks for correspondence';
+              statusColor = 'text-yellow-400 border-yellow-800 bg-yellow-950/30';
+            } else if (status === 'NO_MATCHES') {
+              statusLabel = 'No matching marks found';
+              statusColor = 'text-orange-400 border-orange-800 bg-orange-950/30';
+            } else if (status === 'DETECTOR_UNAVAILABLE') {
+              statusLabel = 'Mark detector unavailable';
+              statusColor = 'text-red-400 border-red-800 bg-red-950/30';
+            }
+
+            return (
+              <>
+                <div className={`px-3 py-2 border rounded font-mono text-xs tracking-wider ${statusColor}`}>
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold">{statusLabel}</span>
+                    <span className="text-[10px] opacity-70">{matchCount} of {Math.max(probeCount, galCount)} marks matched</span>
+                  </div>
+                  <div className="flex justify-between items-center mt-1 text-[10px] opacity-60">
+                    <span>PROBE: {probeCount} marks · GALLERY: {galCount} marks</span>
+                    {lrMarks != null && <span>LR_MARKS: {lrMarks.toFixed(4)}</span>}
+                  </div>
+                </div>
+
+                {/* Correspondence Evidence Cards */}
+                {(() => {
+                  const safeCorrespondences = Array.isArray(results?.correspondences) ? results.correspondences : [];
+                  if (safeCorrespondences.length === 0) {
+                    return (
+                      <div className="flex-1 flex items-center justify-center text-gray-500 font-mono text-xs tracking-widest">
+                        NO ACCEPTED CORRESPONDENCES
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {safeCorrespondences.map((c: Correspondence, i: number) => {
+                        const lr = typeof c.lr === 'number' ? c.lr : 0;
+                        const lrColor = lr >= 10 ? 'text-emerald-300' : lr >= 1 ? 'text-yellow-300' : 'text-red-300';
+                        return (
+                          <div key={`mark-card-${i}`} className="border border-emerald-900/40 bg-[#0a0f0a] rounded p-2 font-mono text-[10px]">
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="text-emerald-400 font-bold tracking-wider">
+                                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-800/60 text-emerald-200 text-[9px] mr-1.5">{i + 1}</span>
+                                MARK {i + 1}
+                              </span>
+                              <span className={`font-bold ${lrColor}`}>LR: {lr.toFixed(2)}</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-gray-400">
+                              <div>TYPE: <span className="text-gray-200">{c.mark_type ?? '—'}</span></div>
+                              <div>REGION: <span className="text-gray-200">{c.face_region ?? '—'}</span></div>
+                              <div>P [{c.probe_idx ?? '?'}]: <span className="text-gray-300">{c.probe_centroid ? `(${c.probe_centroid[0]?.toFixed(3)}, ${c.probe_centroid[1]?.toFixed(3)})` : '—'}</span></div>
+                              <div>G [{c.gallery_idx ?? '?'}]: <span className="text-gray-300">{c.gallery_centroid ? `(${c.gallery_centroid[0]?.toFixed(3)}, ${c.gallery_centroid[1]?.toFixed(3)})` : '—'}</span></div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+
+                {/* Version Footer */}
+                <div className="text-[8px] font-mono text-gray-600 tracking-wider flex justify-between">
+                  <span>DETECTOR: v{results?.mark_detector_version ?? '?'} · MATCHER: v{results?.mark_matcher_version ?? '?'}</span>
+                  <span>MARK LRs: [{(results?.mark_lrs ?? []).map((lr: number) => lr?.toFixed(2) ?? '?').join(', ')}]</span>
+                </div>
+              </>
+            );
+          })()}
         </div>
       ) : (
         /* ── DUAL-PANE: Left=Probe, Right=Gallery ── */
@@ -792,6 +888,7 @@ export default function SymmetryMerge({
           {mode === 'mesh' && <span className="text-[#D4AF37]">3DMM WIREFRAME HUD</span>}
           {mode === 'delta' && <span className="text-red-500">PAIRWISE EDGE DELTA — NOT CONFIRMED SCAR MATCHES</span>}
           {mode === 'overlap' && <span className="text-[#D4AF37]">DRAG TO COMPARE OVERLAP</span>}
+          {mode === 'marks' && <span className="text-emerald-400">CONFIRMED MARK CORRESPONDENCES — FORENSIC EVIDENCE ONLY</span>}
           {mode === 'debug' && <span className="text-yellow-500">GREEN = ACCEPTED MATCH · CYAN = UNMATCHED DETECTED MARK · GRAY = UNKNOWN</span>}
           {isXrayMode && <span className="ml-2 text-[#D4AF37] animate-pulse">· X-RAY ACTIVE</span>}
         </span>

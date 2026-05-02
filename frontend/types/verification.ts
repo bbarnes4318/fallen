@@ -38,15 +38,28 @@ export interface Correspondence {
   gallery_pt?: RawPoint;
   probe_pt?: RawPoint;
   lr: number;
+  mark_type?: string;
+  face_region?: string;
+  gallery_centroid?: [number, number];
+  probe_centroid?: [number, number];
+  match_quality?: number;
+  position_distance?: number;
+  area_ratio?: number;
+  type_match?: boolean;
+  region_match?: boolean;
 }
 
 export type MarkType =
+  | "dark_mole"
   | "dark_blob"
   | "dark_spot"
+  | "light_scar"
   | "light_blob"
   | "light_spot"
   | "linear_scar"
   | "texture_cluster"
+  | "blemish"
+  | "unknown_mark"
   | "unknown";
 
 export interface MarkDescriptor {
@@ -138,6 +151,14 @@ export interface ScoringTrace {
   ensemble_thresholds_key?: string;
 }
 
+export type MarkMatchStatus =
+  | "EXACT_SELF_MATCH"
+  | "MATCHED"
+  | "INSUFFICIENT_MARKS"
+  | "NO_MATCHES"
+  | "DETECTOR_UNAVAILABLE"
+  | "UNKNOWN";
+
 export interface VerificationResult {
   structural_score: number;
   soft_biometrics_score: number;
@@ -178,6 +199,13 @@ export interface VerificationResult {
   effective_geometric_ratios_used?: number;
   raw_probe_marks?: RawPoint[];
   raw_gallery_marks?: RawPoint[];
+  // Mark evidence metadata (v2.0)
+  mark_match_status?: MarkMatchStatus | null;
+  lr_marks?: number | null;
+  mark_lrs?: number[] | null;
+  mark_match_overlay_b64?: string | null;
+  mark_detector_version?: string | null;
+  mark_matcher_version?: string | null;
 }
 
 export interface ForensicPoint {

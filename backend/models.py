@@ -153,6 +153,16 @@ class VerificationEvent(Base):
     veto_reason = Column(String(64), nullable=True)              # ARCFACE_VETO | ARCFACE_VETO_MARK_OVERRIDE
     veto_override_applied = Column(Boolean, nullable=True, default=False)
 
+    # Mark Evidence Audit Trail (v2.0)
+    mark_match_status = Column(String(32), nullable=True)        # EXACT_SELF_MATCH | MATCHED | INSUFFICIENT_MARKS | NO_MATCHES
+    marks_detected_probe = Column(Integer, nullable=True)
+    marks_detected_gallery = Column(Integer, nullable=True)
+    mark_lrs_json = Column(Text, nullable=True)                  # JSON array of individual mark LRs
+    accepted_mark_correspondences_json = Column(Text, nullable=True)  # JSON array of correspondence objects
+    mark_detector_version = Column(String(64), nullable=True)
+    mark_matcher_version = Column(String(64), nullable=True)
+    mark_overlay_url = Column(Text, nullable=True)               # GCS URI (private), not raw blob
+
     # Phase 7: Synthetic Provenance Veto (Deepfake Detection)
     synthetic_anomaly_score = Column(Float, nullable=True)
     failed_provenance_veto = Column(Boolean, nullable=True, default=False)

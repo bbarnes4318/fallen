@@ -88,7 +88,11 @@ def on_startup():
         required_columns = [
             "lr_arcface", "lr_marks_product", "lr_total", "posterior_probability",
             "bayesian_fused_score_x100", "marks_matched", "calibration_status",
-            "veto_reason", "veto_override_applied"
+            "veto_reason", "veto_override_applied",
+            # Mark Evidence Audit Trail (v2.0)
+            "mark_match_status", "marks_detected_probe", "marks_detected_gallery",
+            "mark_lrs_json", "accepted_mark_correspondences_json",
+            "mark_detector_version", "mark_matcher_version", "mark_overlay_url"
         ]
         missing_cols = [c for c in required_columns if c not in columns]
         if missing_cols:
@@ -364,6 +368,8 @@ class VerificationRequest(BaseModel):
 # PIPELINE VERSION PINNING (Reproducibility)
 # ---------------------------------------------------------
 PIPELINE_VERSION = "Fallen Pipeline v4.0 (Ensemble + 3D Procrustes + Bayesian LR)"
+MARK_DETECTOR_VERSION = "2.0.0"
+MARK_MATCHER_VERSION = "2.0.0"
 
 def _get_dependency_versions() -> dict:
     """Snapshot the exact versions of critical biometric libraries."""
@@ -465,6 +471,13 @@ class VerificationResponse(BaseModel):
     correspondences: list = []
     raw_probe_marks: list = []
     raw_gallery_marks: list = []
+    # Mark evidence metadata (v2.0)
+    mark_match_status: Optional[str] = None  # EXACT_SELF_MATCH | MATCHED | INSUFFICIENT_MARKS | NO_MATCHES | DETECTOR_UNAVAILABLE | UNKNOWN
+    lr_marks: Optional[float] = None
+    mark_lrs: Optional[list] = None
+    mark_match_overlay_b64: Optional[str] = None
+    mark_detector_version: Optional[str] = None
+    mark_matcher_version: Optional[str] = None
     # Veto transparency
     bayesian_fused_score: Optional[float] = None
     veto_reason: Optional[str] = None
@@ -1579,10 +1592,17 @@ def _build_skin_mask(shape: tuple, landmarks, margin: int = 5) -> np.ndarray:
 def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list, np.ndarray]:
     """
     Detects discrete facial anomalies (scars, moles, birthmarks, texture clusters)
-    on the skin surface using multi-scale detection with strict face-region validation.
-    
+    on the skin surface using multi-pass detection with strict face-region validation.
+
+    Detection passes:
+        1. Dark moles/spots — adaptive threshold on grayscale
+        2. Light scars — inverse adaptive threshold for hypopigmented marks
+        3. Linear scars — Canny edge detection for elongated contours
+        4. Texture clusters — bilateral filter difference for subtle anomalies
+        5. Blemishes — low-contrast detections near noise floor
+
     Returns a tuple:
-        - list of valid mark descriptors
+        - list of valid mark descriptors (enriched with index, contrast, eccentricity, etc.)
         - list of rejected mark descriptors (with rejection_reason)
         - occlusion_mask (np.ndarray): Mask of occluded regions
     """
@@ -1609,8 +1629,10 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list
 
     # Minimum contour-mask overlap ratio to accept a mark
     _MIN_OVERLAP_RATIO = 0.70
+    # Minimum contrast (absolute intensity difference from local mean) to accept
+    _MIN_CONTRAST = 3.0
 
-    # 1. Dark spots (moles/freckles)
+    # ── Pass 1: Dark spots/moles ──
     dark_thresh = cv2.adaptiveThreshold(
         gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY_INV, blockSize=15, C=5
@@ -1620,7 +1642,7 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list
     dark_cleaned = cv2.morphologyEx(dark_masked, cv2.MORPH_OPEN, kernel)
     dark_contours, _ = cv2.findContours(dark_cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # 2. Light spots (hypopigmented scars)
+    # ── Pass 2: Light scars (hypopigmented marks) ──
     light_thresh = cv2.adaptiveThreshold(
         255 - gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY_INV, blockSize=15, C=5
@@ -1629,31 +1651,45 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list
     light_cleaned = cv2.morphologyEx(light_masked, cv2.MORPH_OPEN, kernel)
     light_contours, _ = cv2.findContours(light_cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # 3. Linear scars (Canny edges inside skin)
+    # ── Pass 3: Linear scars (elongated Canny edges inside skin) ──
     edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 30, 100)
     edges_masked = cv2.bitwise_and(edges, valid_mask)
     edges_closed = cv2.morphologyEx(edges_masked, cv2.MORPH_CLOSE, kernel)
     linear_contours, _ = cv2.findContours(edges_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+    # ── Pass 4: Texture clusters (bilateral filter difference) ──
+    smoothed = cv2.bilateralFilter(gray, 9, 75, 75)
+    texture_diff = cv2.absdiff(gray, smoothed)
+    _, texture_thresh = cv2.threshold(texture_diff, 12, 255, cv2.THRESH_BINARY)
+    texture_masked = cv2.bitwise_and(texture_thresh, valid_mask)
+    texture_cleaned = cv2.morphologyEx(texture_masked, cv2.MORPH_OPEN, kernel)
+    texture_contours, _ = cv2.findContours(texture_cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
     all_contours = [
-        (dark_contours, "dark_spot"),
-        (light_contours, "light_spot"),
-        (linear_contours, "linear_scar")
+        (dark_contours, "dark"),
+        (light_contours, "light"),
+        (linear_contours, "linear_scar"),
+        (texture_contours, "texture_cluster"),
     ]
 
     # Spatial grid to prevent overlapping duplicate detections
     used_mask = np.zeros((h, w), dtype=np.uint8)
+    mark_index = 0
 
-    for cnt_list, m_type in all_contours:
+    for cnt_list, base_type in all_contours:
         for cnt in cnt_list:
             area = cv2.contourArea(cnt)
-            # Filter by area: min 8px² (noise), max 500px² (shadows/large regions)
-            if area < 8 or area > 500:
-                continue
+
+            # ── Rejection: area bounds ──
+            if area < 8:
+                continue  # Too small — noise
+            if area > 500:
+                continue  # Too large — shadow/region artifact
 
             M = cv2.moments(cnt)
             if M["m00"] == 0:
-                continue
+                continue  # Invalid geometry — degenerate contour
+
             cx = M["m10"] / M["m00"]
             cy = M["m01"] / M["m00"]
 
@@ -1671,16 +1707,33 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list
             x, y, bw, bh = cv2.boundingRect(cnt)
             aspect_ratio = float(bw) / bh if bh > 0 else 0
 
-            # Orientation via fitEllipse (requires >= 5 points)
-            orientation = 0.0
+            # Orientation and eccentricity via fitEllipse (requires >= 5 points)
+            orientation = None
+            eccentricity = 0.0
             if len(cnt) >= 5:
-                ellipse = cv2.fitEllipse(cnt)
-                orientation = ellipse[2]
+                try:
+                    ellipse = cv2.fitEllipse(cnt)
+                    orientation = ellipse[2]
+                    (major, minor) = (max(ellipse[1]), min(ellipse[1]))
+                    eccentricity = np.sqrt(1.0 - (minor / major) ** 2) if major > 0 else 0.0
+                except cv2.error:
+                    orientation = None
+                    eccentricity = 0.0
 
             # Mean intensity of the mark region
             mark_mask = np.zeros((h, w), dtype=np.uint8)
             cv2.drawContours(mark_mask, [cnt], -1, 255, -1)
             mean_intensity = float(cv2.mean(gray, mask=mark_mask)[0])
+
+            # Local mean intensity (20px radius around centroid for contrast computation)
+            local_radius = 20
+            ly0 = max(0, iy - local_radius)
+            ly1 = min(h, iy + local_radius)
+            lx0 = max(0, ix - local_radius)
+            lx1 = min(w, ix + local_radius)
+            local_patch = gray[ly0:ly1, lx0:lx1]
+            local_mean = float(np.mean(local_patch)) if local_patch.size > 0 else mean_intensity
+            contrast = abs(mean_intensity - local_mean)
 
             # Nearest landmark
             min_dist = float('inf')
@@ -1693,7 +1746,7 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list
                     min_dist = dist
                     nearest_lm_idx = idx
 
-            # Face region heuristic based on nearest lm
+            # Face region heuristic based on nearest landmark
             face_region = "unknown"
             if nearest_lm_idx in _LEFT_EYE_IDX or nearest_lm_idx in _LEFT_BROW_IDX:
                 face_region = "left_periocular"
@@ -1713,18 +1766,36 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list
                 else:
                     face_region = "right_cheek"
 
+            # ── Mark type classification ──
+            if base_type == "dark":
+                # High circularity → mole, otherwise → dark spot
+                mark_type = "dark_mole" if circularity >= 0.6 else "dark_spot"
+            elif base_type == "light":
+                mark_type = "light_scar"
+            elif base_type == "linear_scar":
+                mark_type = "linear_scar"
+            elif base_type == "texture_cluster":
+                mark_type = "texture_cluster"
+            else:
+                mark_type = "unknown_mark"
+
             mark_descriptor = {
+                "index": mark_index,
                 "centroid": (cx / w, cy / h),  # normalized [0,1]
+                "canonical_position": (cx / w, cy / h),
                 "area": area,
+                "contour_area": area,
+                "bbox": (x, y, bw, bh),
                 "intensity": mean_intensity,
+                "contrast": contrast,
                 "circularity": circularity,
+                "eccentricity": eccentricity,
                 "aspect_ratio": aspect_ratio,
                 "orientation": orientation,
-                "mark_type": m_type,
+                "mark_type": mark_type,
                 "nearest_landmark_index": nearest_lm_idx,
                 "face_region": face_region,
-                "bbox": (x, y, bw, bh),
-                "contour": cnt,  # keep for visualization
+                "contour": cnt,  # keep for visualization (stripped before serialization)
             }
 
             # ── Face-region validation ──
@@ -1749,6 +1820,15 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list
                     if overlap_ratio < _MIN_OVERLAP_RATIO:
                         rejection_reason = f"insufficient_face_overlap ({overlap_ratio:.2f})"
 
+            # Check 4: Low contrast rejection (noise floor)
+            if rejection_reason is None:
+                if contrast < _MIN_CONTRAST:
+                    # Reclassify as blemish if just barely below threshold
+                    if contrast >= 1.5:
+                        mark_descriptor["mark_type"] = "blemish"
+                    else:
+                        rejection_reason = "low_contrast"
+
             if rejection_reason is not None:
                 mark_descriptor["rejection_reason"] = rejection_reason
                 # Remove contour before adding to rejected list (not serializable)
@@ -1758,16 +1838,29 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list
 
             # Mark it used to prevent overlaps
             cv2.drawContours(used_mask, [cnt], -1, 255, -1)
+            mark_index += 1
             marks.append(mark_descriptor)
 
     return marks, rejected_marks, occ_mask
 
 
+
+
 def match_facial_marks(marks_gallery: list, marks_probe: list, dist_threshold: float = 0.20):
     """
     Cost-matrix based Hungarian assignment for marks.
+
+    Assignment-level penalties (do NOT affect calibrated Bayesian LR):
+        - Spatial distance (normalized)
+        - Area ratio
+        - Intensity difference
+        - Mark type mismatch (+0.5)
+        - Face region mismatch (+0.3)
+        - Circularity difference (+0.3 * abs_diff)
+        - Orientation difference for linear scars (+0.2 * angular_delta/90)
+
     Returns:
-        matches: list of (gal_idx, pro_idx)
+        matches: list of enriched match dicts
         unmatched_gallery: list of gal_idx
         unmatched_probe: list of pro_idx
         rejected_candidates: list of dicts with reasons
@@ -1782,6 +1875,7 @@ def match_facial_marks(marks_gallery: list, marks_probe: list, dist_threshold: f
         
     cost_matrix = np.full((n_gal, n_pro), 1e6)
     reasons = {}
+    match_metadata = {}
     
     for i, mg in enumerate(marks_gallery):
         for j, mp in enumerate(marks_probe):
@@ -1800,12 +1894,40 @@ def match_facial_marks(marks_gallery: list, marks_probe: list, dist_threshold: f
                 continue
                 
             intensity_diff = abs(mg["intensity"] - mp["intensity"])
+            type_match = mg.get("mark_type") == mp.get("mark_type")
+            region_match = mg.get("face_region") == mp.get("face_region")
             
             cost = (spatial_dist * 5) + (1.0 - area_ratio) + (intensity_diff / 255.0)
-            if mg.get("mark_type") != mp.get("mark_type"):
-                cost += 0.5 # Penalty for type mismatch
-                
+
+            # Type mismatch penalty
+            if not type_match:
+                cost += 0.5
+
+            # Face region mismatch penalty (assignment-level only)
+            if not region_match:
+                cost += 0.3
+
+            # Circularity difference penalty (assignment-level only)
+            circ_diff = abs(mg.get("circularity", 0) - mp.get("circularity", 0))
+            cost += circ_diff * 0.3
+
+            # Orientation difference penalty for linear scars (assignment-level only)
+            if mg.get("mark_type") == "linear_scar" and mp.get("mark_type") == "linear_scar":
+                orient_g = mg.get("orientation")
+                orient_p = mp.get("orientation")
+                if orient_g is not None and orient_p is not None:
+                    angular_delta = abs(orient_g - orient_p)
+                    angular_delta = min(angular_delta, 180.0 - angular_delta)  # Handle wrap-around
+                    cost += (angular_delta / 90.0) * 0.2
+
             cost_matrix[i, j] = cost
+            match_metadata[(i, j)] = {
+                "cost": cost,
+                "position_distance": spatial_dist,
+                "area_ratio": area_ratio,
+                "type_match": type_match,
+                "region_match": region_match,
+            }
             
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
     
@@ -1818,9 +1940,24 @@ def match_facial_marks(marks_gallery: list, marks_probe: list, dist_threshold: f
     for r, c in zip(row_ind, col_ind):
         cost = cost_matrix[r, c]
         if cost < MAX_COST:
-            matches.append((int(r), int(c)))
-            unmatched_gallery.remove(int(r))
-            unmatched_probe.remove(int(c))
+            mg = marks_gallery[r]
+            mp_mark = marks_probe[c]
+            meta = match_metadata.get((r, c), {})
+            matches.append({
+                "gallery_idx": int(r),
+                "probe_idx": int(c),
+                "cost": meta.get("cost", cost),
+                "position_distance": meta.get("position_distance", 0),
+                "area_ratio": meta.get("area_ratio", 0),
+                "type_match": meta.get("type_match", False),
+                "region_match": meta.get("region_match", False),
+                "mark_type": mg.get("mark_type", "unknown"),
+                "face_region": mg.get("face_region", "unknown"),
+                "gallery_centroid": list(mg["centroid"]),
+                "probe_centroid": list(mp_mark["centroid"]),
+            })
+            unmatched_gallery.discard(int(r))
+            unmatched_probe.discard(int(c))
         else:
             if cost < 1e5:
                 rejected_candidates.append({"gallery_idx": int(r), "probe_idx": int(c), "reason": f"Cost too high ({cost:.2f})"})
@@ -1828,6 +1965,7 @@ def match_facial_marks(marks_gallery: list, marks_probe: list, dist_threshold: f
                 rejected_candidates.append({"gallery_idx": int(r), "probe_idx": int(c), "reason": reasons[(int(r), int(c))]})
                 
     return matches, list(unmatched_gallery), list(unmatched_probe), rejected_candidates
+
 
 
 def compute_mark_correspondence(marks_gallery: list, marks_probe: list, matched_pairs: list = None) -> dict:
@@ -1883,7 +2021,16 @@ def compute_mark_correspondence(marks_gallery: list, marks_probe: list, matched_
     matches = []
     mark_lrs = []
     
-    for r, c in matched_pairs:
+    for pair in matched_pairs:
+        # Support both dict {gallery_idx, probe_idx, ...} and tuple (r, c) shapes
+        if isinstance(pair, dict):
+            r = pair["gallery_idx"]
+            c = pair["probe_idx"]
+        else:
+            try:
+                r, c = pair[0], pair[1]
+            except (IndexError, TypeError):
+                continue
         mg = marks_gallery[r]
         mp_mark = marks_probe[c]
         
@@ -2401,9 +2548,46 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             clean_m = {k: v for k, v in m.items() if k != "contour"}
             valid_probe_marks.append(clean_m)
 
-    assigned_pairs, unmatched_gal, unmatched_pro, rejected_cands = match_facial_marks(valid_gallery_marks, valid_probe_marks)
-    mark_result = compute_mark_correspondence(valid_gallery_marks, valid_probe_marks, matched_pairs=assigned_pairs)
-    tier4_score = mark_result["score"]  # None if insufficient marks
+    # ── Exact Self-Match Detection ──
+    exact_image_match = (probe_file_hash == gallery_file_hash)
+
+    if exact_image_match:
+        # Identical images — all marks self-correspond
+        mark_match_status = "EXACT_SELF_MATCH"
+        tier4_score = 100.0
+        n_self = min(len(valid_probe_marks), len(valid_gallery_marks))
+        assigned_pairs = []
+        for si in range(n_self):
+            assigned_pairs.append({
+                "gallery_idx": si, "probe_idx": si,
+                "cost": 0.0, "position_distance": 0.0, "area_ratio": 1.0,
+                "type_match": True, "region_match": True,
+                "mark_type": valid_gallery_marks[si].get("mark_type", "unknown"),
+                "face_region": valid_gallery_marks[si].get("face_region", "unknown"),
+                "gallery_centroid": list(valid_gallery_marks[si]["centroid"]),
+                "probe_centroid": list(valid_probe_marks[si]["centroid"]),
+            })
+        unmatched_gal = list(range(n_self, len(valid_gallery_marks)))
+        unmatched_pro = list(range(n_self, len(valid_probe_marks)))
+        rejected_cands = []
+        mark_result = {
+            "score": 100.0, "matched": n_self,
+            "total_gallery": len(valid_gallery_marks), "total_probe": len(valid_probe_marks),
+            "matches": [(si, si, 1.0) for si in range(n_self)],
+            "lr_marks": 1.0, "mark_lrs": [],
+        }
+    else:
+        assigned_pairs, unmatched_gal, unmatched_pro, rejected_cands = match_facial_marks(valid_gallery_marks, valid_probe_marks)
+        mark_result = compute_mark_correspondence(valid_gallery_marks, valid_probe_marks, matched_pairs=assigned_pairs)
+        tier4_score = mark_result["score"]  # None if insufficient marks
+
+        # Determine mark_match_status
+        if len(valid_probe_marks) < 2 and len(valid_gallery_marks) < 2:
+            mark_match_status = "INSUFFICIENT_MARKS"
+        elif mark_result.get("matched", 0) > 0:
+            mark_match_status = "MATCHED"
+        else:
+            mark_match_status = "NO_MATCHES"
 
     # ── BAYESIAN EVIDENCE FUSION (Scientific v4.0) ──
     # Convert Fused Ensemble score to Likelihood Ratio
@@ -2533,31 +2717,49 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         bayesian_fused_score=finite_or_none(bayesian_fused_score),
     )
 
-    # Build correspondences list for the UI
+    # Build correspondences list for the UI (enriched with forensic metadata)
     correspondences = []
+    # Build LR lookup from mark_result matches
+    lr_lookup = {}
     for match_entry in mark_result.get("matches", []):
-        # Support both tuple (g_idx, p_idx, lr) and dict {gallery_idx, probe_idx, lr} shapes
         if isinstance(match_entry, dict):
-            g_idx = match_entry.get("gallery_idx")
-            p_idx = match_entry.get("probe_idx")
-            individual_lr = match_entry.get("lr", 0)
+            lr_lookup[(match_entry.get("gallery_idx"), match_entry.get("probe_idx"))] = match_entry.get("lr", 0)
+        elif isinstance(match_entry, (tuple, list)) and len(match_entry) >= 3:
+            lr_lookup[(match_entry[0], match_entry[1])] = match_entry[2]
+
+    for pair in assigned_pairs:
+        if isinstance(pair, dict):
+            g_idx = pair.get("gallery_idx")
+            p_idx = pair.get("probe_idx")
+        elif isinstance(pair, (tuple, list)) and len(pair) >= 2:
+            g_idx, p_idx = pair[0], pair[1]
         else:
-            try:
-                g_idx, p_idx, individual_lr = match_entry
-            except (ValueError, TypeError):
-                continue
-        # Validate indices are integers and in bounds
+            continue
+        # Validate indices
         if not isinstance(g_idx, int) or not isinstance(p_idx, int):
             continue
         if g_idx < 0 or g_idx >= len(valid_gallery_marks) or p_idx < 0 or p_idx >= len(valid_probe_marks):
             continue
-        correspondences.append({
+        individual_lr = lr_lookup.get((g_idx, p_idx), 0)
+        corr_entry = {
             "gallery_idx": g_idx,
             "probe_idx": p_idx,
             "gallery_pt": valid_gallery_marks[g_idx]["centroid"],
             "probe_pt": valid_probe_marks[p_idx]["centroid"],
-            "lr": individual_lr
-        })
+            "lr": individual_lr,
+            "mark_type": valid_gallery_marks[g_idx].get("mark_type", "unknown"),
+            "face_region": valid_gallery_marks[g_idx].get("face_region", "unknown"),
+            "gallery_centroid": list(valid_gallery_marks[g_idx]["centroid"]),
+            "probe_centroid": list(valid_probe_marks[p_idx]["centroid"]),
+        }
+        # Add match quality metrics from assigned_pairs if available
+        if isinstance(pair, dict):
+            corr_entry["match_quality"] = pair.get("cost", 0)
+            corr_entry["position_distance"] = pair.get("position_distance", 0)
+            corr_entry["area_ratio"] = pair.get("area_ratio", 0)
+            corr_entry["type_match"] = pair.get("type_match", False)
+            corr_entry["region_match"] = pair.get("region_match", False)
+        correspondences.append(corr_entry)
 
     probe_mark_debug_b64 = None
     gallery_mark_debug_b64 = None
@@ -2567,8 +2769,8 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         gal_debug_img = gallery_aligned.copy()
         pro_debug_img = probe_aligned.copy()
         
-        gal_matched_idx = {m[0] for m in mark_result.get("matches", [])}
-        pro_matched_idx = {m[1] for m in mark_result.get("matches", [])}
+        gal_matched_idx = {(m["gallery_idx"] if isinstance(m, dict) else m[0]) for m in mark_result.get("matches", [])}
+        pro_matched_idx = {(m["probe_idx"] if isinstance(m, dict) else m[1]) for m in mark_result.get("matches", [])}
         
         for idx, m in enumerate(valid_gallery_marks):
             cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
@@ -2679,6 +2881,13 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         correspondences=correspondences,
         raw_probe_marks=valid_probe_marks,
         raw_gallery_marks=valid_gallery_marks,
+        # Mark evidence metadata (v2.0)
+        mark_match_status=mark_match_status,
+        lr_marks=finite_or_none(lr_marks),
+        mark_lrs=mark_result.get("mark_lrs", []),
+        mark_detector_version=MARK_DETECTOR_VERSION,
+        mark_matcher_version=MARK_MATCHER_VERSION,
+        # Veto transparency
         bayesian_fused_score=round(bayesian_fused_score, 2),
         veto_reason=veto_reason,
         veto_override_applied=veto_override_applied,
@@ -2733,6 +2942,14 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             calibration_status=_calibration_status,
             veto_reason=veto_reason,
             veto_override_applied=veto_override_applied,
+            # Mark Evidence Audit Trail (v2.0)
+            mark_match_status=mark_match_status,
+            marks_detected_probe=mark_result.get("total_probe", 0),
+            marks_detected_gallery=mark_result.get("total_gallery", 0),
+            mark_lrs_json=json.dumps([finite_or_none(lr) for lr in mark_result.get("mark_lrs", [])]),
+            accepted_mark_correspondences_json=json.dumps(correspondences),
+            mark_detector_version=MARK_DETECTOR_VERSION,
+            mark_matcher_version=MARK_MATCHER_VERSION,
         )
         ledger_session.add(event)
         ledger_session.commit()
@@ -2979,6 +3196,42 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     mark_result = compute_mark_correspondence(valid_gallery_marks, valid_probe_marks, matched_pairs=assigned_pairs)
     tier4_score = mark_result["score"]  # None if insufficient marks
 
+    # ── Exact Self-Match Detection ──
+    exact_image_match = (probe_file_hash == gallery_file_hash) if (probe_file_hash and gallery_file_hash) else False
+
+    if exact_image_match:
+        mark_match_status = "EXACT_SELF_MATCH"
+        tier4_score = 100.0
+        n_self = min(len(valid_probe_marks), len(valid_gallery_marks))
+        assigned_pairs = []
+        for si in range(n_self):
+            assigned_pairs.append({
+                "gallery_idx": si, "probe_idx": si,
+                "cost": 0.0, "position_distance": 0.0, "area_ratio": 1.0,
+                "type_match": True, "region_match": True,
+                "mark_type": valid_gallery_marks[si].get("mark_type", "unknown"),
+                "face_region": valid_gallery_marks[si].get("face_region", "unknown"),
+                "gallery_centroid": list(valid_gallery_marks[si]["centroid"]),
+                "probe_centroid": list(valid_probe_marks[si]["centroid"]),
+            })
+        unmatched_gal = list(range(n_self, len(valid_gallery_marks)))
+        unmatched_pro = list(range(n_self, len(valid_probe_marks)))
+        rejected_cands = []
+        mark_result = {
+            "score": 100.0, "matched": n_self,
+            "total_gallery": len(valid_gallery_marks), "total_probe": len(valid_probe_marks),
+            "matches": [(si, si, 1.0) for si in range(n_self)],
+            "lr_marks": 1.0, "mark_lrs": [],
+        }
+    else:
+        # Determine mark_match_status
+        if len(valid_probe_marks) < 2 and len(valid_gallery_marks) < 2:
+            mark_match_status = "INSUFFICIENT_MARKS"
+        elif mark_result.get("matched", 0) > 0:
+            mark_match_status = "MATCHED"
+        else:
+            mark_match_status = "NO_MATCHES"
+
     # ── BAYESIAN EVIDENCE FUSION (Scientific v4.0) ──
     lr_ensemble = score_to_lr_ensemble(structural_sim, temporal_delta=temporal_delta)
     lr_marks = mark_result.get("lr_marks", 1.0)
@@ -3104,31 +3357,46 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         bayesian_fused_score=finite_or_none(bayesian_fused_score),
     )
 
-    # Build correspondences list for the UI
+    # Build correspondences list for the UI (enriched with forensic metadata)
     correspondences = []
+    lr_lookup = {}
     for match_entry in mark_result.get("matches", []):
-        # Support both tuple (g_idx, p_idx, lr) and dict {gallery_idx, probe_idx, lr} shapes
         if isinstance(match_entry, dict):
-            g_idx = match_entry.get("gallery_idx")
-            p_idx = match_entry.get("probe_idx")
-            individual_lr = match_entry.get("lr", 0)
+            lr_lookup[(match_entry.get("gallery_idx"), match_entry.get("probe_idx"))] = match_entry.get("lr", 0)
+        elif isinstance(match_entry, (tuple, list)) and len(match_entry) >= 3:
+            lr_lookup[(match_entry[0], match_entry[1])] = match_entry[2]
+
+    for pair in assigned_pairs:
+        if isinstance(pair, dict):
+            g_idx = pair.get("gallery_idx")
+            p_idx = pair.get("probe_idx")
+        elif isinstance(pair, (tuple, list)) and len(pair) >= 2:
+            g_idx, p_idx = pair[0], pair[1]
         else:
-            try:
-                g_idx, p_idx, individual_lr = match_entry
-            except (ValueError, TypeError):
-                continue
-        # Validate indices are integers and in bounds
+            continue
         if not isinstance(g_idx, int) or not isinstance(p_idx, int):
             continue
         if g_idx < 0 or g_idx >= len(valid_gallery_marks) or p_idx < 0 or p_idx >= len(valid_probe_marks):
             continue
-        correspondences.append({
+        individual_lr = lr_lookup.get((g_idx, p_idx), 0)
+        corr_entry = {
             "gallery_idx": g_idx,
             "probe_idx": p_idx,
             "gallery_pt": valid_gallery_marks[g_idx]["centroid"],
             "probe_pt": valid_probe_marks[p_idx]["centroid"],
-            "lr": individual_lr
-        })
+            "lr": individual_lr,
+            "mark_type": valid_gallery_marks[g_idx].get("mark_type", "unknown"),
+            "face_region": valid_gallery_marks[g_idx].get("face_region", "unknown"),
+            "gallery_centroid": list(valid_gallery_marks[g_idx]["centroid"]),
+            "probe_centroid": list(valid_probe_marks[p_idx]["centroid"]),
+        }
+        if isinstance(pair, dict):
+            corr_entry["match_quality"] = pair.get("cost", 0)
+            corr_entry["position_distance"] = pair.get("position_distance", 0)
+            corr_entry["area_ratio"] = pair.get("area_ratio", 0)
+            corr_entry["type_match"] = pair.get("type_match", False)
+            corr_entry["region_match"] = pair.get("region_match", False)
+        correspondences.append(corr_entry)
 
     probe_mark_debug_b64 = None
     gallery_mark_debug_b64 = None
@@ -3138,8 +3406,8 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         gal_debug_img = gallery_aligned.copy()
         pro_debug_img = probe_aligned.copy()
         
-        gal_matched_idx = {m[0] for m in mark_result.get("matches", [])}
-        pro_matched_idx = {m[1] for m in mark_result.get("matches", [])}
+        gal_matched_idx = {(m["gallery_idx"] if isinstance(m, dict) else m[0]) for m in mark_result.get("matches", [])}
+        pro_matched_idx = {(m["probe_idx"] if isinstance(m, dict) else m[1]) for m in mark_result.get("matches", [])}
         
         for idx, m in enumerate(valid_gallery_marks):
             cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
@@ -3250,6 +3518,13 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         correspondences=correspondences,
         raw_probe_marks=valid_probe_marks,
         raw_gallery_marks=valid_gallery_marks,
+        # Mark evidence metadata (v2.0)
+        mark_match_status=mark_match_status,
+        lr_marks=finite_or_none(lr_marks),
+        mark_lrs=mark_result.get("mark_lrs", []),
+        mark_detector_version=MARK_DETECTOR_VERSION,
+        mark_matcher_version=MARK_MATCHER_VERSION,
+        # Veto transparency
         bayesian_fused_score=round(bayesian_fused_score, 2),
         veto_reason=veto_reason,
         veto_override_applied=veto_override_applied,
@@ -3304,6 +3579,14 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             calibration_status=_calibration_status,
             veto_reason=veto_reason,
             veto_override_applied=veto_override_applied,
+            # Mark Evidence Audit Trail (v2.0)
+            mark_match_status=mark_match_status,
+            marks_detected_probe=mark_result.get("total_probe", 0),
+            marks_detected_gallery=mark_result.get("total_gallery", 0),
+            mark_lrs_json=json.dumps([finite_or_none(lr) for lr in mark_result.get("mark_lrs", [])]),
+            accepted_mark_correspondences_json=json.dumps(correspondences),
+            mark_detector_version=MARK_DETECTOR_VERSION,
+            mark_matcher_version=MARK_MATCHER_VERSION,
         )
         ledger_session.add(event)
         ledger_session.commit()

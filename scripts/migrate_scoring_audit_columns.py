@@ -31,6 +31,7 @@ def run_migration():
             logger.info("Successfully connected to database.")
             
             statements = [
+                # Bayesian Scoring Audit (v1.0)
                 "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS lr_arcface DOUBLE PRECISION;",
                 "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS lr_marks_product DOUBLE PRECISION;",
                 "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS lr_total DOUBLE PRECISION;",
@@ -39,7 +40,16 @@ def run_migration():
                 "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS marks_matched INTEGER;",
                 "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS calibration_status VARCHAR(32);",
                 "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS veto_reason VARCHAR(64);",
-                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS veto_override_applied BOOLEAN DEFAULT FALSE;"
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS veto_override_applied BOOLEAN DEFAULT FALSE;",
+                # Mark Evidence Audit Trail (v2.0)
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS mark_match_status VARCHAR(32);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS marks_detected_probe INTEGER;",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS marks_detected_gallery INTEGER;",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS mark_lrs_json TEXT;",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS accepted_mark_correspondences_json TEXT;",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS mark_detector_version VARCHAR(64);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS mark_matcher_version VARCHAR(64);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS mark_overlay_url TEXT;",
             ]
             
             for stmt in statements:
@@ -47,7 +57,27 @@ def run_migration():
                 conn.execute(text(stmt))
                 
             conn.commit()
-            logger.info("Migration completed successfully.")
+            logger.info("Migration statements executed successfully.")
+            
+            # ── Post-migration verification ──
+            required_columns = [
+                "lr_arcface", "lr_marks_product", "lr_total", "posterior_probability",
+                "bayesian_fused_score_x100", "marks_matched", "calibration_status",
+                "veto_reason", "veto_override_applied",
+                "mark_match_status", "marks_detected_probe", "marks_detected_gallery",
+                "mark_lrs_json", "accepted_mark_correspondences_json",
+                "mark_detector_version", "mark_matcher_version", "mark_overlay_url",
+            ]
+            result = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'verification_events'"
+            ))
+            existing_columns = {row[0] for row in result}
+            missing = [c for c in required_columns if c not in existing_columns]
+            if missing:
+                logger.error(f"CRITICAL: Post-migration verification FAILED. Missing columns: {missing}")
+                sys.exit(1)
+            logger.info(f"Post-migration verification passed. All {len(required_columns)} required columns present.")
             
     except Exception as e:
         logger.error(f"CRITICAL: Migration failed with error: {e}")
