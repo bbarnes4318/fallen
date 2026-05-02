@@ -1220,19 +1220,39 @@ export default function Home() {
                 <div className="p-2.5 border-b border-[#1a1a1a]">
                   <div className="flex items-baseline justify-between">
                     <h3 className="text-gray-300 text-[9px] tracking-wider font-bold">FACE PROPORTIONS</h3>
-                    <span className={`text-lg font-bold tabular-nums ${results.soft_biometrics_score > 80 ? 'text-emerald-400' : results.soft_biometrics_score > 60 ? 'text-amber-400' : 'text-red-400'}`}>{results.soft_biometrics_score}%</span>
+                    <span className={`text-lg font-bold tabular-nums ${
+                      results.geometry_status && results.geometry_status !== 'OK'
+                        ? 'text-gray-500'
+                        : results.soft_biometrics_score > 80 ? 'text-emerald-400' : results.soft_biometrics_score > 60 ? 'text-amber-400' : 'text-red-400'
+                    }`}>
+                      {results.geometry_status && results.geometry_status !== 'OK' ? 'N/A' : `${results.soft_biometrics_score}%`}
+                    </span>
                   </div>
                   <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full ${results.soft_biometrics_score > 80 ? 'bg-emerald-500/70' : results.soft_biometrics_score > 60 ? 'bg-amber-500/70' : 'bg-red-500/70'}`}
-                      style={{ width: `${Math.min(100, results.soft_biometrics_score)}%` }}
+                      className={`h-full rounded-full ${
+                        results.geometry_status && results.geometry_status !== 'OK'
+                          ? 'bg-gray-700/50'
+                          : results.soft_biometrics_score > 80 ? 'bg-emerald-500/70' : results.soft_biometrics_score > 60 ? 'bg-amber-500/70' : 'bg-red-500/70'
+                      }`}
+                      style={{ width: `${results.geometry_status && results.geometry_status !== 'OK' ? 0 : Math.min(100, results.soft_biometrics_score)}%` }}
                     />
                   </div>
                   <p className="text-[9px] text-gray-500 mt-1.5 leading-relaxed">Are the facial measurements similar? Compares the distances between eyes, nose width, jawline angle, and brow spacing — like a ruler measuring each face.</p>
                   <div className="mt-1.5 flex items-center gap-1.5">
-                    <div className={`w-1 h-1 rounded-full ${results.soft_biometrics_score > 80 ? 'bg-emerald-500' : results.soft_biometrics_score > 60 ? 'bg-amber-500' : results.soft_biometrics_score > 0 ? 'bg-red-500' : 'bg-yellow-500'}`}></div>
-                    <span className={`text-[8px] italic ${results.soft_biometrics_score > 80 ? 'text-emerald-500/70' : results.soft_biometrics_score > 60 ? 'text-amber-500/70' : results.soft_biometrics_score > 0 ? 'text-red-500/70' : 'text-yellow-500/70'}`}>
-                      {results.soft_biometrics_score > 80 ? 'Proportions closely match' : results.soft_biometrics_score > 60 ? 'Proportions partially align' : results.soft_biometrics_score > 0 ? 'Proportions do not match' : 'Could not measure — face angle or quality too low'}
+                    <div className={`w-1 h-1 rounded-full ${
+                      results.geometry_status && results.geometry_status !== 'OK'
+                        ? 'bg-gray-500'
+                        : results.soft_biometrics_score > 80 ? 'bg-emerald-500' : results.soft_biometrics_score > 60 ? 'bg-amber-500' : results.soft_biometrics_score > 0 ? 'bg-red-500' : 'bg-yellow-500'
+                    }`}></div>
+                    <span className={`text-[8px] italic ${
+                      results.geometry_status && results.geometry_status !== 'OK'
+                        ? 'text-gray-500/70'
+                        : results.soft_biometrics_score > 80 ? 'text-emerald-500/70' : results.soft_biometrics_score > 60 ? 'text-amber-500/70' : results.soft_biometrics_score > 0 ? 'text-red-500/70' : 'text-yellow-500/70'
+                    }`}>
+                      {results.geometry_status && results.geometry_status !== 'OK'
+                        ? (results.geometry_status === 'INVALID_IOD' ? 'Could not measure — eyes not clearly visible' : 'Could not measure — face angle or quality too low')
+                        : results.soft_biometrics_score > 80 ? 'Proportions closely match' : results.soft_biometrics_score > 60 ? 'Proportions partially align' : results.soft_biometrics_score > 0 ? 'Proportions do not match' : 'Could not measure — face angle or quality too low'}
                     </span>
                   </div>
                   <div className="text-[7px] text-gray-700 mt-1 tracking-wide">25% of overall score · 12-point landmark geometry</div>

@@ -41,6 +41,8 @@ export interface VerificationResult {
   structural_score: number;
   soft_biometrics_score: number;
   micro_topology_score: number;
+  geometry_status?: string | null;
+  geometric_ratio_distance?: number | null;
   mark_correspondence_score?: number | null;
   marks_detected_gallery?: number;
   marks_detected_probe?: number;

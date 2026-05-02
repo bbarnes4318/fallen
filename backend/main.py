@@ -426,6 +426,9 @@ class VerificationResponse(BaseModel):
     scar_delta_b64: str
     gallery_wireframe_b64: str
     probe_wireframe_b64: str
+    # Tier 2: Geometry telemetry
+    geometry_status: Optional[str] = None  # OK, NO_VALID_RATIOS, INVALID_IOD
+    geometric_ratio_distance: Optional[float] = None
     # Tier 4: Mark Correspondence
     mark_correspondence_score: Optional[float] = None
     marks_detected_gallery: int = 0
@@ -1164,17 +1167,38 @@ def procrustes_align_3d(landmarks_3d: np.ndarray) -> tuple[np.ndarray, dict]:
     
     return aligned_landmarks, angles
 
+def is_valid_face_landmark(lm) -> bool:
+    """Check if a MediaPipe FaceMesh landmark has valid, finite coordinates.
+    FaceMesh does not provide reliable visibility values, so we validate
+    coordinate finiteness and range instead of using visibility thresholds."""
+    if lm is None:
+        return False
+    try:
+        x, y, z = float(lm.x), float(lm.y), float(getattr(lm, "z", 0.0))
+    except (TypeError, ValueError):
+        return False
+    return (
+        math.isfinite(x) and math.isfinite(y) and math.isfinite(z)
+        and -0.25 <= x <= 1.25
+        and -0.25 <= y <= 1.25
+    )
+
+# Named constant for Tier 2 geometry score conversion.
+# L2 mapping: 0 distance -> 100%, >= threshold -> 0%.
+# Recalibrated from 0.40 due to added 3D variance post-Procrustes.
+GEOMETRY_DISTANCE_ZERO_THRESHOLD = 0.50
+
 def extract_geometric_ratios_3d(landmarks) -> tuple[np.ndarray, dict, dict]:
     """
     Computes scale-invariant, true 3D Euclidean facial geometric ratios for Tier 2.
     Uses Procrustes alignment to mathematically un-rotate the face to a perfect frontal view.
-    Also computes landmark visibility telemetry for Tier 2 dynamic dropping.
+    Also computes landmark validity telemetry for Tier 2 dynamic dropping.
     """
-    VISIBILITY_THRESHOLD = 0.85
 
-    # Compute Visibility Telemetry
-    masked_count = sum(1 for l in landmarks if getattr(l, "visibility", 1.0) < VISIBILITY_THRESHOLD)
-    occlusion_percentage = (masked_count / len(landmarks)) * 100.0 if len(landmarks) > 0 else 0.0
+    # Compute Validity Telemetry using coordinate-based check
+    # (MediaPipe FaceMesh visibility is unreliable)
+    invalid_count = sum(1 for l in landmarks if not is_valid_face_landmark(l))
+    occlusion_percentage = (invalid_count / len(landmarks)) * 100.0 if len(landmarks) > 0 else 0.0
 
     STRUCTURAL_GROUPS = {
         "Left Orbital": [33, 133, 160, 159, 158, 144, 145, 153],
@@ -1190,8 +1214,8 @@ def extract_geometric_ratios_3d(landmarks) -> tuple[np.ndarray, dict, dict]:
 
     occluded_regions = []
     for region, indices in STRUCTURAL_GROUPS.items():
-        region_masked = sum(1 for idx in indices if getattr(landmarks[idx], "visibility", 1.0) < VISIBILITY_THRESHOLD)
-        if region_masked > len(indices) * 0.5:  # If >50% masked, call it occluded
+        region_invalid = sum(1 for idx in indices if not is_valid_face_landmark(landmarks[idx]))
+        if region_invalid > len(indices) * 0.5:  # If >50% invalid, call it occluded
             occluded_regions.append(region)
 
     ratio_landmarks_indices = [
@@ -1212,12 +1236,12 @@ def extract_geometric_ratios_3d(landmarks) -> tuple[np.ndarray, dict, dict]:
     iod_points = [33, 263]
     ratio_visibility = []
     for idx_group in ratio_landmarks_indices:
-        is_visible = all(getattr(landmarks[idx], "visibility", 1.0) >= VISIBILITY_THRESHOLD for idx in idx_group)
-        is_iod_visible = all(getattr(landmarks[idx], "visibility", 1.0) >= VISIBILITY_THRESHOLD for idx in iod_points)
+        is_valid = all(is_valid_face_landmark(landmarks[idx]) for idx in idx_group)
+        is_iod_valid = all(is_valid_face_landmark(landmarks[idx]) for idx in iod_points)
         if len(idx_group) == 3: # Jaw symmetry doesn't use IOD
-            ratio_visibility.append(is_visible)
+            ratio_visibility.append(is_valid)
         else:
-            ratio_visibility.append(is_visible and is_iod_visible)
+            ratio_visibility.append(is_valid and is_iod_valid)
 
     vis_data = {
         "occlusion_percentage": round(occlusion_percentage, 2),
@@ -1228,6 +1252,11 @@ def extract_geometric_ratios_3d(landmarks) -> tuple[np.ndarray, dict, dict]:
     coords_3d = np.array([(l.x, l.y, l.z) for l in landmarks])
     aligned_coords, angles = procrustes_align_3d(coords_3d)
 
+    # Verify Procrustes returned finite coordinates
+    if not np.all(np.isfinite(aligned_coords)):
+        vis_data["geometry_status"] = "PROCRUSTES_NAN"
+        return np.zeros(12), angles, vis_data
+
     left_eye = aligned_coords[33]
     right_eye = aligned_coords[263]
     def dist2d(p1, p2):
@@ -1236,6 +1265,8 @@ def extract_geometric_ratios_3d(landmarks) -> tuple[np.ndarray, dict, dict]:
     iod = dist2d(right_eye, left_eye)
 
     if iod < 1e-6:
+        vis_data["geometry_status"] = "INVALID_IOD"
+        vis_data["iod"] = float(iod)
         return np.zeros(12), angles, vis_data
 
     nose_tip = aligned_coords[1]
@@ -1266,6 +1297,8 @@ def extract_geometric_ratios_3d(landmarks) -> tuple[np.ndarray, dict, dict]:
         dist2d(left_jaw, chin) / jaw_to_chin_r if jaw_to_chin_r > 1e-6 else 1.0,  # Jaw symmetry
     ])
 
+    vis_data["geometry_status"] = "OK"
+    vis_data["iod"] = float(iod)
     return ratios, angles, vis_data
 
 
@@ -2006,17 +2039,40 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     ratios_gallery, gal_angles, gal_vis = extract_geometric_ratios_3d(gallery_landmarks)
     ratios_probe, pro_angles, pro_vis = extract_geometric_ratios_3d(probe_landmarks)
     
+    # Determine geometry status from extraction
+    gal_geom_status = gal_vis.get("geometry_status", "UNKNOWN")
+    pro_geom_status = pro_vis.get("geometry_status", "UNKNOWN")
+    
+    if gal_geom_status != "OK" or pro_geom_status != "OK":
+        geometry_status = gal_geom_status if gal_geom_status != "OK" else pro_geom_status
+    else:
+        geometry_status = "OK"  # may be overridden below
+    
     valid_mask = gal_vis["ratio_visibility"] & pro_vis["ratio_visibility"]
     effective_ratios = int(np.sum(valid_mask))
     
-    if effective_ratios > 0:
+    if effective_ratios > 0 and geometry_status == "OK":
         raw_l2 = float(np.linalg.norm((ratios_gallery - ratios_probe)[valid_mask]))
         ratio_l2 = raw_l2 * math.sqrt(12.0 / effective_ratios)
+        tier2_score = max(0.0, min(100.0, (1.0 - (ratio_l2 / GEOMETRY_DISTANCE_ZERO_THRESHOLD)) * 100))
     else:
-        ratio_l2 = 0.50
-        
-    # L2 mapping: 0 distance → 100%, ≥0.50 → 0%. Recalibrated from 0.40 due to added 3D variance.
-    tier2_score = max(0.0, min(100.0, (1.0 - (ratio_l2 / 0.50)) * 100))
+        ratio_l2 = None
+        tier2_score = 0.0
+        if geometry_status == "OK":
+            geometry_status = "NO_VALID_RATIOS"
+    
+    # Debug logging for Tier 2 geometry pipeline
+    if os.getenv("DEBUG_FORENSIC") == "true" or os.getenv("ENVIRONMENT") == "development":
+        print(f"[FORENSIC DEBUG] Tier 2 Geometry:", flush=True)
+        print(f"  geometry_status={geometry_status}, effective_ratios={effective_ratios}", flush=True)
+        print(f"  gal_geom_status={gal_geom_status}, pro_geom_status={pro_geom_status}", flush=True)
+        print(f"  IOD: gallery={gal_vis.get('iod', 'N/A')}, probe={pro_vis.get('iod', 'N/A')}", flush=True)
+        print(f"  ratio_visibility mask: {valid_mask.tolist()}", flush=True)
+        print(f"  ratio_l2={ratio_l2}, threshold={GEOMETRY_DISTANCE_ZERO_THRESHOLD}", flush=True)
+        print(f"  tier2_score={tier2_score:.2f}", flush=True)
+        if effective_ratios > 0 and ratio_l2 is not None:
+            print(f"  gallery_ratios: {ratios_gallery.tolist()}", flush=True)
+            print(f"  probe_ratios:   {ratios_probe.tolist()}", flush=True)
     
     # 6. TIER 3: Micro-Topology (LBP Chi-Squared Distance)
     # Chi-squared is the standard metric for comparing LBP histograms
@@ -2207,6 +2263,8 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         scar_delta_b64=scar_delta,
         gallery_wireframe_b64=gallery_wireframe,
         probe_wireframe_b64=probe_wireframe,
+        geometry_status=geometry_status,
+        geometric_ratio_distance=round(ratio_l2, 6) if ratio_l2 is not None else None,
         mark_correspondence_score=tier4_score,
         marks_detected_gallery=mark_result["total_gallery"],
         marks_detected_probe=mark_result["total_probe"],
@@ -2437,21 +2495,43 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         ratios_gallery, gal_angles, gal_vis = extract_geometric_ratios_3d(gallery_landmarks)
         ratios_probe, pro_angles, pro_vis = extract_geometric_ratios_3d(probe_landmarks)
         
+        # Determine geometry status from extraction
+        gal_geom_status = gal_vis.get("geometry_status", "UNKNOWN")
+        pro_geom_status = pro_vis.get("geometry_status", "UNKNOWN")
+        
+        if gal_geom_status != "OK" or pro_geom_status != "OK":
+            geometry_status = gal_geom_status if gal_geom_status != "OK" else pro_geom_status
+        else:
+            geometry_status = "OK"
+        
         valid_mask = gal_vis["ratio_visibility"] & pro_vis["ratio_visibility"]
         effective_ratios = int(np.sum(valid_mask))
         
-        if effective_ratios > 0:
+        if effective_ratios > 0 and geometry_status == "OK":
             raw_l2 = float(np.linalg.norm((ratios_gallery - ratios_probe)[valid_mask]))
             ratio_l2 = raw_l2 * math.sqrt(12.0 / effective_ratios)
+            tier2_score = max(0.0, min(100.0, (1.0 - (ratio_l2 / GEOMETRY_DISTANCE_ZERO_THRESHOLD)) * 100))
         else:
-            ratio_l2 = 0.50
-            
-        tier2_score = max(0.0, min(100.0, (1.0 - (ratio_l2 / 0.50)) * 100))
+            ratio_l2 = None
+            tier2_score = 0.0
+            if geometry_status == "OK":
+                geometry_status = "NO_VALID_RATIOS"
+        
+        # Debug logging for Tier 2 geometry pipeline
+        if os.getenv("DEBUG_FORENSIC") == "true" or os.getenv("ENVIRONMENT") == "development":
+            print(f"[FORENSIC DEBUG] Tier 2 Geometry (vault):", flush=True)
+            print(f"  geometry_status={geometry_status}, effective_ratios={effective_ratios}", flush=True)
+            print(f"  IOD: gallery={gal_vis.get('iod', 'N/A')}, probe={pro_vis.get('iod', 'N/A')}", flush=True)
+            print(f"  ratio_visibility mask: {valid_mask.tolist()}", flush=True)
+            print(f"  ratio_l2={ratio_l2}, threshold={GEOMETRY_DISTANCE_ZERO_THRESHOLD}", flush=True)
+            print(f"  tier2_score={tier2_score:.2f}", flush=True)
     else:
         tier2_score = 0.0
         gal_angles, pro_angles = {}, {}
         pro_vis = {"occlusion_percentage": 0.0, "occluded_regions": []}
         effective_ratios = 0
+        ratio_l2 = None
+        geometry_status = "NO_LANDMARKS"
 
     # 8. Tier 3: Micro-Topology (LBP Chi-Squared Distance)
     lbp_gal = extract_lbp_histogram(gallery_aligned)
@@ -2639,6 +2719,8 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         scar_delta_b64=scar_delta,
         gallery_wireframe_b64=gallery_wireframe_b64,
         probe_wireframe_b64=probe_wireframe_b64,
+        geometry_status=geometry_status,
+        geometric_ratio_distance=round(ratio_l2, 6) if ratio_l2 is not None else None,
         mark_correspondence_score=tier4_score,
         marks_detected_gallery=mark_result["total_gallery"],
         marks_detected_probe=mark_result["total_probe"],
