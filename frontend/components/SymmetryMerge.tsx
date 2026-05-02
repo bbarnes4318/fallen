@@ -243,30 +243,51 @@ export default function SymmetryMerge({
     });
   }, [results, getPointCoords]);
 
-  const mapPoint = useCallback((m: RawPoint, side: 'probe' | 'gallery') => {
+  const mapPoint = useCallback((m: RawPoint, side: 'probe' | 'gallery'): ForensicPoint | null => {
     const { x, y, area } = getPointCoords(m);
-    let lr = 'lr' in m ? m.lr : undefined;
+
+    if (x === undefined || y === undefined) {
+      return null;
+    }
+
+    const pointWithLr = m as { lr?: number };
+    let lr = pointWithLr.lr;
+
     if (lr === undefined && results?.correspondences) {
       const corr = results.correspondences.find((c: Correspondence) => {
         const cPt = c[side === 'probe' ? 'probe_pt' : 'gallery_pt'];
         if (!cPt) return false;
+
         const { x: cx, y: cy } = getPointCoords(cPt);
         if (cx === undefined || cy === undefined) return false;
+
         return Math.abs(x - cx) < 0.001 && Math.abs(y - cy) < 0.001;
       });
+
       if (corr) lr = corr.lr;
     }
-    return { x, y, area, lr, isMatched: getIsMatched(m, side) };
+
+    return {
+      x,
+      y,
+      area,
+      lr,
+      isMatched: getIsMatched(m, side),
+    };
   }, [results, getPointCoords, getIsMatched]);
 
-  const probePoints = useMemo(() => {
+  const probePoints = useMemo((): ForensicPoint[] => {
     const marks = results?.raw_probe_marks || results?.probe_data?.marks || [];
-    return marks.map((m: RawPoint) => mapPoint(m, 'probe'));
+    return marks
+      .map((m: RawPoint) => mapPoint(m, 'probe'))
+      .filter((p): p is ForensicPoint => p !== null);
   }, [results, mapPoint]);
   
-  const galleryPoints = useMemo(() => {
+  const galleryPoints = useMemo((): ForensicPoint[] => {
     const marks = results?.raw_gallery_marks || results?.gallery_data?.marks || [];
-    return marks.map((m: RawPoint) => mapPoint(m, 'gallery'));
+    return marks
+      .map((m: RawPoint) => mapPoint(m, 'gallery'))
+      .filter((p): p is ForensicPoint => p !== null);
   }, [results, mapPoint]);
 
   // Draw dual panes — LEFT = PROBE, RIGHT = GALLERY (both get delta overlay in delta mode)
@@ -459,7 +480,7 @@ export default function SymmetryMerge({
                 <div className="flex gap-[2px] flex-wrap">
                   {results.correspondences.map((c: Correspondence, i: number) => (
                     <div key={`corr-${i}`} className={`px-1.5 py-0.5 border bg-[#050505] tracking-widest text-[9px] ${results.veto_triggered || results.failed_provenance_veto ? 'border-[#5a0015] text-[#ff2040]/70' : 'border-[#D4AF37]/30 text-[#D4AF37]/80'}`}>
-                      MARK {i+1} <span className="opacity-50 mx-0.5">LR:</span>{c.lr.toFixed(1)}
+                      MARK {i+1} <span className="opacity-50 mx-0.5">LR:</span>{(c.lr ?? 0).toFixed(1)}
                     </div>
                   ))}
                 </div>
