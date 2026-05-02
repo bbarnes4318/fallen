@@ -1,8 +1,8 @@
 # Fallen Biometric Verification Pipeline
 ## Forensic Methodology Document
 
-**Version:** 2.0 — Scientific-Standard Compliant  
-**Last Updated:** 2026-04-27  
+**Version:** 3.0 — Bayesian Likelihood Ratio Framework  
+**Last Updated:** 2026-05-02  
 **Pipeline Author:** Fallen Engineering  
 **Document Purpose:** Expert witness exhibit for forensic audits. This document describes every algorithm, threshold, limitation, and calibration methodology used in the Fallen biometric identity verification system.
 
@@ -19,7 +19,8 @@ Fallen is a three-tier biometric identity verification system that fuses deep ne
 | **Tier 1 — Structural** | ArcFace 512-D deep embedding (cosine similarity) |
 | **Tier 2 — Geometric** | 12 scale-invariant facial ratios (L2 distance) |
 | **Tier 3 — Micro-Topology** | Local Binary Pattern histogram (chi-squared distance) |
-| **Fusion** | Weighted linear combination with ArcFace veto |
+| **Tier 4 — Mark Correspondence** | Bayesian LR from population model (scars/moles/blemishes) |
+| **Fusion** | Empirical Bayesian Likelihood Ratio framework with ArcFace veto + mark override |
 | **PAD** | Laplacian variance blur detection (or MiniFASNet ONNX when available) |
 
 ### 1.2 What This System Does NOT Do
@@ -167,31 +168,87 @@ tier3_score = max(0, min(100, (1 - χ²) × 100))
 
 ---
 
-## 6. Score Fusion
+## 6. Score Fusion — Empirical Bayesian Likelihood Ratio Framework
 
-### 6.1 Fusion Formula
+### 6.1 Mathematical Model
+
+The system uses a **multiplicative Bayesian Likelihood Ratio (LR)** framework to fuse independent evidence streams into a single posterior probability of common identity.
+
+**Step 1: Empirical LR from calibrated thresholds**
+
+The structural ensemble score (ArcFace cosine similarity) is converted to a Likelihood Ratio using empirically derived FAR/FRR thresholds from the LFW benchmark:
 
 ```
-fused_score = (w₁ × tier1) + (w₂ × tier2) + (w₃ × tier3)
+LR_ensemble = score_to_lr_ensemble(structural_sim, temporal_delta)
 ```
 
-### 6.2 Weight Determination
+The function interpolates between calibrated FAR/FRR threshold pairs. Temporal age conditioning applies a scientifically motivated decay factor for cross-temporal comparisons.
 
-| Mode | w₁ (Structural) | w₂ (Geometric) | w₃ (Micro-Topo) | Source |
-|------|-----------------|----------------|------------------|--------|
-| **Calibrated** | From calibration JSON | From calibration JSON | From calibration JSON | LFW grid search (EER minimization) |
-| **Default** | 0.60 | 0.25 | 0.15 | Manual assignment |
+**Step 2: Mark Correspondence LR**
 
-When calibration data is available (`calibration_data/lfw_calibration.json`), the system automatically uses the empirically optimized weights derived from grid search over the LFW benchmark dataset.
+Independent mark correspondences (scars, moles, blemishes) each produce an individual LR via the Tier 4 population model. The aggregate mark LR is the product of individual positive mark LRs:
 
-### 6.3 Decision Thresholds
+```
+LR_marks = ∏ LR_mark_i  (for all matched marks with LR > 1.0)
+```
 
-| Fused Score | Conclusion |
-|-------------|-----------|
+**Step 3: Total LR (independent evidence multiplication)**
+
+```
+LR_total = LR_ensemble × LR_marks
+```
+
+**Step 4: Posterior probability (Bayes' Theorem, neutral prior)**
+
+```
+PRIOR = 0.5
+posterior = (PRIOR × LR_total) / ((PRIOR × LR_total) + (1 - PRIOR))
+```
+
+With Prior = 0.5, this simplifies to: `posterior = LR_total / (LR_total + 1)`
+
+**Step 5: Score conversion**
+
+```
+bayesian_fused_score = posterior × 100
+```
+
+### 6.2 ArcFace Veto Protocol
+
+If `cosine_similarity < 0.40`, the system triggers a **hard veto**: the fused identity score is zeroed and the conclusion is forced to "EXCLUSION: Biometric Non-Match (ArcFace Veto)."
+
+**Rationale:** A cosine similarity below 0.40 on ArcFace indicates statistically irreconcilable structural differences. The `bayesian_fused_score` (pre-veto posterior × 100) is preserved for forensic audit, but the displayed `fused_identity_score` is set to 0.
+
+### 6.3 Mark Override Protocol (v1.0)
+
+Under specific conditions, strong independent mark correspondence evidence can **lift** the ArcFace hard-zero veto. This does NOT declare ArcFace a match — it overrides only the zeroing policy.
+
+**Override eligibility criteria (all must be satisfied):**
+
+1. At least **3 individual mark LRs > 1.0** (positive evidence marks)
+2. Aggregate `lr_marks ≥ 100.0`
+
+**Override behavior:**
+
+- `fused_identity_score` = `bayesian_fused_score` (pre-veto value restored)
+- `veto_triggered` = true (ArcFace veto is still flagged)
+- `veto_override_applied` = true
+- `veto_reason` = "ARCFACE_VETO_MARK_OVERRIDE"
+
+**Safeguards:**
+
+- A single extreme LR cannot trigger an override alone (3+ independent sources required)
+- Malformed or non-numeric mark LRs are filtered out before evaluation
+
+### 6.4 Decision Thresholds
+
+| Bayesian Fused Score | Conclusion |
+|---------------------|-----------|
 | > 90% | Strongest Support for Common Source |
 | 75–90% | Support for Common Source |
 | < 75% | Exclusion: Insufficient Fused Similarity |
-| Veto (ArcFace < 0.40) | Exclusion: Biometric Non-Match |
+| Veto (ArcFace < 0.40) | Exclusion: Biometric Non-Match (ArcFace Veto) |
+| Veto + Mark Override | Bayesian Match — ArcFace veto overridden by independent mark evidence |
 
 ---
 

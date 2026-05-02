@@ -114,6 +114,30 @@ export interface FaceDataPayload {
   [key: string]: unknown;
 }
 
+/** Bayesian scoring trace — returned only when DEBUG_FORENSIC=true */
+export interface ScoringTrace {
+  calibration_status?: string;
+  calibration_source?: string;
+  calibration_benchmark?: string;
+  tier4_calibration_status?: string;
+  lr_ensemble_raw?: number | null;
+  lr_marks_raw?: number | null;
+  lr_total_raw?: number | null;
+  lr_ensemble_display?: string;
+  lr_marks_display?: string;
+  lr_total_display?: string;
+  posterior_raw?: number | null;
+  fused_score_pre_veto?: number | null;
+  fused_score_post_veto?: number | null;
+  veto_triggered?: boolean;
+  veto_reason?: string | null;
+  veto_override_applied?: boolean;
+  veto_override_reason?: string | null;
+  mark_override_eligible?: boolean;
+  temporal_delta_years?: number | null;
+  ensemble_thresholds_key?: string;
+}
+
 export interface VerificationResult {
   structural_score: number;
   soft_biometrics_score: number;
@@ -130,6 +154,10 @@ export interface VerificationResult {
   veto_triggered: boolean;
   failed_provenance_veto?: boolean;
   synthetic_anomaly_score?: number;
+  veto_override_applied?: boolean;
+  veto_override_reason?: string | null;
+  scoring_trace?: ScoringTrace | null;
+  calibration_status?: string | null;
   conclusion: string;
   gallery_heatmap_b64: string;
   probe_heatmap_b64: string;

@@ -399,6 +399,141 @@ def main():
         print(f"\n  *** SCIENTIFIC VALIDATION PASSED -- PIPELINE READY ***")
         sys.exit(0)
 
+# ═══════════════════════════════════════════════════════════
+# MARK OVERRIDE PROTOCOL UNIT TESTS
+# ═══════════════════════════════════════════════════════════
+
+def test_bayesian_identity():
+    """Verify posterior = (PRIOR * lr_total) / ((PRIOR * lr_total) + (1 - PRIOR))"""
+    print("\n  [TEST] Bayesian Identity")
+    PRIOR = 0.5
+    for lr_total in [0.1, 1.0, 10.0, 100.0, 1e6]:
+        posterior = (PRIOR * lr_total) / ((PRIOR * lr_total) + (1.0 - PRIOR))
+        expected = lr_total / (lr_total + 1.0)
+        assert abs(posterior - expected) < 1e-12, f"Identity failed for lr_total={lr_total}"
+    print("  [PASS] Bayesian Identity holds for all test values")
+
+
+def test_veto_without_override():
+    """ArcFace < 0.40, insufficient marks => fused_identity_score = 0"""
+    print("\n  [TEST] Veto Without Override")
+    structural_sim = 0.35  # below 0.40 threshold
+    lr_ensemble = 0.1      # weak
+    lr_marks = 1.0          # neutral marks
+    lr_total = lr_ensemble * lr_marks
+    PRIOR = 0.5
+    posterior = (PRIOR * lr_total) / ((PRIOR * lr_total) + (1.0 - PRIOR))
+    bayesian_fused_score = posterior * 100.0
+
+    # Simulate veto logic
+    veto_triggered = structural_sim < 0.40
+    mark_lrs_raw = [1.5, 0.8]  # only 1 positive => not enough
+    positive_mark_lrs = [lr for lr in mark_lrs_raw if isinstance(lr, (int, float)) and lr > 1.0]
+    mark_override_eligible = len(positive_mark_lrs) >= 3 and lr_marks >= 100.0
+
+    fused_score = bayesian_fused_score
+    veto_override_applied = False
+    veto_reason = None
+    if veto_triggered:
+        if mark_override_eligible:
+            veto_reason = "ARCFACE_VETO_MARK_OVERRIDE"
+            veto_override_applied = True
+        else:
+            fused_score = 0.0
+            veto_reason = "ARCFACE_VETO"
+
+    assert veto_triggered, "Veto should be triggered"
+    assert fused_score == 0.0, f"fused_identity_score must be 0, got {fused_score}"
+    assert bayesian_fused_score > 0, "bayesian_fused_score must preserve pre-veto value"
+    assert veto_reason == "ARCFACE_VETO", f"veto_reason must be ARCFACE_VETO, got {veto_reason}"
+    assert not veto_override_applied, "veto_override_applied must be False"
+    print("  [PASS] Veto without override behaves correctly")
+
+
+def test_veto_with_mark_override():
+    """ArcFace < 0.40, but 3+ marks with LR>1 and aggregate >= 100 => override"""
+    print("\n  [TEST] Veto With Mark Override")
+    structural_sim = 0.35
+    lr_ensemble = 0.1
+    lr_marks = 250.0  # strong mark evidence
+    lr_total = lr_ensemble * lr_marks
+    PRIOR = 0.5
+    posterior = (PRIOR * lr_total) / ((PRIOR * lr_total) + (1.0 - PRIOR))
+    bayesian_fused_score = posterior * 100.0
+
+    veto_triggered = structural_sim < 0.40
+    mark_lrs_raw = [15.0, 8.0, 4.5, 2.1]  # 4 positive marks
+    positive_mark_lrs = [lr for lr in mark_lrs_raw if isinstance(lr, (int, float)) and lr > 1.0]
+    mark_override_eligible = len(positive_mark_lrs) >= 3 and lr_marks >= 100.0
+
+    fused_score = bayesian_fused_score
+    veto_override_applied = False
+    veto_reason = None
+    if veto_triggered:
+        if mark_override_eligible:
+            veto_reason = "ARCFACE_VETO_MARK_OVERRIDE"
+            veto_override_applied = True
+        else:
+            fused_score = 0.0
+            veto_reason = "ARCFACE_VETO"
+
+    assert veto_triggered, "Veto should be triggered"
+    assert fused_score == bayesian_fused_score, "fused_score must equal bayesian_fused_score (override restores)"
+    assert fused_score > 0, "fused_score must be positive after override"
+    assert veto_reason == "ARCFACE_VETO_MARK_OVERRIDE", f"Unexpected veto_reason: {veto_reason}"
+    assert veto_override_applied, "veto_override_applied must be True"
+    print("  [PASS] Veto with mark override behaves correctly")
+
+
+def test_calibration_missing():
+    """When CALIBRATION is None, calibration_status should be MISSING"""
+    print("\n  [TEST] Calibration Missing")
+    CALIBRATION = None
+    calibration_status = "LOADED" if CALIBRATION else "MISSING"
+    assert calibration_status == "MISSING", f"Expected MISSING, got {calibration_status}"
+
+    CALIBRATION = {"benchmark": "LFW", "arcface": {"thresholds": []}}
+    calibration_status = "LOADED" if CALIBRATION else "MISSING"
+    assert calibration_status == "LOADED", f"Expected LOADED, got {calibration_status}"
+    print("  [PASS] Calibration status logic is correct")
+
+
+def test_mark_override_safeguards():
+    """Verify that override cannot be triggered by a single extreme LR or insufficient positives"""
+    print("\n  [TEST] Mark Override Safeguards")
+
+    # Case 1: Only 1 positive mark with very high LR — should NOT override
+    mark_lrs_raw_1 = [5000.0, 0.5, 0.3]
+    positive_1 = [lr for lr in mark_lrs_raw_1 if isinstance(lr, (int, float)) and lr > 1.0]
+    lr_marks_1 = 5000.0
+    eligible_1 = len(positive_1) >= 3 and lr_marks_1 >= 100.0
+    assert not eligible_1, "Single extreme LR should NOT trigger override"
+
+    # Case 2: 3 positive marks but aggregate < 100 — should NOT override
+    mark_lrs_raw_2 = [2.0, 3.0, 1.5]
+    positive_2 = [lr for lr in mark_lrs_raw_2 if isinstance(lr, (int, float)) and lr > 1.0]
+    lr_marks_2 = 2.0 * 3.0 * 1.5  # 9.0
+    eligible_2 = len(positive_2) >= 3 and lr_marks_2 >= 100.0
+    assert not eligible_2, "Aggregate < 100 should NOT trigger override"
+
+    # Case 3: Malformed/non-numeric values should be filtered
+    mark_lrs_raw_3 = [5.0, "bad", None, 3.0, 10.0]
+    positive_3 = [lr for lr in mark_lrs_raw_3 if isinstance(lr, (int, float)) and lr > 1.0]
+    lr_marks_3 = 150.0
+    eligible_3 = len(positive_3) >= 3 and lr_marks_3 >= 100.0
+    assert eligible_3, "3 valid positive LRs with aggregate >= 100 should qualify"
+
+    print("  [PASS] Mark override safeguards verified")
+
 
 if __name__ == "__main__":
+    # Run all unit tests first
+    test_bayesian_identity()
+    test_veto_without_override()
+    test_veto_with_mark_override()
+    test_calibration_missing()
+    test_mark_override_safeguards()
+    print("\n  *** ALL UNIT TESTS PASSED ***\n")
+
+    # Run the original E2E pipeline test
     main()

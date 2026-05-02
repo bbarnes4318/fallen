@@ -443,6 +443,11 @@ class VerificationResponse(BaseModel):
     # Veto transparency
     bayesian_fused_score: Optional[float] = None
     veto_reason: Optional[str] = None
+    veto_override_applied: bool = False
+    veto_override_reason: Optional[str] = None
+    # Scoring trace (DEBUG_FORENSIC only)
+    scoring_trace: Optional[dict] = None
+    calibration_status: Optional[str] = None
     audit_log: Optional[AuditLog] = None
 
 # ---------------------------------------------------------
@@ -586,6 +591,17 @@ def calculate_statistical_confidence(cosine_score: float) -> dict:
         "benchmark": CALIBRATION.get("benchmark", "LFW"),
         "pairs_evaluated": CALIBRATION.get("pairs_evaluated", 0),
     }
+
+
+def finite_or_none(value) -> float | None:
+    """Safe float serializer — preserves scientific notation, rejects NaN/Inf."""
+    try:
+        value = float(value)
+        if math.isfinite(value):
+            return value
+    except Exception:
+        pass
+    return None
 
 
 def score_to_lr_ensemble(ensemble_score: float, temporal_delta: float = 0.0) -> float:
@@ -2323,19 +2339,37 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     posterior = (PRIOR * lr_total) / ((PRIOR * lr_total) + (1.0 - PRIOR))
     fused_score = posterior * 100.0
 
-    # Retain tier scores for dashboard display
-    _fw = CALIBRATION["fusion"]["optimal_weights"] if CALIBRATION else None
-    _w1 = _fw["structural"] if _fw else 0.60
-    _w2 = _fw["geometric"] if _fw else 0.25
-    _w3 = _fw["micro_topology"] if _fw else 0.15
-    base_fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3)
-
     bayesian_fused_score = fused_score  # preserve pre-veto posterior × 100
+
+    # ── MARK OVERRIDE PROTOCOL (v1.0) ──
+    # If ArcFace veto triggers but 3+ independent mark correspondences
+    # with positive individual LRs provide aggregate LR >= 100,
+    # the hard-zero policy is lifted. ArcFace itself did NOT pass.
+    mark_lrs_raw = mark_result.get("mark_lrs", [])
+    positive_mark_lrs = [lr for lr in mark_lrs_raw if isinstance(lr, (int, float)) and lr > 1.0]
+    mark_override_eligible = len(positive_mark_lrs) >= 3 and lr_marks >= 100.0
+
     veto_reason = None
+    veto_override_applied = False
+    veto_override_reason = None
     if veto_triggered:
-        fused_score = 0.0
-        veto_reason = "ARCFACE_VETO"
-        conclusion = "EXCLUSION: Biometric Non-Match (ArcFace Veto)"
+        if mark_override_eligible:
+            # Override lifts the hard-zero — ArcFace veto still flagged
+            veto_reason = "ARCFACE_VETO_MARK_OVERRIDE"
+            veto_override_applied = True
+            veto_override_reason = (
+                f"Mark override: {len(positive_mark_lrs)} positive mark LRs, "
+                f"aggregate lr_marks={lr_marks:.2f}"
+            )
+            conclusion = (
+                "Bayesian Match — ArcFace veto overridden by independent "
+                "mark correspondence evidence"
+            )
+            # fused_score keeps its Bayesian posterior value
+        else:
+            fused_score = 0.0
+            veto_reason = "ARCFACE_VETO"
+            conclusion = "EXCLUSION: Biometric Non-Match (ArcFace Veto)"
     elif fused_score > 90.0:
         conclusion = "Strongest Support for Common Source"
     elif fused_score > 75.0:
@@ -2411,11 +2445,12 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         pipeline_version=PIPELINE_VERSION,
         dependency_versions=DEPENDENCY_VERSIONS,
         # Bayesian LR Forensic Audit Trail
-        lr_arcface=round(lr_ensemble, 6),
-        lr_marks=round(lr_marks, 6),
-        lr_total=round(lr_total, 6),
-        posterior_probability=round(posterior, 8),
-        mark_lrs=[round(lr, 4) for lr in mark_result.get("mark_lrs", [])],
+        lr_arcface=finite_or_none(lr_ensemble),
+        lr_marks=finite_or_none(lr_marks),
+        lr_total=finite_or_none(lr_total),
+        posterior_probability=finite_or_none(posterior),
+        mark_lrs=[finite_or_none(lr) for lr in mark_result.get("mark_lrs", [])],
+        bayesian_fused_score=finite_or_none(bayesian_fused_score),
     )
 
     # Build correspondences list for the UI
@@ -2501,6 +2536,36 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         for ci, c in enumerate(correspondences[:5]):
             print(f"  corr[{ci}]: probe_idx={c['probe_idx']}, gallery_idx={c['gallery_idx']}, lr={c['lr']:.4f}", flush=True)
 
+    # ── SCORING TRACE (debug-only response payload) ──
+    _calibration_status = "LOADED" if CALIBRATION else "MISSING"
+    scoring_trace = None
+    if os.getenv("DEBUG_FORENSIC") == "true":
+        scoring_trace = {
+            "calibration_status": _calibration_status,
+            "calibration_source": CALIBRATION.get("source", "NONE") if CALIBRATION else "NONE",
+            "calibration_benchmark": CALIBRATION.get("benchmark", "NONE") if CALIBRATION else "NONE",
+            "tier4_calibration_status": "LOADED" if TIER4_CALIBRATION else "MISSING",
+            "lr_ensemble_raw": finite_or_none(lr_ensemble),
+            "lr_marks_raw": finite_or_none(lr_marks),
+            "lr_total_raw": finite_or_none(lr_total),
+            "lr_ensemble_display": "{:.6e}".format(lr_ensemble) if math.isfinite(lr_ensemble) else "N/A",
+            "lr_marks_display": "{:.6e}".format(lr_marks) if math.isfinite(lr_marks) else "N/A",
+            "lr_total_display": "{:.6e}".format(lr_total) if math.isfinite(lr_total) else "N/A",
+            "posterior_raw": finite_or_none(posterior),
+            "fused_score_pre_veto": finite_or_none(bayesian_fused_score),
+            "fused_score_post_veto": finite_or_none(fused_score),
+            "veto_triggered": veto_triggered,
+            "veto_reason": veto_reason,
+            "veto_override_applied": veto_override_applied,
+            "veto_override_reason": veto_override_reason,
+            "mark_override_eligible": mark_override_eligible,
+            "temporal_delta_years": finite_or_none(temporal_delta),
+            "ensemble_thresholds_key": (
+                "ensemble" if CALIBRATION and "ensemble" in CALIBRATION
+                else ("arcface" if CALIBRATION and "arcface" in CALIBRATION else "NONE")
+            ),
+        }
+
     response = VerificationResponse(
         structural_score=round(tier1_score, 2),
         soft_biometrics_score=round(tier2_score, 2),
@@ -2529,7 +2594,11 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         raw_gallery_marks=valid_gallery_marks,
         bayesian_fused_score=round(bayesian_fused_score, 2),
         veto_reason=veto_reason,
-        audit_log=audit
+        veto_override_applied=veto_override_applied,
+        veto_override_reason=veto_override_reason,
+        scoring_trace=scoring_trace,
+        calibration_status=_calibration_status,
+        audit_log=audit,
     )
 
     # ── Composite Forensic Receipt (Evidence Preservation) ──
@@ -2568,10 +2637,15 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             occluded_regions=json.dumps(pro_vis["occluded_regions"]) if pro_vis["occluded_regions"] else None,
             effective_geometric_ratios_used=effective_ratios,
             receipt_url=receipt_url,
-            lr_arcface=round(lr_ensemble, 6),
-            lr_marks_product=round(lr_marks, 6),
-            lr_total=round(lr_total, 6),
-            posterior_probability=round(posterior, 8),
+            lr_arcface=finite_or_none(lr_ensemble),
+            lr_marks_product=finite_or_none(lr_marks),
+            lr_total=finite_or_none(lr_total),
+            posterior_probability=finite_or_none(posterior),
+            bayesian_fused_score_x100=round(bayesian_fused_score * 100) if bayesian_fused_score is not None else None,
+            marks_matched=mark_result.get("matched", 0),
+            calibration_status=_calibration_status,
+            veto_reason=veto_reason,
+            veto_override_applied=veto_override_applied,
         )
         ledger_session.add(event)
         ledger_session.commit()
@@ -2828,23 +2902,35 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     posterior = (PRIOR * lr_total) / ((PRIOR * lr_total) + (1.0 - PRIOR))
     fused_score = posterior * 100.0
 
-    # Retain tier scores for dashboard display
-    _fw = CALIBRATION["fusion"]["optimal_weights"] if CALIBRATION else None
-    _w1 = _fw["structural"] if _fw else 0.60
-    _w2 = _fw["geometric"] if _fw else 0.25
-    _w3 = _fw["micro_topology"] if _fw else 0.15
-    base_fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3)
+    bayesian_fused_score = fused_score  # preserve pre-veto
 
     # 10. ArcFace Veto (flag only — Bayesian math handles scoring)
     veto_arcface = best_score < 0.40
 
-    # 11. Conclusion
-    bayesian_fused_score = fused_score  # preserve pre-veto
+    # ── MARK OVERRIDE PROTOCOL (v1.0) ──
+    mark_lrs_raw = mark_result.get("mark_lrs", [])
+    positive_mark_lrs = [lr for lr in mark_lrs_raw if isinstance(lr, (int, float)) and lr > 1.0]
+    mark_override_eligible = len(positive_mark_lrs) >= 3 and lr_marks >= 100.0
+
     veto_reason = None
+    veto_override_applied = False
+    veto_override_reason = None
     if veto_arcface:
-        fused_score = 0.0
-        veto_reason = "ARCFACE_VETO"
-        conclusion = "EXCLUSION: Biometric Non-Match (ArcFace Veto)"
+        if mark_override_eligible:
+            veto_reason = "ARCFACE_VETO_MARK_OVERRIDE"
+            veto_override_applied = True
+            veto_override_reason = (
+                f"Mark override: {len(positive_mark_lrs)} positive mark LRs, "
+                f"aggregate lr_marks={lr_marks:.2f}"
+            )
+            conclusion = (
+                f"Bayesian Match — ArcFace veto overridden by independent "
+                f"mark correspondence evidence ({best_user_id})"
+            )
+        else:
+            fused_score = 0.0
+            veto_reason = "ARCFACE_VETO"
+            conclusion = "EXCLUSION: Biometric Non-Match (ArcFace Veto)"
     elif fused_score > 90.0:
         conclusion = f"TARGET ACQUIRED — Strongest match: {best_user_id} (Posterior: {fused_score:.1f}%)"
     elif fused_score > 75.0:
@@ -2926,11 +3012,12 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         pipeline_version=PIPELINE_VERSION,
         dependency_versions=DEPENDENCY_VERSIONS,
         # Bayesian LR Forensic Audit Trail
-        lr_arcface=round(lr_ensemble, 6),
-        lr_marks=round(lr_marks, 6),
-        lr_total=round(lr_total, 6),
-        posterior_probability=round(posterior, 8),
-        mark_lrs=[round(lr, 4) for lr in mark_result.get("mark_lrs", [])],
+        lr_arcface=finite_or_none(lr_ensemble),
+        lr_marks=finite_or_none(lr_marks),
+        lr_total=finite_or_none(lr_total),
+        posterior_probability=finite_or_none(posterior),
+        mark_lrs=[finite_or_none(lr) for lr in mark_result.get("mark_lrs", [])],
+        bayesian_fused_score=finite_or_none(bayesian_fused_score),
     )
 
     # Build correspondences list for the UI
@@ -3016,6 +3103,36 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         for ci, c in enumerate(correspondences[:5]):
             print(f"  corr[{ci}]: probe_idx={c['probe_idx']}, gallery_idx={c['gallery_idx']}, lr={c['lr']:.4f}", flush=True)
 
+    # ── SCORING TRACE (debug-only response payload) ──
+    _calibration_status = "LOADED" if CALIBRATION else "MISSING"
+    scoring_trace = None
+    if os.getenv("DEBUG_FORENSIC") == "true":
+        scoring_trace = {
+            "calibration_status": _calibration_status,
+            "calibration_source": CALIBRATION.get("source", "NONE") if CALIBRATION else "NONE",
+            "calibration_benchmark": CALIBRATION.get("benchmark", "NONE") if CALIBRATION else "NONE",
+            "tier4_calibration_status": "LOADED" if TIER4_CALIBRATION else "MISSING",
+            "lr_ensemble_raw": finite_or_none(lr_ensemble),
+            "lr_marks_raw": finite_or_none(lr_marks),
+            "lr_total_raw": finite_or_none(lr_total),
+            "lr_ensemble_display": "{:.6e}".format(lr_ensemble) if math.isfinite(lr_ensemble) else "N/A",
+            "lr_marks_display": "{:.6e}".format(lr_marks) if math.isfinite(lr_marks) else "N/A",
+            "lr_total_display": "{:.6e}".format(lr_total) if math.isfinite(lr_total) else "N/A",
+            "posterior_raw": finite_or_none(posterior),
+            "fused_score_pre_veto": finite_or_none(bayesian_fused_score),
+            "fused_score_post_veto": finite_or_none(fused_score),
+            "veto_triggered": veto_arcface,
+            "veto_reason": veto_reason,
+            "veto_override_applied": veto_override_applied,
+            "veto_override_reason": veto_override_reason,
+            "mark_override_eligible": mark_override_eligible,
+            "temporal_delta_years": finite_or_none(temporal_delta),
+            "ensemble_thresholds_key": (
+                "ensemble" if CALIBRATION and "ensemble" in CALIBRATION
+                else ("arcface" if CALIBRATION and "arcface" in CALIBRATION else "NONE")
+            ),
+        }
+
     response = VerificationResponse(
         structural_score=round(tier1_score, 2),
         soft_biometrics_score=round(tier2_score, 2),
@@ -3044,6 +3161,10 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         raw_gallery_marks=valid_gallery_marks,
         bayesian_fused_score=round(bayesian_fused_score, 2),
         veto_reason=veto_reason,
+        veto_override_applied=veto_override_applied,
+        veto_override_reason=veto_override_reason,
+        scoring_trace=scoring_trace,
+        calibration_status=_calibration_status,
         audit_log=audit,
     )
 
@@ -3083,10 +3204,15 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             occluded_regions=json.dumps(pro_vis["occluded_regions"]) if pro_vis["occluded_regions"] else None,
             effective_geometric_ratios_used=effective_ratios,
             receipt_url=receipt_url,
-            lr_arcface=round(lr_ensemble, 6),
-            lr_marks_product=round(lr_marks, 6),
-            lr_total=round(lr_total, 6),
-            posterior_probability=round(posterior, 8),
+            lr_arcface=finite_or_none(lr_ensemble),
+            lr_marks_product=finite_or_none(lr_marks),
+            lr_total=finite_or_none(lr_total),
+            posterior_probability=finite_or_none(posterior),
+            bayesian_fused_score_x100=round(bayesian_fused_score * 100) if bayesian_fused_score is not None else None,
+            marks_matched=mark_result.get("matched", 0),
+            calibration_status=_calibration_status,
+            veto_reason=veto_reason,
+            veto_override_applied=veto_override_applied,
         )
         ledger_session.add(event)
         ledger_session.commit()

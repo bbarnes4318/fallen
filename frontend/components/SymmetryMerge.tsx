@@ -6,7 +6,8 @@ import {
   RawPoint,
   Correspondence,
   MarkDebugCorrespondence,
-  MarkDescriptor
+  MarkDescriptor,
+  ScoringTrace
 } from '@/types/verification';
 
 type ForensicPoint = {
@@ -734,6 +735,53 @@ export default function SymmetryMerge({
               probe_idx: c.probe_idx, gallery_idx: c.gallery_idx, lr: typeof c.lr === 'number' ? c.lr.toFixed(2) : 'N/A'
             })))}</div>
           </div>
+        </div>
+      ) : null}
+
+      {/* ── Bayesian Scoring Trace (DEBUG_FORENSIC only) ── */}
+      {showForensicDebugDetails && results?.scoring_trace ? (() => {
+        const st: ScoringTrace = results.scoring_trace;
+        const vetoColor = st.veto_override_applied ? 'text-yellow-400' : (st.veto_triggered ? 'text-red-400' : 'text-green-400');
+        const vetoLabel = st.veto_override_applied
+          ? 'OVERRIDE'
+          : (st.veto_triggered ? 'VETOED' : 'CLEAR');
+        return (
+          <div className="shrink-0 mt-1 p-2 border border-cyan-800/50 bg-[#001010] text-[8px] font-mono text-cyan-400/90 overflow-auto max-h-48">
+            <div className="font-bold tracking-widest mb-1 text-cyan-300">BAYESIAN SCORING TRACE</div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+              <div>CALIBRATION: <span className={st.calibration_status === 'LOADED' ? 'text-green-400' : 'text-red-400'}>{st.calibration_status ?? 'N/A'}</span></div>
+              <div>BENCHMARK: {st.calibration_benchmark ?? 'N/A'}</div>
+              <div>LR_ENSEMBLE: {st.lr_ensemble_display ?? 'N/A'}</div>
+              <div>LR_MARKS: {st.lr_marks_display ?? 'N/A'}</div>
+              <div>LR_TOTAL: {st.lr_total_display ?? 'N/A'}</div>
+              <div>POSTERIOR: {st.posterior_raw != null ? (st.posterior_raw * 100).toFixed(4) + '%' : 'N/A'}</div>
+              <div>PRE-VETO SCORE: {st.fused_score_pre_veto?.toFixed(2) ?? 'N/A'}</div>
+              <div>POST-VETO SCORE: {st.fused_score_post_veto?.toFixed(2) ?? 'N/A'}</div>
+              <div>VETO: <span className={vetoColor}>{vetoLabel}</span></div>
+              <div>REASON: {st.veto_reason ?? 'NONE'}</div>
+              <div>MARK OVERRIDE: <span className={st.mark_override_eligible ? 'text-yellow-400' : 'text-gray-500'}>{st.mark_override_eligible ? 'ELIGIBLE' : 'N/A'}</span></div>
+              <div>TEMPORAL Δ: {st.temporal_delta_years != null ? st.temporal_delta_years.toFixed(1) + 'yr' : 'N/A'}</div>
+              <div>TIER4 CAL: <span className={st.tier4_calibration_status === 'LOADED' ? 'text-green-400' : 'text-red-400'}>{st.tier4_calibration_status ?? 'N/A'}</span></div>
+              <div>THRESHOLDS: {st.ensemble_thresholds_key ?? 'N/A'}</div>
+            </div>
+            {st.veto_override_reason ? (
+              <div className="mt-1 border-t border-cyan-800/30 pt-1 text-yellow-400">
+                OVERRIDE: {st.veto_override_reason}
+              </div>
+            ) : null}
+          </div>
+        );
+      })() : null}
+
+      {/* ── Calibration Status Badge ── */}
+      {showForensicDebugDetails && results?.calibration_status ? (
+        <div className={`shrink-0 mt-0.5 px-2 py-0.5 text-[8px] font-mono tracking-widest ${
+          results.calibration_status === 'LOADED'
+            ? 'bg-green-900/30 text-green-400 border border-green-800/40'
+            : 'bg-red-900/30 text-red-400 border border-red-800/40'
+        }`}>
+          CALIBRATION: {results.calibration_status}
+          {results.veto_override_applied ? ' · MARK OVERRIDE ACTIVE' : ''}
         </div>
       ) : null}
 

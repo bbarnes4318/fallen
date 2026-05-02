@@ -134,12 +134,19 @@ class VerificationEvent(Base):
     # Tier 4: Mark Correspondence (×100 for integer consistency)
     mark_correspondence_x100 = Column(Integer, nullable=True)
 
-    # Bayesian Likelihood Ratio Audit Trail (Scientific v3.0)
+    # Bayesian Likelihood Ratio Audit Trail (Scientific v4.0)
     # Stored as Float for precision — these are scientific measurements, not financial values
     lr_arcface = Column(Float, nullable=True)
     lr_marks_product = Column(Float, nullable=True)
     lr_total = Column(Float, nullable=True)
     posterior_probability = Column(Float, nullable=True)
+    bayesian_fused_score_x100 = Column(Integer, nullable=True)  # Pre-veto posterior × 100 × 100
+    marks_matched = Column(Integer, nullable=True)
+    calibration_status = Column(String(32), nullable=True)       # LOADED | MISSING
+
+    # Mark Override Protocol (v1.0)
+    veto_reason = Column(String(64), nullable=True)              # ARCFACE_VETO | ARCFACE_VETO_MARK_OVERRIDE
+    veto_override_applied = Column(Boolean, nullable=True, default=False)
 
     # Phase 7: Synthetic Provenance Veto (Deepfake Detection)
     synthetic_anomaly_score = Column(Float, nullable=True)
