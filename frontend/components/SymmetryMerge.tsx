@@ -3,6 +3,14 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { VerificationResult, RawPoint, Correspondence } from '@/types/verification';
 
+type ForensicPoint = {
+  x: number;
+  y: number;
+  area?: number;
+  lr?: number;
+  isMatched?: boolean;
+};
+
 interface SymmetryMergeProps {
   results: VerificationResult | null;
   isXrayMode?: boolean;
@@ -388,14 +396,17 @@ export default function SymmetryMerge({
           )}
 
           {/* Main Verdict Row */}
-          {!results.failed_provenance_veto && (
-            <div className={`px-2 py-1.5 flex justify-between items-center border ${results.veto_triggered ? 'bg-[#1a0005] border-[#5a0015] text-[#ff2040]' : (results.fused_identity_score >= 40.0 ? 'bg-[#111100] border-[#D4AF37]/40 text-[#D4AF37]' : 'bg-[#0a0a0a] border-[#333] text-gray-400')}`}>
-              <span className="font-bold tracking-wider text-xs">
-                {results.veto_triggered ? 'VERDICT: MISMATCH (ARCFACE VETO)' : (results.fused_identity_score >= 40.0 ? 'VERDICT: MATCH' : 'VERDICT: INCONCLUSIVE')}
-              </span>
-              <span className="tracking-widest font-bold">FUSED SCORE: {results.fused_identity_score?.toFixed(2)}%</span>
-            </div>
-          )}
+          {!results.failed_provenance_veto && (() => {
+            const fusedScore = results.fused_identity_score ?? 0;
+            return (
+              <div className={`px-2 py-1.5 flex justify-between items-center border ${results.veto_triggered ? 'bg-[#1a0005] border-[#5a0015] text-[#ff2040]' : (fusedScore >= 40.0 ? 'bg-[#111100] border-[#D4AF37]/40 text-[#D4AF37]' : 'bg-[#0a0a0a] border-[#333] text-gray-400')}`}>
+                <span className="font-bold tracking-wider text-xs">
+                  {results.veto_triggered ? 'VERDICT: MISMATCH (ARCFACE VETO)' : (fusedScore >= 40.0 ? 'VERDICT: MATCH' : 'VERDICT: INCONCLUSIVE')}
+                </span>
+                <span className="tracking-widest font-bold">FUSED SCORE: {fusedScore.toFixed(2)}%</span>
+              </div>
+            );
+          })()}
 
           {/* Telemetry Data Grid */}
           <div className="grid grid-cols-2 gap-[2px]">
@@ -415,7 +426,7 @@ export default function SymmetryMerge({
           </div>
 
           {/* Dynamic Lists (Occlusions & Marks) */}
-          {((results.probe_data?.occluded_regions?.length > 0) || (results.gallery_data?.occluded_regions?.length > 0) || results.occluded_regions?.length > 0 || results.correspondences?.length > 0) && (
+          {(((results.probe_data?.occluded_regions?.length ?? 0) > 0) || ((results.gallery_data?.occluded_regions?.length ?? 0) > 0) || ((results.occluded_regions?.length ?? 0) > 0) || ((results.correspondences?.length ?? 0) > 0)) && (
             <div className="flex flex-col gap-[2px]">
               {results.occluded_regions && results.occluded_regions.length > 0 && !results.probe_data && !results.gallery_data && (
                 <div className="flex gap-[2px] flex-wrap">
