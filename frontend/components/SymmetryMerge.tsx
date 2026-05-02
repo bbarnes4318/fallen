@@ -226,6 +226,16 @@ export default function SymmetryMerge({
     return Array.isArray(marks) ? (marks as RawPoint[]) : [];
   };
 
+  const normalizeStringArray = (value: unknown): string[] => {
+    return Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
+  };
+
+  const normalizeCorrespondences = (value: unknown): Correspondence[] => {
+    return Array.isArray(value) ? (value as Correspondence[]) : [];
+  };
+
   const getPointCoords = useCallback((pt: RawPoint) => {
     if (!pt) return { x: undefined, y: undefined, area: 0 };
     if ('centroid' in pt && pt.centroid) return { x: pt.centroid[0], y: pt.centroid[1], area: ('area' in pt ? pt.area : 0) || 0 };
@@ -235,10 +245,11 @@ export default function SymmetryMerge({
   }, []);
 
   const getIsMatched = useCallback((pt: RawPoint, side: 'probe' | 'gallery') => {
-    if (!results?.correspondences) return false;
+    const corrs = normalizeCorrespondences(results?.correspondences);
+    if (corrs.length === 0) return false;
     const { x: pX, y: pY } = getPointCoords(pt);
     if (pX === undefined || pY === undefined) return false;
-    return results.correspondences.some((c: Correspondence) => {
+    return corrs.some((c: Correspondence) => {
       const cPt = c[side === 'probe' ? 'probe_pt' : 'gallery_pt'];
       if (!cPt) return false;
       const { x: cx, y: cy } = getPointCoords(cPt);
@@ -257,8 +268,9 @@ export default function SymmetryMerge({
     const pointWithLr = m as { lr?: number };
     let lr = pointWithLr.lr;
 
-    if (lr === undefined && results?.correspondences) {
-      const corr = results.correspondences.find((c: Correspondence) => {
+    if (lr === undefined) {
+      const corrs = normalizeCorrespondences(results?.correspondences);
+      const corr = corrs.find((c: Correspondence) => {
         const cPt = c[side === 'probe' ? 'probe_pt' : 'gallery_pt'];
         if (!cPt) return false;
 
@@ -457,46 +469,61 @@ export default function SymmetryMerge({
           </div>
 
           {/* Dynamic Lists (Occlusions & Marks) */}
-          {(((results.probe_data?.occluded_regions?.length ?? 0) > 0) || ((results.gallery_data?.occluded_regions?.length ?? 0) > 0) || ((results.occluded_regions?.length ?? 0) > 0) || ((results.correspondences?.length ?? 0) > 0)) && (
-            <div className="flex flex-col gap-[2px]">
-              {results.occluded_regions && results.occluded_regions.length > 0 && !results.probe_data && !results.gallery_data && (
-                <div className="flex gap-[2px] flex-wrap">
-                  {results.occluded_regions.map((region: string, i: number) => (
-                    <div key={`occ-${i}`} className="px-1.5 py-0.5 border border-[#8a4000]/40 bg-[#3a1500]/20 text-[#ff8800]/80 tracking-widest text-[9px]">
-                      MASKED: {region}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {results.probe_data?.occluded_regions && results.probe_data.occluded_regions.length > 0 && (
-                <div className="flex gap-[2px] flex-wrap">
-                  {results.probe_data.occluded_regions.map((region: string, i: number) => (
-                    <div key={`probe-occ-${i}`} className="px-1.5 py-0.5 border border-[#8a4000]/40 bg-[#3a1500]/20 text-[#ff8800]/80 tracking-widest text-[9px]">
-                      PROBE MASK: {region}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {results.gallery_data?.occluded_regions && results.gallery_data.occluded_regions.length > 0 && (
-                <div className="flex gap-[2px] flex-wrap">
-                  {results.gallery_data.occluded_regions.map((region: string, i: number) => (
-                    <div key={`gallery-occ-${i}`} className="px-1.5 py-0.5 border border-[#8a4000]/40 bg-[#3a1500]/20 text-[#ff8800]/80 tracking-widest text-[9px]">
-                      GALLERY MASK: {region}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {results.correspondences && results.correspondences.length > 0 && (
-                <div className="flex gap-[2px] flex-wrap">
-                  {results.correspondences.map((c: Correspondence, i: number) => (
-                    <div key={`corr-${i}`} className={`px-1.5 py-0.5 border bg-[#050505] tracking-widest text-[9px] ${results.veto_triggered || results.failed_provenance_veto ? 'border-[#5a0015] text-[#ff2040]/70' : 'border-[#D4AF37]/30 text-[#D4AF37]/80'}`}>
-                      MARK {i+1} <span className="opacity-50 mx-0.5">LR:</span>{(c.lr ?? 0).toFixed(1)}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          {(() => {
+            const probeOccludedRegions = normalizeStringArray(results?.probe_data?.occluded_regions);
+            const galleryOccludedRegions = normalizeStringArray(results?.gallery_data?.occluded_regions);
+            const legacyOccludedRegions = normalizeStringArray(results?.occluded_regions);
+            const safeCorrespondences = normalizeCorrespondences(results?.correspondences);
+
+            const hasDynamicLists =
+              probeOccludedRegions.length > 0 ||
+              galleryOccludedRegions.length > 0 ||
+              legacyOccludedRegions.length > 0 ||
+              safeCorrespondences.length > 0;
+
+            if (!hasDynamicLists) return null;
+
+            return (
+              <div className="flex flex-col gap-[2px]">
+                {legacyOccludedRegions.length > 0 && !results.probe_data && !results.gallery_data && (
+                  <div className="flex gap-[2px] flex-wrap">
+                    {legacyOccludedRegions.map((region: string, i: number) => (
+                      <div key={`occ-${i}`} className="px-1.5 py-0.5 border border-[#8a4000]/40 bg-[#3a1500]/20 text-[#ff8800]/80 tracking-widest text-[9px]">
+                        MASKED: {region}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {probeOccludedRegions.length > 0 && (
+                  <div className="flex gap-[2px] flex-wrap">
+                    {probeOccludedRegions.map((region: string, i: number) => (
+                      <div key={`probe-occ-${i}`} className="px-1.5 py-0.5 border border-[#8a4000]/40 bg-[#3a1500]/20 text-[#ff8800]/80 tracking-widest text-[9px]">
+                        PROBE MASK: {region}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {galleryOccludedRegions.length > 0 && (
+                  <div className="flex gap-[2px] flex-wrap">
+                    {galleryOccludedRegions.map((region: string, i: number) => (
+                      <div key={`gallery-occ-${i}`} className="px-1.5 py-0.5 border border-[#8a4000]/40 bg-[#3a1500]/20 text-[#ff8800]/80 tracking-widest text-[9px]">
+                        GALLERY MASK: {region}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {safeCorrespondences.length > 0 && (
+                  <div className="flex gap-[2px] flex-wrap">
+                    {safeCorrespondences.map((c: Correspondence, i: number) => (
+                      <div key={`corr-${i}`} className={`px-1.5 py-0.5 border bg-[#050505] tracking-widest text-[9px] ${results.veto_triggered || results.failed_provenance_veto ? 'border-[#5a0015] text-[#ff2040]/70' : 'border-[#D4AF37]/30 text-[#D4AF37]/80'}`}>
+                        MARK {i+1} <span className="opacity-50 mx-0.5">LR:</span>{(typeof c.lr === "number" ? c.lr : 0).toFixed(1)}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 
