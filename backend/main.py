@@ -440,6 +440,9 @@ class VerificationResponse(BaseModel):
     correspondences: list = []
     raw_probe_marks: list = []
     raw_gallery_marks: list = []
+    # Veto transparency
+    bayesian_fused_score: Optional[float] = None
+    veto_reason: Optional[str] = None
     audit_log: Optional[AuditLog] = None
 
 # ---------------------------------------------------------
@@ -1410,16 +1413,44 @@ _RIGHT_BROW_IDX = [300, 293, 334, 296, 336, 285, 295, 282, 283, 276]
 _NOSE_IDX = [1, 2, 98, 327, 168, 6, 197, 195, 5, 4, 45, 220, 115, 48, 64, 102, 49, 131, 134, 236, 196, 3, 51, 281, 275, 440, 344, 278, 294, 331, 279, 360, 363, 456, 420, 399, 412, 351]
 _LIPS_IDX = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95, 185, 40, 39, 37, 0, 267, 269, 270, 409, 415, 310, 311, 312, 13, 82, 81, 80, 191, 78]
 
+# MediaPipe FACEMESH_FACE_OVAL landmark indices — defines the face boundary
+_FACE_OVAL_IDX = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
+                  397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
+                  172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109]
+
+# Border exclusion margin (pixels) — marks near image edges are rejected
+_BORDER_MARGIN = 10
+
 def _build_skin_mask(shape: tuple, landmarks, margin: int = 5) -> np.ndarray:
     """
-    Build a binary mask that covers the face skin surface,
-    EXCLUDING eyes, eyebrows, nose interior, and lips.
+    Build a binary mask that covers ONLY the face skin surface.
+
+    1. Start with a ZERO mask (nothing valid)
+    2. Fill face oval polygon from MediaPipe FACEMESH_FACE_OVAL
+    3. Erode the mask slightly to remove hairline/boundary artifacts
+    4. Subtract feature interiors (eyes, brows, nose, lips)
+    5. Exclude image border pixels
     """
     h, w = shape[:2]
-    # Start with full face mask
-    skin_mask = np.ones((h, w), dtype=np.uint8) * 255
+    # Start with ZERO mask — only the face interior will be valid
+    skin_mask = np.zeros((h, w), dtype=np.uint8)
 
-    # Build exclusion polygons from landmark groups
+    # Build face oval polygon from landmarks
+    oval_pts = []
+    for idx in _FACE_OVAL_IDX:
+        if idx < len(landmarks):
+            lm = landmarks[idx]
+            oval_pts.append([int(lm.x * w), int(lm.y * h)])
+
+    if len(oval_pts) >= 3:
+        oval_poly = np.array(oval_pts, dtype=np.int32)
+        cv2.fillPoly(skin_mask, [oval_poly], 255)
+
+        # Erode the face oval mask to remove hairline/boundary artifacts
+        erode_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+        skin_mask = cv2.erode(skin_mask, erode_kernel, iterations=1)
+
+    # Subtract feature interiors (eyes, brows, nose, lips)
     for idx_group in [_LEFT_EYE_IDX, _RIGHT_EYE_IDX, _LEFT_BROW_IDX, _RIGHT_BROW_IDX, _NOSE_IDX, _LIPS_IDX]:
         pts = []
         for idx in idx_group:
@@ -1437,22 +1468,29 @@ def _build_skin_mask(shape: tuple, landmarks, margin: int = 5) -> np.ndarray:
                 inflated = ((hull - [cx_h, cy_h]) * scale + [cx_h, cy_h]).astype(np.int32)
                 cv2.fillConvexPoly(skin_mask, inflated, 0)
 
+    # Exclude image border pixels
+    skin_mask[:_BORDER_MARGIN, :] = 0
+    skin_mask[-_BORDER_MARGIN:, :] = 0
+    skin_mask[:, :_BORDER_MARGIN] = 0
+    skin_mask[:, -_BORDER_MARGIN:] = 0
+
     return skin_mask
 
 
-def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, np.ndarray]:
+def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list, np.ndarray]:
     """
     Detects discrete facial anomalies (scars, moles, birthmarks, texture clusters)
-    on the skin surface using multi-scale detection.
+    on the skin surface using multi-scale detection with strict face-region validation.
     
     Returns a tuple:
-        - list of mark descriptors: [{"centroid": (cx, cy), "area": float, "intensity": float, ...}, ...]
+        - list of valid mark descriptors
+        - list of rejected mark descriptors (with rejection_reason)
         - occlusion_mask (np.ndarray): Mask of occluded regions
     """
     h, w = aligned_crop.shape[:2]
     gray = cv2.cvtColor(aligned_crop, cv2.COLOR_BGR2GRAY)
 
-    # Build skin mask excluding major facial features
+    # Build skin mask (face oval + erosion + feature exclusion + border exclusion)
     skin_mask = _build_skin_mask(aligned_crop.shape, landmarks)
 
     # Build occluded mask for Bayesian Penalty Nullification
@@ -1468,6 +1506,10 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, np.n
     valid_mask = cv2.bitwise_and(skin_mask, cv2.bitwise_not(occ_mask))
 
     marks = []
+    rejected_marks = []
+
+    # Minimum contour-mask overlap ratio to accept a mark
+    _MIN_OVERLAP_RATIO = 0.70
 
     # 1. Dark spots (moles/freckles)
     dark_thresh = cv2.adaptiveThreshold(
@@ -1500,7 +1542,7 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, np.n
         (linear_contours, "linear_scar")
     ]
 
-    # We will build a spatial grid to prevent overlapping duplicate detections
+    # Spatial grid to prevent overlapping duplicate detections
     used_mask = np.zeros((h, w), dtype=np.uint8)
 
     for cnt_list, m_type in all_contours:
@@ -1516,14 +1558,17 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, np.n
             cx = M["m10"] / M["m00"]
             cy = M["m01"] / M["m00"]
 
-            # Check for overlap
-            if used_mask[int(cy), int(cx)] > 0:
+            # Check for overlap with already-detected marks
+            ix, iy = int(cx), int(cy)
+            if iy >= h or ix >= w:
+                continue
+            if used_mask[iy, ix] > 0:
                 continue
 
             perimeter = cv2.arcLength(cnt, True)
             circularity = (4 * np.pi * area / (perimeter * perimeter)) if perimeter > 0 else 0
 
-            # Bounding box and aspect ratio/eccentricity
+            # Bounding box and aspect ratio
             x, y, bw, bh = cv2.boundingRect(cnt)
             aspect_ratio = float(bw) / bh if bh > 0 else 0
 
@@ -1531,15 +1576,12 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, np.n
             orientation = 0.0
             if len(cnt) >= 5:
                 ellipse = cv2.fitEllipse(cnt)
-                orientation = ellipse[2] # angle
+                orientation = ellipse[2]
 
             # Mean intensity of the mark region
             mark_mask = np.zeros((h, w), dtype=np.uint8)
             cv2.drawContours(mark_mask, [cnt], -1, 255, -1)
             mean_intensity = float(cv2.mean(gray, mask=mark_mask)[0])
-
-            # Mark it used to prevent overlaps
-            cv2.drawContours(used_mask, [cnt], -1, 255, -1)
 
             # Nearest landmark
             min_dist = float('inf')
@@ -1572,7 +1614,7 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, np.n
                 else:
                     face_region = "right_cheek"
 
-            marks.append({
+            mark_descriptor = {
                 "centroid": (cx / w, cy / h),  # normalized [0,1]
                 "area": area,
                 "intensity": mean_intensity,
@@ -1584,9 +1626,42 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, np.n
                 "face_region": face_region,
                 "bbox": (x, y, bw, bh),
                 "contour": cnt,  # keep for visualization
-            })
+            }
 
-    return marks, occ_mask
+            # ── Face-region validation ──
+            rejection_reason = None
+
+            # Check 1: Centroid must be inside face oval mask
+            if skin_mask[iy, ix] == 0:
+                rejection_reason = "outside_face_mask"
+
+            # Check 2: Border artifact rejection
+            if rejection_reason is None:
+                if ix < _BORDER_MARGIN or ix >= (w - _BORDER_MARGIN) or iy < _BORDER_MARGIN or iy >= (h - _BORDER_MARGIN):
+                    rejection_reason = "border_artifact"
+
+            # Check 3: Contour-mask overlap ratio must be >= 70%
+            if rejection_reason is None:
+                contour_pixels = np.count_nonzero(mark_mask)
+                if contour_pixels > 0:
+                    overlap = cv2.bitwise_and(mark_mask, skin_mask)
+                    overlap_pixels = np.count_nonzero(overlap)
+                    overlap_ratio = overlap_pixels / contour_pixels
+                    if overlap_ratio < _MIN_OVERLAP_RATIO:
+                        rejection_reason = f"insufficient_face_overlap ({overlap_ratio:.2f})"
+
+            if rejection_reason is not None:
+                mark_descriptor["rejection_reason"] = rejection_reason
+                # Remove contour before adding to rejected list (not serializable)
+                rejected_desc = {k: v for k, v in mark_descriptor.items() if k != "contour"}
+                rejected_marks.append(rejected_desc)
+                continue
+
+            # Mark it used to prevent overlaps
+            cv2.drawContours(used_mask, [cnt], -1, 255, -1)
+            marks.append(mark_descriptor)
+
+    return marks, rejected_marks, occ_mask
 
 
 def match_facial_marks(marks_gallery: list, marks_probe: list, dist_threshold: float = 0.20):
@@ -2210,8 +2285,8 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     veto_triggered = structural_sim < 0.40
 
     # 7.5 TIER 4: Mark Correspondence (Bayesian LR Engine)
-    marks_gallery, occ_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
-    marks_probe, occ_probe = detect_facial_marks(probe_aligned, probe_landmarks)
+    marks_gallery, rejected_gallery, occ_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
+    marks_probe, rejected_probe, occ_probe = detect_facial_marks(probe_aligned, probe_landmarks)
     
     valid_gallery_marks = []
     for m in marks_gallery:
@@ -2255,8 +2330,11 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     _w3 = _fw["micro_topology"] if _fw else 0.15
     base_fused_score = (tier1_score * _w1) + (tier2_score * _w2) + (tier3_score * _w3)
 
+    bayesian_fused_score = fused_score  # preserve pre-veto posterior × 100
+    veto_reason = None
     if veto_triggered:
         fused_score = 0.0
+        veto_reason = "ARCFACE_VETO"
         conclusion = "EXCLUSION: Biometric Non-Match (ArcFace Veto)"
     elif fused_score > 90.0:
         conclusion = "Strongest Support for Common Source"
@@ -2410,7 +2488,9 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             "unmatched_probe_indices": list(unmatched_pro),
             "unmatched_gallery_indices": list(unmatched_gal),
             "rejected_candidates": rejected_cands,
-            "detector_version": "v2.0 (multi-scale)",
+            "rejected_probe_marks": rejected_probe,
+            "rejected_gallery_marks": rejected_gallery,
+            "detector_version": "v2.0 (multi-scale + face-oval)",
             "matcher_version": "v2.0 (Hungarian + LR)"
         }
 
@@ -2447,6 +2527,8 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         correspondences=correspondences,
         raw_probe_marks=valid_probe_marks,
         raw_gallery_marks=valid_gallery_marks,
+        bayesian_fused_score=round(bayesian_fused_score, 2),
+        veto_reason=veto_reason,
         audit_log=audit
     )
 
@@ -2715,8 +2797,8 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     tier3_score = max(0.0, min(100.0, (1.0 - chi_squared) * 100))
 
     # 9. TIER 4: Mark Correspondence (Bayesian LR Engine)
-    marks_gallery, occ_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
-    marks_probe, occ_probe = detect_facial_marks(probe_aligned, probe_landmarks)
+    marks_gallery, rejected_gallery, occ_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
+    marks_probe, rejected_probe, occ_probe = detect_facial_marks(probe_aligned, probe_landmarks)
     
     valid_gallery_marks = []
     for m in marks_gallery:
@@ -2757,8 +2839,11 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     veto_arcface = best_score < 0.40
 
     # 11. Conclusion
+    bayesian_fused_score = fused_score  # preserve pre-veto
+    veto_reason = None
     if veto_arcface:
         fused_score = 0.0
+        veto_reason = "ARCFACE_VETO"
         conclusion = "EXCLUSION: Biometric Non-Match (ArcFace Veto)"
     elif fused_score > 90.0:
         conclusion = f"TARGET ACQUIRED — Strongest match: {best_user_id} (Posterior: {fused_score:.1f}%)"
@@ -2918,7 +3003,9 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             "unmatched_probe_indices": list(unmatched_pro),
             "unmatched_gallery_indices": list(unmatched_gal),
             "rejected_candidates": rejected_cands,
-            "detector_version": "v2.0 (multi-scale)",
+            "rejected_probe_marks": rejected_probe,
+            "rejected_gallery_marks": rejected_gallery,
+            "detector_version": "v2.0 (multi-scale + face-oval)",
             "matcher_version": "v2.0 (Hungarian + LR)"
         }
 
@@ -2955,6 +3042,8 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         correspondences=correspondences,
         raw_probe_marks=valid_probe_marks,
         raw_gallery_marks=valid_gallery_marks,
+        bayesian_fused_score=round(bayesian_fused_score, 2),
+        veto_reason=veto_reason,
         audit_log=audit,
     )
 

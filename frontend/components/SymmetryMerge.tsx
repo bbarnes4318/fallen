@@ -212,6 +212,21 @@ export default function SymmetryMerge({
 
   const imagesReady = !!galleryImg && !!probeImg;
 
+  // ── Three-tier debug flag separation ──
+  const forensicDebugEnabled =
+    process.env.NEXT_PUBLIC_DEBUG_FORENSIC === "true";
+  const isDebugMode = mode === "debug";
+  // Full forensic debug details require BOTH env flag AND debug tab
+  const showForensicDebugDetails =
+    forensicDebugEnabled && isDebugMode;
+  // Only draw frontend mark circles as fallback when:
+  // 1. Debug mode active, AND
+  // 2. Backend did NOT provide pre-rendered debug overlay images
+  const shouldDrawFrontendMarkPoints =
+    isDebugMode &&
+    !results?.probe_mark_debug_b64 &&
+    !results?.gallery_mark_debug_b64;
+
   // ── LEFT PANE = PROBE (+ wireframe in mesh mode) ──
   const getLeftOverlay = useCallback((): HTMLImageElement | null => {
     if (mode === 'mesh' && pWireImg) return pWireImg;
@@ -348,10 +363,10 @@ export default function SymmetryMerge({
     if (!imagesReady || mode === 'overlap') return;
 
     if (leftCanvasRef.current && probeImg) {
-      drawPane(leftCanvasRef.current, probeImg, getLeftOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, mode === 'delta' ? probePoints : undefined);
+      drawPane(leftCanvasRef.current, probeImg, getLeftOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, shouldDrawFrontendMarkPoints ? probePoints : undefined);
     }
     if (rightCanvasRef.current && galleryImg) {
-      drawPane(rightCanvasRef.current, galleryImg, getRightOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, mode === 'delta' ? galleryPoints : undefined);
+      drawPane(rightCanvasRef.current, galleryImg, getRightOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, shouldDrawFrontendMarkPoints ? galleryPoints : undefined);
     }
   }, [imagesReady, mode, probeImg, getLeftOverlay, zoom, pan, getBorderColor, baseOpacity, overlayOpacity, isXrayMode, probePoints, galleryImg, getRightOverlay, galleryPoints]);
 
@@ -360,10 +375,10 @@ export default function SymmetryMerge({
     if (!imagesReady || mode !== 'overlap') return;
 
     if (overlapLeftRef.current && probeImg) {
-      drawPane(overlapLeftRef.current, probeImg, null, zoom, pan, undefined, undefined, undefined, isXrayMode, probePoints);
+      drawPane(overlapLeftRef.current, probeImg, null, zoom, pan, undefined, undefined, undefined, isXrayMode, undefined);
     }
     if (overlapRightRef.current && galleryImg) {
-      drawPane(overlapRightRef.current, galleryImg, null, zoom, pan, undefined, undefined, undefined, isXrayMode, galleryPoints);
+      drawPane(overlapRightRef.current, galleryImg, null, zoom, pan, undefined, undefined, undefined, isXrayMode, undefined);
     }
   }, [imagesReady, mode, probeImg, zoom, pan, isXrayMode, probePoints, galleryImg, galleryPoints]);
 
@@ -479,13 +494,22 @@ export default function SymmetryMerge({
           {/* Main Verdict Row */}
           {!results.failed_provenance_veto && (() => {
             const fusedScore = results.fused_identity_score ?? 0;
+            const bayesianPreVeto = results.bayesian_fused_score ?? ((results.audit_log?.posterior_probability ?? 0) * 100);
             return (
-              <div className={`px-2 py-1.5 flex justify-between items-center border ${results.veto_triggered ? 'bg-[#1a0005] border-[#5a0015] text-[#ff2040]' : (fusedScore >= 40.0 ? 'bg-[#111100] border-[#D4AF37]/40 text-[#D4AF37]' : 'bg-[#0a0a0a] border-[#333] text-gray-400')}`}>
-                <span className="font-bold tracking-wider text-xs">
-                  {results.veto_triggered ? 'VERDICT: MISMATCH (ARCFACE VETO)' : (fusedScore >= 40.0 ? 'VERDICT: MATCH' : 'VERDICT: INCONCLUSIVE')}
-                </span>
-                <span className="tracking-widest font-bold">FUSED SCORE: {fusedScore.toFixed(2)}%</span>
-              </div>
+              <>
+                <div className={`px-2 py-1.5 flex justify-between items-center border ${results.veto_triggered ? 'bg-[#1a0005] border-[#5a0015] text-[#ff2040]' : (fusedScore >= 40.0 ? 'bg-[#111100] border-[#D4AF37]/40 text-[#D4AF37]' : 'bg-[#0a0a0a] border-[#333] text-gray-400')}`}>
+                  <span className="font-bold tracking-wider text-xs">
+                    {results.veto_triggered ? 'VERDICT: MISMATCH (ARCFACE VETO)' : (fusedScore >= 40.0 ? 'VERDICT: MATCH' : 'VERDICT: INCONCLUSIVE')}
+                  </span>
+                  <span className="tracking-widest font-bold">FUSED SCORE: {fusedScore.toFixed(2)}%</span>
+                </div>
+                {results.veto_triggered && (
+                  <div className="px-2 py-1 flex justify-between items-center border border-[#5a0015]/60 bg-[#0d0002] text-[#ff6070] text-[9px] tracking-wider">
+                    <span>BAYESIAN PRE-VETO: {bayesianPreVeto.toFixed(2)}%</span>
+                    <span>DISPLAYED: 0% — {results.veto_reason ?? 'ARCFACE_VETO'} POLICY</span>
+                  </div>
+                )}
+              </>
             );
           })()}
 
@@ -551,13 +575,19 @@ export default function SymmetryMerge({
                   </div>
                 )}
                 {safeCorrespondences.length > 0 && (
-                  <div className="flex gap-[2px] flex-wrap">
-                    {safeCorrespondences.map((c: Correspondence, i: number) => (
-                      <div key={`corr-${i}`} className={`px-1.5 py-0.5 border bg-[#050505] tracking-widest text-[9px] ${results.veto_triggered || results.failed_provenance_veto ? 'border-[#5a0015] text-[#ff2040]/70' : 'border-[#D4AF37]/30 text-[#D4AF37]/80'}`}>
-                        MARK {i+1} <span className="opacity-50 mx-0.5">LR:</span>{(typeof c.lr === "number" ? c.lr : 0).toFixed(1)}
-                      </div>
-                    ))}
-                  </div>
+                  isDebugMode ? (
+                    <div className="flex gap-[2px] flex-wrap">
+                      {safeCorrespondences.map((c: Correspondence, i: number) => (
+                        <div key={`corr-${i}`} className={`px-1.5 py-0.5 border bg-[#050505] tracking-widest text-[9px] ${results.veto_triggered || results.failed_provenance_veto ? 'border-[#5a0015] text-[#ff2040]/70' : 'border-[#D4AF37]/30 text-[#D4AF37]/80'}`}>
+                          MARK {i+1} <span className="opacity-50 mx-0.5">LR:</span>{(typeof c.lr === "number" ? c.lr : 0).toFixed(1)}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className={`px-1.5 py-0.5 border bg-[#050505] tracking-widest text-[9px] ${results.veto_triggered || results.failed_provenance_veto ? 'border-[#5a0015] text-[#ff2040]/70' : 'border-[#D4AF37]/30 text-[#D4AF37]/80'}`}>
+                      MARK CORRESPONDENCES: {safeCorrespondences.length}
+                    </div>
+                  )
                 )}
               </div>
             );
@@ -611,7 +641,7 @@ export default function SymmetryMerge({
             {...commonPaneEvents}
           >
             <canvas ref={leftCanvasRef} className="block w-full h-full" />
-            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">PROBE + DELTA</span> : mode === 'debug' ? <span className="text-yellow-500">PROBE + DEBUG</span> : 'PROBE (A)'}</div>
+            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">PROBE + DELTA</span> : mode === 'debug' ? <span className="text-yellow-500">PROBE MARK DEBUG</span> : 'PROBE (A)'}</div>
           </div>
 
           {/* Right Pane: Gallery */}
@@ -620,14 +650,14 @@ export default function SymmetryMerge({
             {...commonPaneEvents}
           >
             <canvas ref={rightCanvasRef} className="block w-full h-full" />
-            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">GALLERY + DELTA</span> : mode === 'debug' ? <span className="text-yellow-500">GALLERY + DEBUG</span> : 'GALLERY (B)'}</div>
+            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">GALLERY + DELTA</span> : mode === 'debug' ? <span className="text-yellow-500">GALLERY MARK DEBUG</span> : 'GALLERY (B)'}</div>
           </div>
         </div>
       )}
 
       {/* ── Debug Forensic Panel ── */}
       {(() => {
-        if (!(process.env.NEXT_PUBLIC_DEBUG_FORENSIC === "true" && results?.mark_debug)) return null;
+        if (!(showForensicDebugDetails && results?.mark_debug)) return null;
         
         const debugProbeMarks: MarkDescriptor[] =
           Array.isArray(results.mark_debug.probe_marks_first_20)
@@ -656,13 +686,13 @@ export default function SymmetryMerge({
 
         return (
           <div className="shrink-0 mt-1 p-2 border border-yellow-800/50 bg-[#0e0e00] text-[8px] font-mono text-yellow-500/80 overflow-auto max-h-40">
-            <div className="font-bold tracking-widest mb-1 text-yellow-400">DEBUG FORENSIC — BAYESIAN HUNGARIAN MATCHER ({results.mark_debug.version as string})</div>
+            <div className="font-bold tracking-widest mb-1 text-yellow-400">DEBUG FORENSIC — BAYESIAN HUNGARIAN MATCHER ({results.mark_debug.version ?? results.mark_debug.matcher_version ?? 'N/A'})</div>
             <div className="grid grid-cols-3 gap-2">
               <div>
                 <div className="text-yellow-600 mb-0.5">METRICS</div>
-                <div>PROBE MARKS: {results.mark_debug.probe_marks_count as number}</div>
-                <div>GALLERY MARKS: {results.mark_debug.gallery_marks_count as number}</div>
-                <div>CORRESPONDENCES: {results.mark_debug.correspondences_count as number}</div>
+                <div>PROBE MARKS: {results.mark_debug.probe_marks_count ?? 0}</div>
+                <div>GALLERY MARKS: {results.mark_debug.gallery_marks_count ?? 0}</div>
+                <div>CORRESPONDENCES: {results.mark_debug.correspondences_count ?? 0}</div>
               </div>
               <div>
                 <div className="text-yellow-600 mb-0.5">UNMATCHED INDICES</div>
@@ -679,7 +709,7 @@ export default function SymmetryMerge({
           </div>
         );
       })()}
-      {process.env.NEXT_PUBLIC_DEBUG_FORENSIC === "true" && results && !results.mark_debug ? (
+      {showForensicDebugDetails && results && !results.mark_debug ? (
         <div className="shrink-0 mt-1 p-2 border border-yellow-800/50 bg-[#0e0e00] text-[8px] font-mono text-yellow-500/80 overflow-auto max-h-40">
           <div className="font-bold tracking-widest mb-1 text-yellow-400">DEBUG FORENSIC — DELTA CORRESPONDENCE INTEGRITY</div>
           <div>raw_probe_marks: {probeMarksSource.length}</div>
@@ -712,9 +742,9 @@ export default function SymmetryMerge({
         <span>
           {mode === 'aligned' && 'CANONICAL ALIGNMENT'}
           {mode === 'mesh' && <span className="text-[#D4AF37]">3DMM WIREFRAME HUD</span>}
-          {mode === 'delta' && <span className="text-red-500">BIOLOGICAL TOPOGRAPHY DELTA</span>}
+          {mode === 'delta' && <span className="text-red-500">PAIRWISE EDGE DELTA — NOT CONFIRMED SCAR MATCHES</span>}
           {mode === 'overlap' && <span className="text-[#D4AF37]">DRAG TO COMPARE OVERLAP</span>}
-          {mode === 'debug' && <span className="text-yellow-500">FORENSIC MARK DEBUGGER OVERLAY</span>}
+          {mode === 'debug' && <span className="text-yellow-500">GREEN = ACCEPTED MATCH · CYAN = UNMATCHED DETECTED MARK · GRAY = UNKNOWN</span>}
           {isXrayMode && <span className="ml-2 text-[#D4AF37] animate-pulse">· X-RAY ACTIVE</span>}
         </span>
         <span>SYNCHRONIZED · {Math.round(zoom * 100)}%</span>

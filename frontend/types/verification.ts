@@ -1,5 +1,7 @@
 export interface AuditLog {
   raw_cosine_score: number;
+  raw_arcface_score?: number;
+  raw_secondary_score?: number;
   statistical_certainty: string;
   false_acceptance_rate: string;
   nodes_mapped: number;
@@ -22,6 +24,7 @@ export interface AuditLog {
   lr_total?: number | null;
   posterior_probability?: number | null;
   mark_lrs?: number[] | null;
+  bayesian_fused_score?: number | null;
 }
 
 export type RawPoint = 
@@ -39,7 +42,9 @@ export interface Correspondence {
 
 export type MarkType =
   | "dark_blob"
+  | "dark_spot"
   | "light_blob"
+  | "light_spot"
   | "linear_scar"
   | "texture_cluster"
   | "unknown";
@@ -52,6 +57,8 @@ export interface MarkDescriptor {
   area?: number;
   intensity?: number;
   circularity?: number;
+  aspect_ratio?: number;
+  orientation?: number;
   bbox?: [number, number, number, number];
   contour_area?: number;
   source_side?: "probe" | "gallery";
@@ -59,6 +66,7 @@ export interface MarkDescriptor {
   nearest_landmark_index?: number;
   face_region?: string;
   lr?: number;
+  rejection_reason?: string;
   [key: string]: unknown;
 }
 
@@ -84,11 +92,25 @@ export interface MarkDebugPayload {
   probe_marks_first_20?: MarkDescriptor[];
   gallery_marks_first_20?: MarkDescriptor[];
   correspondences_first_20?: MarkDebugCorrespondence[];
+  correspondences?: MarkDebugCorrespondence[];
   unmatched_probe_indices?: number[];
   unmatched_gallery_indices?: number[];
+  probe_unmatched_indices?: number[];
+  gallery_unmatched_indices?: number[];
   rejected_candidates?: MarkDebugCorrespondence[];
+  rejected_probe_marks?: MarkDescriptor[];
+  rejected_gallery_marks?: MarkDescriptor[];
   detector_version?: string;
   matcher_version?: string;
+  version?: string;
+  [key: string]: unknown;
+}
+
+/** Typed payload for per-face data returned by the backend */
+export interface FaceDataPayload {
+  marks?: RawPoint[];
+  occluded_regions?: string[];
+  age?: number;
   [key: string]: unknown;
 }
 
@@ -103,6 +125,8 @@ export interface VerificationResult {
   marks_detected_probe?: number;
   marks_matched?: number;
   fused_identity_score: number;
+  bayesian_fused_score?: number | null;
+  veto_reason?: string | null;
   veto_triggered: boolean;
   failed_provenance_veto?: boolean;
   synthetic_anomaly_score?: number;
@@ -119,8 +143,8 @@ export interface VerificationResult {
   mark_debug?: MarkDebugPayload | null;
   correspondences?: Correspondence[];
   audit_log?: AuditLog;
-  probe_data?: Record<string, unknown>;
-  gallery_data?: Record<string, unknown>;
+  probe_data?: FaceDataPayload;
+  gallery_data?: FaceDataPayload;
   occluded_regions?: string[];
   occlusion_percentage?: number;
   effective_geometric_ratios_used?: number;
