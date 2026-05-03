@@ -7,8 +7,7 @@ import {
   Correspondence,
   MarkDebugCorrespondence,
   MarkDescriptor,
-  ScoringTrace,
-  MarkMatchStatus
+  ScoringTrace
 } from '@/types/verification';
 
 type ForensicPoint = {
@@ -412,7 +411,7 @@ export default function SymmetryMerge({
   }, [galleryMarksSource, mapPoint]);
 
   // ── Rejected points (DEBUG_FORENSIC only) ──
-  const mapRejectedMark = useCallback((m: any): ForensicPoint | null => {
+  const mapRejectedMark = useCallback((m: MarkDescriptor): ForensicPoint | null => {
     const x = Array.isArray(m.centroid)
       ? m.centroid[0]
       : typeof m.x === "number"
@@ -449,7 +448,7 @@ export default function SymmetryMerge({
     if (!Array.isArray(rejected)) return [];
 
     return rejected
-      .map((m: any) => mapRejectedMark(m))
+      .map((m: MarkDescriptor) => mapRejectedMark(m))
       .filter((p): p is ForensicPoint => p !== null);
   }, [forensicDebugEnabled, results, mapRejectedMark]);
 
@@ -460,7 +459,7 @@ export default function SymmetryMerge({
     if (!Array.isArray(rejected)) return [];
 
     return rejected
-      .map((m: any) => mapRejectedMark(m))
+      .map((m: MarkDescriptor) => mapRejectedMark(m))
       .filter((p): p is ForensicPoint => p !== null);
   }, [forensicDebugEnabled, results, mapRejectedMark]);
 
@@ -1003,16 +1002,6 @@ export default function SymmetryMerge({
       {(() => {
         if (!(showForensicDebugDetails && results?.mark_debug)) return null;
         
-        const debugProbeMarks: MarkDescriptor[] =
-          Array.isArray(results.mark_debug.probe_marks_first_20)
-            ? results.mark_debug.probe_marks_first_20
-            : [];
-
-        const debugGalleryMarks: MarkDescriptor[] =
-          Array.isArray(results.mark_debug.gallery_marks_first_20)
-            ? results.mark_debug.gallery_marks_first_20
-            : [];
-
         const debugCorrespondences: MarkDebugCorrespondence[] =
           Array.isArray(results.mark_debug.correspondences_first_20)
             ? results.mark_debug.correspondences_first_20
