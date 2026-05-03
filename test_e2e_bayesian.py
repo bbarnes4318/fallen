@@ -705,6 +705,136 @@ def test_migration_columns_complete():
     print(f"  [PASS] All {len(required_columns)} Phase 5B provenance columns present in migration script")
 
 
+def test_api_mark_diagnostics_and_language():
+    """
+    Test Phase 6 requirements against the FastAPI backend endpoints.
+    """
+    print("\n  [TEST] Phase 6: FastAPI mark_diagnostics and language")
+    
+    try:
+        from fastapi.testclient import TestClient
+        from backend.main import app, _create_jwt
+        import backend.main as main_module
+    except ImportError as e:
+        print(f"  [SKIP] Skipping FastAPI tests because dependencies are missing locally: {e}")
+        return
+        
+    import base64
+    import cv2
+    import json
+    
+    client = TestClient(app)
+    
+    # 1. JWT setup
+    token = _create_jwt("test_operator")
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    # Mock fetch_image_from_url to load local paths
+    original_fetch = main_module.fetch_image_from_url
+    def mock_fetch(url):
+        img = cv2.imread(url)
+        return img, "dummy_hash_123"
+    main_module.fetch_image_from_url = mock_fetch
+    
+    gallery_path = str(PROJECT_ROOT / "arnold_test.jpg")
+    probe_path = str(PROJECT_ROOT / "coria_test.jpg")
+    
+    with open(gallery_path, "rb") as gf, open(probe_path, "rb") as pf:
+        g_b64 = base64.b64encode(gf.read()).decode("utf-8")
+        p_b64 = base64.b64encode(pf.read()).decode("utf-8")
+        
+    # 9. /marks/analyze endpoint test
+    marks_resp = client.post("/marks/analyze", json={
+        "probe_b64": p_b64,
+        "gallery_b64": g_b64
+    }, headers=headers)
+    assert marks_resp.status_code == 200, f"/marks/analyze failed: {marks_resp.text}"
+    marks_data = marks_resp.json()
+    assert "mark_diagnostics" in marks_data
+    assert marks_data.get("aligned_probe_b64") is not None
+    assert marks_data.get("aligned_gallery_b64") is not None
+    print("  [PASS] /marks/analyze endpoint functional")
+    
+    # 8. Known-mark fixture nonzero detections
+    md = marks_data["mark_diagnostics"]
+    assert md["raw_probe_marks_count"] > 0 or md["raw_gallery_marks_count"] > 0, "Expected nonzero marks on fixture"
+    print("  [PASS] Known-mark fixture returned nonzero raw detections")
+    
+    # Repeatability test
+    prev = {}
+    
+    for i in range(3):
+        fuse_resp = client.post("/verify/fuse", json={
+            "gallery_url": gallery_path,
+            "probe_url": probe_path
+        }, headers=headers)
+        assert fuse_resp.status_code == 200, f"/verify/fuse failed: {fuse_resp.text}"
+        f_data = fuse_resp.json()
+        
+        # 1. mark_diagnostics always present
+        assert "mark_diagnostics" in f_data
+        md = f_data["mark_diagnostics"]
+        for key in ["raw_probe_marks_count", "raw_gallery_marks_count", "accepted_correspondences_count",
+                    "rejected_candidates_count", "detector_status", "matcher_status", "lr_marks",
+                    "mark_match_status", "rejection_summary"]:
+            assert key in md, f"Missing {key} in mark_diagnostics"
+            
+        # 2. LR_marks neutral explanation
+        if md["lr_marks"] == 1.0 or md["lr_marks"] is None:
+            assert md["rejection_summary"], "Rejection summary must be present if lr_marks is 1.0 or None"
+            
+        # 3. Mark status present
+        assert "mark_match_status" in f_data
+        
+        # 4. Post-CLAHE crop hashes
+        audit = f_data["audit_log"]
+        assert "probe_aligned_crop_hash_post_clahe" in audit
+        assert "gallery_aligned_crop_hash_post_clahe" in audit
+        
+        # 5. Face-model fields
+        assert "raw_arcface_similarity" in f_data
+        assert "raw_secondary_similarity" in f_data
+        assert "fused_face_model_similarity" in f_data
+        assert "lr_face_model" in f_data
+        
+        # 6. Forbidden conclusion phrases
+        conc = audit.get("conclusion", "").lower()
+        forbidden = ["biometric non-match", "different identities", "target acquired", "identity confirmed", "match confirmed", "automatic exclusion"]
+        for f in forbidden:
+            assert f not in conc, f"Forbidden phrase '{f}' found in conclusion"
+            
+        # 7. Repeatability
+        if i == 0:
+            prev["probe_decoded"] = audit["probe_decoded_image_hash"]
+            prev["gallery_decoded"] = audit["gallery_decoded_image_hash"]
+            prev["probe_aligned"] = audit["probe_aligned_crop_hash_post_clahe"]
+            prev["gallery_aligned"] = audit["gallery_aligned_crop_hash_post_clahe"]
+            prev["probe_marks"] = md["raw_probe_marks_count"]
+            prev["accepted"] = md["accepted_correspondences_count"]
+            prev["status"] = md["mark_match_status"]
+            prev["lr"] = md["lr_marks"]
+            prev["post"] = audit["posterior_probability"]
+        else:
+            assert prev["probe_decoded"] == audit["probe_decoded_image_hash"]
+            assert prev["gallery_decoded"] == audit["gallery_decoded_image_hash"]
+            assert prev["probe_aligned"] == audit["probe_aligned_crop_hash_post_clahe"]
+            assert prev["gallery_aligned"] == audit["gallery_aligned_crop_hash_post_clahe"]
+            assert prev["probe_marks"] == md["raw_probe_marks_count"]
+            assert prev["accepted"] == md["accepted_correspondences_count"]
+            assert prev["status"] == md["mark_match_status"]
+            if prev["lr"] is not None and md["lr_marks"] is not None:
+                assert abs(prev["lr"] - md["lr_marks"]) < 1e-9
+            if prev["post"] is not None and audit["posterior_probability"] is not None:
+                assert abs(prev["post"] - audit["posterior_probability"]) < 1e-9
+                
+    print("  [PASS] /verify/fuse repeatability verified")
+    print("  [PASS] Forbidden language verified absent")
+    print("  [PASS] mark_diagnostics schema verified")
+    
+    # Restore mock
+    main_module.fetch_image_from_url = original_fetch
+
+
 if __name__ == "__main__":
     # Run all unit tests first
     test_bayesian_identity()
@@ -719,6 +849,7 @@ if __name__ == "__main__":
     test_no_shared_marks_produce_no_matches()
     test_lr_total_product_rule()
     test_migration_columns_complete()
+    test_api_mark_diagnostics_and_language()
     print("\n  *** ALL UNIT TESTS PASSED ***\n")
 
     # Run the original E2E pipeline test
