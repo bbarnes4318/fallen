@@ -397,20 +397,45 @@ def _build_rejection_summary(
     mark_match_status: str,
     exact_image_match: bool,
     tier4_calibration,
+    trace_probe: dict = None,
+    trace_gallery: dict = None,
 ) -> str:
     """Return a human-readable explanation for why LR_marks is neutral or absent."""
     matched = mark_result.get("matched", 0)
     n_probe = len(valid_probe_marks)
     n_gallery = len(valid_gallery_marks)
 
+    def _get_stage_reason(side_name, trace):
+        if not trace:
+            return f"No raw marks detected on {side_name}"
+        if trace.get("initial_candidates", 0) == 0:
+            return f"No initial mark candidates found after thresholding on {side_name}"
+        if trace.get("after_skin_mask", 0) == 0:
+            return f"Candidates found, but removed by occlusion/skin mask on {side_name}"
+        if trace.get("after_area_filter", 0) == 0:
+            return f"Initial candidates found, but all rejected by area threshold on {side_name}"
+        if trace.get("after_shape_filter", 0) == 0:
+            return f"Initial candidates found, but all rejected by shape/geometry filter on {side_name}"
+        if trace.get("after_region_exclusion", 0) == 0:
+            return f"Candidates found, but removed by facial-region exclusion mask on {side_name}"
+        if trace.get("after_contrast_filter", 0) == 0:
+            return f"Candidates found, but all rejected by low contrast threshold on {side_name}"
+        return f"No raw marks detected on {side_name}"
+
     if exact_image_match:
         return "Exact self-match: mark evidence self-corresponding by identity (LR neutralized to 1.0)"
     if n_probe == 0 and n_gallery == 0:
-        return "No raw marks detected on either image"
+        reason_p = _get_stage_reason("probe", trace_probe)
+        reason_g = _get_stage_reason("gallery", trace_gallery)
+        base_p = reason_p.replace(" on probe", "")
+        base_g = reason_g.replace(" on gallery", "")
+        if base_p == base_g:
+            return f"{base_p} on both images"
+        return f"{reason_p}. {reason_g}."
     if n_probe == 0:
-        return "No raw marks detected on probe"
+        return _get_stage_reason("probe", trace_probe)
     if n_gallery == 0:
-        return "No raw marks detected on gallery"
+        return _get_stage_reason("gallery", trace_gallery)
     if tier4_calibration is None and matched > 0:
         return "Mark calibration data unavailable — LR defaulted to 1.0"
     if mark_match_status == "DETECTOR_UNAVAILABLE":
@@ -1695,7 +1720,7 @@ def _build_skin_mask(shape: tuple, landmarks, margin: int = 5) -> np.ndarray:
     return skin_mask
 
 
-def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list, np.ndarray]:
+def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list, np.ndarray, dict, dict]:
     """
     Detects discrete facial anomalies (scars, moles, birthmarks, texture clusters)
     on the skin surface using multi-pass detection with strict face-region validation.
@@ -1730,18 +1755,29 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list
     # Valid mask for detection
     valid_mask = cv2.bitwise_and(skin_mask, cv2.bitwise_not(occ_mask))
 
+    trace = {
+        "initial_candidates": 0,
+        "after_skin_mask": 0,
+        "after_area_filter": 0,
+        "after_shape_filter": 0,
+        "after_region_exclusion": 0,
+        "after_contrast_filter": 0,
+        "final_valid_marks": 0
+    }
+    overlays = {}
+
     marks = []
     rejected_marks = []
 
     # Minimum contour-mask overlap ratio to accept a mark
-    _MIN_OVERLAP_RATIO = 0.70
+    _MIN_OVERLAP_RATIO = 0.50
     # Minimum contrast (absolute intensity difference from local mean) to accept
-    _MIN_CONTRAST = 3.0
+    _MIN_CONTRAST = 1.5
 
     # ── Pass 1: Dark spots/moles ──
     dark_thresh = cv2.adaptiveThreshold(
         gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV, blockSize=15, C=5
+        cv2.THRESH_BINARY_INV, blockSize=15, C=3
     )
     dark_masked = cv2.bitwise_and(dark_thresh, valid_mask)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -1751,7 +1787,7 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list
     # ── Pass 2: Light scars (hypopigmented marks) ──
     light_thresh = cv2.adaptiveThreshold(
         255 - gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV, blockSize=15, C=5
+        cv2.THRESH_BINARY_INV, blockSize=15, C=3
     )
     light_masked = cv2.bitwise_and(light_thresh, valid_mask)
     light_cleaned = cv2.morphologyEx(light_masked, cv2.MORPH_OPEN, kernel)
@@ -1766,10 +1802,19 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list
     # ── Pass 4: Texture clusters (bilateral filter difference) ──
     smoothed = cv2.bilateralFilter(gray, 9, 75, 75)
     texture_diff = cv2.absdiff(gray, smoothed)
-    _, texture_thresh = cv2.threshold(texture_diff, 12, 255, cv2.THRESH_BINARY)
+    _, texture_thresh = cv2.threshold(texture_diff, 8, 255, cv2.THRESH_BINARY)
     texture_masked = cv2.bitwise_and(texture_thresh, valid_mask)
     texture_cleaned = cv2.morphologyEx(texture_masked, cv2.MORPH_OPEN, kernel)
     texture_contours, _ = cv2.findContours(texture_cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Calculate initial candidates before mask (approximate by finding contours on raw thresholds)
+    dark_initial_cnts, _ = cv2.findContours(cv2.morphologyEx(dark_thresh, cv2.MORPH_OPEN, kernel), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    light_initial_cnts, _ = cv2.findContours(cv2.morphologyEx(light_thresh, cv2.MORPH_OPEN, kernel), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    edges_initial = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+    linear_initial_cnts, _ = cv2.findContours(edges_initial, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    texture_initial_cnts, _ = cv2.findContours(cv2.morphologyEx(texture_thresh, cv2.MORPH_OPEN, kernel), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    trace["initial_candidates"] = len(dark_initial_cnts) + len(light_initial_cnts) + len(linear_initial_cnts) + len(texture_initial_cnts)
 
     all_contours = [
         (dark_contours, "dark"),
@@ -1777,6 +1822,21 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list
         (linear_contours, "linear_scar"),
         (texture_contours, "texture_cluster"),
     ]
+    
+    trace["after_skin_mask"] = sum(len(c[0]) for c in all_contours)
+
+    import os
+    if os.getenv("DEBUG_FORENSIC") == "true":
+        import base64
+        _, sm_buf = cv2.imencode('.png', skin_mask)
+        overlays["skin_mask_b64"] = f"data:image/png;base64,{base64.b64encode(sm_buf).decode('utf-8')}"
+        
+        cand_mask = np.zeros((h, w), dtype=np.uint8)
+        for cnt_list, _ in all_contours:
+            cv2.drawContours(cand_mask, cnt_list, -1, 255, 1)
+        _, cm_buf = cv2.imencode('.png', cand_mask)
+        overlays["candidate_mask_b64"] = f"data:image/png;base64,{base64.b64encode(cm_buf).decode('utf-8')}"
+
 
     # Spatial grid to prevent overlapping duplicate detections
     used_mask = np.zeros((h, w), dtype=np.uint8)
@@ -1791,10 +1851,14 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list
                 continue  # Too small — noise
             if area > 500:
                 continue  # Too large — shadow/region artifact
+            
+            trace["after_area_filter"] += 1
 
             M = cv2.moments(cnt)
             if M["m00"] == 0:
                 continue  # Invalid geometry — degenerate contour
+            
+            trace["after_shape_filter"] += 1
 
             cx = M["m10"] / M["m00"]
             cy = M["m01"] / M["m00"]
@@ -1925,6 +1989,9 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list
                     overlap_ratio = overlap_pixels / contour_pixels
                     if overlap_ratio < _MIN_OVERLAP_RATIO:
                         rejection_reason = f"insufficient_face_overlap ({overlap_ratio:.2f})"
+                        
+            if rejection_reason is None:
+                trace["after_region_exclusion"] += 1
 
             # Check 4: Low contrast rejection (noise floor)
             if rejection_reason is None:
@@ -1941,13 +2008,29 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list
                 rejected_desc = {k: v for k, v in mark_descriptor.items() if k != "contour"}
                 rejected_marks.append(rejected_desc)
                 continue
+                
+            trace["after_contrast_filter"] += 1
 
             # Mark it used to prevent overlaps
             cv2.drawContours(used_mask, [cnt], -1, 255, -1)
             mark_index += 1
             marks.append(mark_descriptor)
+            trace["final_valid_marks"] += 1
 
-    return marks, rejected_marks, occ_mask
+    if os.getenv("DEBUG_FORENSIC") == "true":
+        rej_overlay = aligned_crop.copy()
+        for rm in rejected_marks:
+            cv2.rectangle(rej_overlay, (rm["bbox"][0], rm["bbox"][1]), (rm["bbox"][0]+rm["bbox"][2], rm["bbox"][1]+rm["bbox"][3]), (0, 0, 255), 1)
+        _, ro_buf = cv2.imencode('.png', rej_overlay)
+        overlays["rejected_overlay_b64"] = f"data:image/png;base64,{base64.b64encode(ro_buf).decode('utf-8')}"
+        
+        fin_overlay = aligned_crop.copy()
+        for m in marks:
+            cv2.rectangle(fin_overlay, (m["bbox"][0], m["bbox"][1]), (m["bbox"][0]+m["bbox"][2], m["bbox"][1]+m["bbox"][3]), (0, 255, 0), 1)
+        _, fo_buf = cv2.imencode('.png', fin_overlay)
+        overlays["final_marks_overlay_b64"] = f"data:image/png;base64,{base64.b64encode(fo_buf).decode('utf-8')}"
+
+    return marks, rejected_marks, occ_mask, trace, overlays
 
 
 
@@ -2693,8 +2776,8 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     veto_triggered = structural_sim < 0.40
 
     # 7.5 TIER 4: Mark Correspondence (Bayesian LR Engine)
-    marks_gallery, rejected_gallery, occ_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
-    marks_probe, rejected_probe, occ_probe = detect_facial_marks(probe_aligned, probe_landmarks)
+    marks_gallery, rejected_gallery, occ_gallery, trace_gallery, overlays_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
+    marks_probe, rejected_probe, occ_probe, trace_probe, overlays_probe = detect_facial_marks(probe_aligned, probe_landmarks)
     
     valid_gallery_marks = []
     for m in marks_gallery:
@@ -3383,8 +3466,8 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
         }
 
     # ── 4. Mark Detection (reuses production detector) ──
-    marks_gallery, rejected_gallery, occ_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
-    marks_probe, rejected_probe, occ_probe = detect_facial_marks(probe_aligned, probe_landmarks)
+    marks_gallery, rejected_gallery, occ_gallery, trace_gallery, overlays_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
+    marks_probe, rejected_probe, occ_probe, trace_probe, overlays_probe = detect_facial_marks(probe_aligned, probe_landmarks)
 
     # Filter valid marks (not occluded, within bounds)
     valid_gallery_marks = []
@@ -3492,7 +3575,12 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
             valid_probe_marks, valid_gallery_marks,
             mark_result, rejected_cands, mark_match_status,
             exact_image_match, TIER4_CALIBRATION,
+            trace_probe=trace_probe, trace_gallery=trace_gallery,
         ),
+        "mark_detector_trace": {
+            "probe": trace_probe,
+            "gallery": trace_gallery
+        }
     }
 
     # ── 9. LR Calculation Trace ──
@@ -3569,6 +3657,10 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
             "spatial_distance_threshold": 0.20,
             "type_mismatch_penalty": 0.5,
             "region_mismatch_penalty": 0.3,
+        }
+        result["debug_overlays"] = {
+            "probe": overlays_probe,
+            "gallery": overlays_gallery
         }
 
     return result
@@ -3791,8 +3883,8 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     tier3_score = max(0.0, min(100.0, (1.0 - chi_squared) * 100))
 
     # 9. TIER 4: Mark Correspondence (Bayesian LR Engine)
-    marks_gallery, rejected_gallery, occ_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
-    marks_probe, rejected_probe, occ_probe = detect_facial_marks(probe_aligned, probe_landmarks)
+    marks_gallery, rejected_gallery, occ_gallery, trace_gallery, overlays_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
+    marks_probe, rejected_probe, occ_probe, trace_probe, overlays_probe = detect_facial_marks(probe_aligned, probe_landmarks)
     
     valid_gallery_marks = []
     for m in marks_gallery:
@@ -3920,6 +4012,25 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         gallery_wireframe_b64 = generate_wireframe_hud(gallery_aligned, gallery_landmarks)
     if probe_landmarks:
         probe_wireframe_b64 = generate_wireframe_hud(probe_aligned, probe_landmarks)
+
+    # ── FORENSIC RECEIPT GENERATION (Always-On Evidence) ──
+    gal_debug_img = gallery_aligned.copy()
+    pro_debug_img = probe_aligned.copy()
+    
+    gal_matched_idx = {(m["gallery_idx"] if isinstance(m, dict) else m[0]) for m in mark_result.get("matches", [])}
+    pro_matched_idx = {(m["probe_idx"] if isinstance(m, dict) else m[1]) for m in mark_result.get("matches", [])}
+    
+    for idx, m in enumerate(valid_gallery_marks):
+        cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
+        color = (0, 255, 0) if idx in gal_matched_idx else ((255, 255, 0) if idx in unmatched_gal else (128, 128, 128))
+        cv2.circle(gal_debug_img, (cx, cy), 4, color, 2)
+        cv2.putText(gal_debug_img, str(idx), (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
+        
+    for idx, m in enumerate(valid_probe_marks):
+        cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
+        color = (0, 255, 0) if idx in pro_matched_idx else ((255, 255, 0) if idx in unmatched_pro else (128, 128, 128))
+        cv2.circle(pro_debug_img, (cx, cy), 4, color, 2)
+        cv2.putText(pro_debug_img, str(idx), (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
 
     # Statistical confidence & attribution from vault match
     stats = calculate_statistical_confidence(best_score)
@@ -4089,24 +4200,6 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     }
 
     if os.getenv("DEBUG_FORENSIC") == "true":
-        gal_debug_img = gallery_aligned.copy()
-        pro_debug_img = probe_aligned.copy()
-        
-        gal_matched_idx = {(m["gallery_idx"] if isinstance(m, dict) else m[0]) for m in mark_result.get("matches", [])}
-        pro_matched_idx = {(m["probe_idx"] if isinstance(m, dict) else m[1]) for m in mark_result.get("matches", [])}
-        
-        for idx, m in enumerate(valid_gallery_marks):
-            cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
-            color = (0, 255, 0) if idx in gal_matched_idx else ((255, 255, 0) if idx in unmatched_gal else (128, 128, 128))
-            cv2.circle(gal_debug_img, (cx, cy), 4, color, 2)
-            cv2.putText(gal_debug_img, str(idx), (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
-            
-        for idx, m in enumerate(valid_probe_marks):
-            cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
-            color = (0, 255, 0) if idx in pro_matched_idx else ((255, 255, 0) if idx in unmatched_pro else (128, 128, 128))
-            cv2.circle(pro_debug_img, (cx, cy), 4, color, 2)
-            cv2.putText(pro_debug_img, str(idx), (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
-            
         _, gal_dbuf = cv2.imencode('.png', gal_debug_img)
         gallery_mark_debug_b64 = f"data:image/png;base64,{base64.b64encode(gal_dbuf).decode('utf-8')}"
         _, pro_dbuf = cv2.imencode('.png', pro_debug_img)
