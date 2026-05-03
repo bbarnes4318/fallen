@@ -2850,6 +2850,25 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     probe_vector_hash = compute_vector_hash(ensemble_probe[0])
     probe_alignment = compute_alignment_variance(probe_aligned)
 
+    # ── FORENSIC RECEIPT GENERATION (Always-On Evidence) ──
+    gal_debug_img = gallery_aligned.copy()
+    pro_debug_img = probe_aligned.copy()
+    
+    gal_matched_idx = {(m["gallery_idx"] if isinstance(m, dict) else m[0]) for m in mark_result.get("matches", [])}
+    pro_matched_idx = {(m["probe_idx"] if isinstance(m, dict) else m[1]) for m in mark_result.get("matches", [])}
+    
+    for idx, m in enumerate(valid_gallery_marks):
+        cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
+        color = (0, 255, 0) if idx in gal_matched_idx else ((255, 255, 0) if idx in unmatched_gal else (128, 128, 128))
+        cv2.circle(gal_debug_img, (cx, cy), 4, color, 2)
+        cv2.putText(gal_debug_img, str(idx), (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
+        
+    for idx, m in enumerate(valid_probe_marks):
+        cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
+        color = (0, 255, 0) if idx in pro_matched_idx else ((255, 255, 0) if idx in unmatched_pro else (128, 128, 128))
+        cv2.circle(pro_debug_img, (cx, cy), 4, color, 2)
+        cv2.putText(pro_debug_img, str(idx), (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
+
     audit = AuditLog(
         raw_cosine_score=round(structural_sim, 6),
         raw_arcface_score=round(arcface_sim, 6),
@@ -2998,24 +3017,6 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     }
 
     if os.getenv("DEBUG_FORENSIC") == "true":
-        gal_debug_img = gallery_aligned.copy()
-        pro_debug_img = probe_aligned.copy()
-        
-        gal_matched_idx = {(m["gallery_idx"] if isinstance(m, dict) else m[0]) for m in mark_result.get("matches", [])}
-        pro_matched_idx = {(m["probe_idx"] if isinstance(m, dict) else m[1]) for m in mark_result.get("matches", [])}
-        
-        for idx, m in enumerate(valid_gallery_marks):
-            cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
-            color = (0, 255, 0) if idx in gal_matched_idx else ((255, 255, 0) if idx in unmatched_gal else (128, 128, 128))
-            cv2.circle(gal_debug_img, (cx, cy), 4, color, 2)
-            cv2.putText(gal_debug_img, str(idx), (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
-            
-        for idx, m in enumerate(valid_probe_marks):
-            cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
-            color = (0, 255, 0) if idx in pro_matched_idx else ((255, 255, 0) if idx in unmatched_pro else (128, 128, 128))
-            cv2.circle(pro_debug_img, (cx, cy), 4, color, 2)
-            cv2.putText(pro_debug_img, str(idx), (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
-            
         _, gal_dbuf = cv2.imencode('.png', gal_debug_img)
         gallery_mark_debug_b64 = f"data:image/png;base64,{base64.b64encode(gal_dbuf).decode('utf-8')}"
         _, pro_dbuf = cv2.imencode('.png', pro_debug_img)
