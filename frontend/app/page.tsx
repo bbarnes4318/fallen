@@ -1229,17 +1229,33 @@ export default function Home() {
                     <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[9px] mb-2">
                       <div className="flex justify-between"><span className="text-gray-500">Probe Marks Detected</span><span className="text-white font-bold tabular-nums">{results.mark_diagnostics.raw_probe_marks_count}</span></div>
                       <div className="flex justify-between"><span className="text-gray-500">Gallery Marks Detected</span><span className="text-white font-bold tabular-nums">{results.mark_diagnostics.raw_gallery_marks_count}</span></div>
-                      <div className="flex justify-between"><span className="text-gray-500">Accepted Correspondences</span><span className="text-emerald-400 font-bold tabular-nums">{results.mark_diagnostics.accepted_correspondences_count}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-500">Accepted Shared Mark Correspondences</span><span className="text-emerald-400 font-bold tabular-nums">{results.mark_diagnostics.accepted_correspondences_count}</span></div>
                       <div className="flex justify-between"><span className="text-gray-500">Rejected Candidates</span><span className="text-amber-400/70 font-bold tabular-nums">{results.mark_diagnostics.rejected_candidates_count}</span></div>
                     </div>
-                    {/* LR_marks */}
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <span className="text-[8px] text-gray-500">LR<sub>marks</sub></span>
+                    {/* Mark Evidence Likelihood Ratio */}
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[8px] text-gray-500">Mark Evidence Likelihood Ratio (LR<sub>marks</sub>)</span>
                       <span className={`text-[11px] font-bold tabular-nums ${
                         results.mark_diagnostics.lr_marks != null && results.mark_diagnostics.lr_marks > 1 ? 'text-[#D4AF37]' : 'text-gray-400'
                       }`}>{results.mark_diagnostics.lr_marks != null ? formatLRSci(results.mark_diagnostics.lr_marks) : 'N/A'}</span>
                     </div>
-                    {/* Individual mark LRs */}
+                    {/* Evidence Contribution Label */}
+                    <div className="mb-2">
+                      {results.mark_diagnostics.lr_marks == null ? (
+                        <span className="text-[7px] text-gray-500 italic">Evidence contribution could not be determined</span>
+                      ) : results.mark_diagnostics.lr_marks === 1.0 ? (
+                        <span className="text-[7px] text-amber-400/70 italic">Neutral Mark Evidence — mark channel neither supports nor refutes the same-source hypothesis</span>
+                      ) : results.mark_diagnostics.lr_marks > 10000 ? (
+                        <span className="text-[7px] text-emerald-400/80 italic">Extremely strong evidence supporting the same-source hypothesis</span>
+                      ) : results.mark_diagnostics.lr_marks > 100 ? (
+                        <span className="text-[7px] text-emerald-400/70 italic">Strong evidence supporting the same-source hypothesis</span>
+                      ) : results.mark_diagnostics.lr_marks > 1 ? (
+                        <span className="text-[7px] text-[#D4AF37]/70 italic">Evidence supporting the same-source hypothesis</span>
+                      ) : (
+                        <span className="text-[7px] text-red-400/70 italic">Evidence supporting the different-source hypothesis</span>
+                      )}
+                    </div>
+                    {/* Individual Mark LRs */}
                     {results.mark_lrs && results.mark_lrs.length > 0 && (
                       <div className="mb-2">
                         <div className="text-[7px] text-gray-600 mb-1">Individual Mark LRs ({results.mark_lrs.length})</div>
@@ -1248,29 +1264,43 @@ export default function Home() {
                             <span key={i} className={`text-[7px] px-1 py-0.5 rounded font-bold tabular-nums ${lr > 10 ? 'bg-[#D4AF37]/15 text-[#D4AF37]' : 'bg-gray-800 text-gray-400'}`}>{lr.toFixed(1)}</span>
                           ))}
                         </div>
+                        {results.mark_lrs.length > 1 && (
+                          <div className="text-[7px] text-gray-600 mt-1 font-mono">
+                            LR<sub>marks</sub> = {results.mark_lrs.map((lr, i) => `${lr.toFixed(1)}${i < results.mark_lrs!.length - 1 ? ' ×' : ''}`).join(' ')} = {formatLRSci(results.mark_diagnostics.lr_marks)}
+                          </div>
+                        )}
                       </div>
                     )}
                     {/* Formula Trace */}
-                    {results.audit_log?.lr_arcface != null && (
-                      <div className="border-t border-[#1a1a1a] pt-2 mt-2">
-                        <div className="text-[7px] text-gray-600 tracking-wider mb-1.5">FORMULA TRACE</div>
-                        <div className="flex items-center gap-1.5 flex-wrap text-[8px]">
-                          <span className="text-gray-500">LR<sub>marks</sub></span>
-                          <span className="text-[#D4AF37]/80 font-bold tabular-nums">{formatLRSci(results.mark_diagnostics.lr_marks)}</span>
-                          <span className="text-gray-600">×</span>
-                          <span className="text-gray-500">LR<sub>face</sub></span>
-                          <span className="text-[#D4AF37]/80 font-bold tabular-nums">{formatLRSci(results.audit_log.lr_arcface)}</span>
-                          <span className="text-gray-600">=</span>
-                          <span className="text-gray-500">LR<sub>total</sub></span>
-                          <span className="text-[#D4AF37] font-bold tabular-nums">{formatLRSci(results.audit_log.lr_total)}</span>
+                    {(() => {
+                      const lrFace = results.lr_face_model ?? results.audit_log?.lr_arcface;
+                      const lrMarks = results.mark_diagnostics.lr_marks;
+                      const lrTotal = (lrFace != null && lrMarks != null) ? lrFace * lrMarks : results.audit_log?.lr_total;
+                      const posterior = lrTotal != null ? lrTotal / (lrTotal + 1) : results.audit_log?.posterior_probability;
+                      if (lrFace == null && lrTotal == null) return null;
+                      return (
+                        <div className="border-t border-[#1a1a1a] pt-2 mt-2">
+                          <div className="text-[7px] text-gray-600 tracking-wider mb-1.5">FORMULA TRACE</div>
+                          <div className="space-y-0.5 text-[8px]">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-gray-500">LR<sub>marks</sub></span>
+                              <span className="text-[#D4AF37]/80 font-bold tabular-nums">{formatLRSci(lrMarks)}</span>
+                              <span className="text-gray-600">×</span>
+                              <span className="text-gray-500">LR<sub>face_model</sub></span>
+                              <span className="text-[#D4AF37]/80 font-bold tabular-nums">{formatLRSci(lrFace)}</span>
+                              <span className="text-gray-600">=</span>
+                              <span className="text-gray-500">LR<sub>total</sub></span>
+                              <span className="text-[#D4AF37] font-bold tabular-nums">{formatLRSci(lrTotal)}</span>
+                            </div>
+                            <div className="text-[7px] text-gray-600 mt-1">
+                              Posterior P(H<sub>p</sub>|E) = LR<sub>total</sub> / (LR<sub>total</sub> + 1) = {posterior != null ? `${(posterior * 100).toFixed(4)}%` : 'N/A'}
+                            </div>
+                          </div>
                         </div>
-                        <div className="text-[7px] text-gray-600 mt-1">
-                          Posterior P(H<sub>p</sub>|E) = LR<sub>total</sub> / (LR<sub>total</sub> + 1) = {results.audit_log.posterior_probability != null ? `${(results.audit_log.posterior_probability * 100).toFixed(4)}%` : 'N/A'}
-                        </div>
-                      </div>
-                    )}
-                    {/* Rejection Summary — explains why LR_marks is 1.0 or neutral */}
-                    {(results.mark_diagnostics.lr_marks == null || results.mark_diagnostics.lr_marks === 1.0 || results.mark_diagnostics.rejection_summary) && results.mark_diagnostics.rejection_summary && (
+                      );
+                    })()}
+                    {/* Rejection Summary — explains why LR_marks is neutral or absent */}
+                    {(results.mark_diagnostics.lr_marks == null || results.mark_diagnostics.lr_marks === 1.0) && results.mark_diagnostics.rejection_summary && (
                       <div className="mt-2 px-2 py-1.5 bg-amber-950/20 rounded border border-amber-900/20">
                         <p className="text-[8px] text-amber-400/80 leading-relaxed">{results.mark_diagnostics.rejection_summary}</p>
                       </div>
