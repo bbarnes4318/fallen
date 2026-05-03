@@ -2329,6 +2329,50 @@ def generate_wireframe_hud(image: np.ndarray, landmarks) -> str:
 # COMPOSITE FORENSIC RECEIPT (EVIDENCE PRESERVATION)
 # ---------------------------------------------------------
 
+def generate_mark_overlay_receipt(
+    gal_debug_img: np.ndarray,
+    pro_debug_img: np.ndarray,
+    probe_file_hash: str,
+) -> str | None:
+    """
+    Generates a self-contained composite forensic mark receipt PNG.
+    Layout: Gallery Marks (256x256) | Probe Marks (256x256)
+    with a high-contrast 94px text panel at the bottom (total: 512x350).
+    Uploads to GCS under receipts/ prefix.
+    """
+    try:
+        g = cv2.resize(gal_debug_img, (256, 256))
+        p = cv2.resize(pro_debug_img, (256, 256))
+        composite = np.hstack([g, p])
+
+        text_panel = np.zeros((94, 512, 3), dtype=np.uint8)
+        text_panel[:] = (20, 20, 20)
+
+        cv2.putText(text_panel, "GALLERY MARKS", (60, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (120, 120, 120), 1, cv2.LINE_AA)
+        cv2.putText(text_panel, "PROBE MARKS", (325, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (120, 120, 120), 1, cv2.LINE_AA)
+        cv2.line(text_panel, (0, 24), (512, 24), (60, 60, 60), 1)
+
+        timestamp_iso = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        cv2.putText(text_panel, f"FORENSIC MARK EVIDENCE", (15, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 220), 1, cv2.LINE_AA)
+        cv2.putText(text_panel, f"PROBE SHA-256: {probe_file_hash}", (15, 67), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1, cv2.LINE_AA)
+        cv2.putText(text_panel, f"UTC TIMESTAMP: {timestamp_iso}", (15, 87), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1, cv2.LINE_AA)
+
+        final = np.vstack([composite, text_panel])
+        _, buffer = cv2.imencode('.png', final)
+        
+        bucket_name = os.getenv("BUCKET_NAME", "hoppwhistle-facial-uploads")
+        receipt_blob_name = f"receipts/marks_{uuid.uuid4().hex}.png"
+        
+        storage_client = storage.Client()
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(receipt_blob_name)
+        blob.upload_from_string(buffer.tobytes(), content_type="image/png")
+        
+        return f"gs://{bucket_name}/{receipt_blob_name}"
+    except Exception as e:
+        print(f"[RECEIPT] WARNING: Failed to generate mark overlay receipt: {e}")
+        return None
+
 def generate_forensic_receipt(
     gallery_aligned: np.ndarray,
     probe_aligned: np.ndarray,
@@ -2825,7 +2869,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         accepted_mark_correspondences_json=json.dumps(assigned_pairs),
         mark_detector_version=MARK_DETECTOR_VERSION,
         mark_matcher_version=MARK_MATCHER_VERSION,
-        mark_overlay_url=None,
+        mark_overlay_url=generate_mark_overlay_receipt(gal_debug_img, pro_debug_img, probe_file_hash),
         # Full Forensic Provenance Audit (v3.0)
         probe_source_file_hash=probe_file_hash,
         gallery_source_file_hash=gallery_file_hash,
@@ -3106,7 +3150,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             accepted_mark_correspondences_json=json.dumps(correspondences),
             mark_detector_version=MARK_DETECTOR_VERSION,
             mark_matcher_version=MARK_MATCHER_VERSION,
-            mark_overlay_url=None,
+            mark_overlay_url=audit.mark_overlay_url,
             # Full Forensic Provenance Audit (v3.0)
             probe_source_file_hash=audit.probe_source_file_hash,
             gallery_source_file_hash=audit.gallery_source_file_hash,
@@ -3546,7 +3590,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         accepted_mark_correspondences_json=json.dumps(assigned_pairs),
         mark_detector_version=MARK_DETECTOR_VERSION,
         mark_matcher_version=MARK_MATCHER_VERSION,
-        mark_overlay_url=None,
+        mark_overlay_url=generate_mark_overlay_receipt(gal_debug_img, pro_debug_img, probe_file_hash),
         # Full Forensic Provenance Audit (v3.0)
         probe_source_file_hash=probe_file_hash,
         gallery_source_file_hash=gallery_file_hash,
