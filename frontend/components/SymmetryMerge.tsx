@@ -808,20 +808,6 @@ export default function SymmetryMerge({
             </div>
           )}
         </div>
-          >
-            <canvas ref={leftCanvasRef} className="block w-full h-full" />
-            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">PROBE + DELTA</span> : mode === 'debug' ? <span className="text-yellow-500">PROBE MARK DEBUG</span> : 'PROBE (A)'}</div>
-          </div>
-
-            {/* Right Pane: Gallery */}
-            <div
-              className={`relative overflow-hidden rounded border ${mode === 'delta' ? 'border-red-900/60' : mode === 'mesh' ? 'border-[#D4AF37]/30' : 'border-[#333]'} bg-[#050505] cursor-move`}
-              {...commonPaneEvents}
-            >
-              <canvas ref={rightCanvasRef} className="block w-full h-full" />
-              <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">GALLERY + DELTA</span> : mode === 'debug' ? <span className="text-yellow-500">GALLERY MARK DEBUG</span> : 'GALLERY (B)'}</div>
-            </div>
-        </div>
       )}
 
       {/* ── Debug Forensic Panel ── */}
