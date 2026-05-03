@@ -435,6 +435,15 @@ class AuditLog(BaseModel):
     veto_override_applied: bool = False
     veto_override_reason: Optional[str] = None
     scoring_trace: Optional[dict] = None
+    # Mark Evidence Audit Trail (v2.0)
+    mark_match_status: Optional[str] = None
+    marks_detected_probe: Optional[int] = None
+    marks_detected_gallery: Optional[int] = None
+    mark_lrs_json: Optional[str] = None
+    accepted_mark_correspondences_json: Optional[str] = None
+    mark_detector_version: Optional[str] = None
+    mark_matcher_version: Optional[str] = None
+    mark_overlay_url: Optional[str] = None
     # Chain of Custody — Pre-decode binary hashes
     probe_file_hash: Optional[str] = None
     gallery_file_hash: Optional[str] = None
@@ -2540,6 +2549,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
         if cy < 256 and cx < 256 and occ_gallery[cy, cx] == 0:
             clean_m = {k: v for k, v in m.items() if k != "contour"}
+            clean_m["source_side"] = "gallery"
             valid_gallery_marks.append(clean_m)
             
     valid_probe_marks = []
@@ -2547,6 +2557,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
         if cy < 256 and cx < 256 and occ_probe[cy, cx] == 0:
             clean_m = {k: v for k, v in m.items() if k != "contour"}
+            clean_m["source_side"] = "probe"
             valid_probe_marks.append(clean_m)
 
     # ── Exact Self-Match Detection ──
@@ -2716,6 +2727,15 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         posterior_probability=finite_or_none(posterior),
         mark_lrs=[finite_or_none(lr) for lr in mark_result.get("mark_lrs", [])],
         bayesian_fused_score=finite_or_none(bayesian_fused_score),
+        # Mark Evidence Audit Trail (v2.0)
+        mark_match_status=mark_match_status,
+        marks_detected_probe=mark_result.get("total_probe", 0),
+        marks_detected_gallery=mark_result.get("total_gallery", 0),
+        mark_lrs_json=json.dumps([finite_or_none(lr) for lr in mark_result.get("mark_lrs", [])]),
+        accepted_mark_correspondences_json=json.dumps(assigned_pairs),
+        mark_detector_version=MARK_DETECTOR_VERSION,
+        mark_matcher_version=MARK_MATCHER_VERSION,
+        mark_overlay_url=None,
     )
 
     # Build correspondences list for the UI (enriched with forensic metadata)
@@ -2952,6 +2972,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             accepted_mark_correspondences_json=json.dumps(correspondences),
             mark_detector_version=MARK_DETECTOR_VERSION,
             mark_matcher_version=MARK_MATCHER_VERSION,
+            mark_overlay_url=None,
         )
         ledger_session.add(event)
         ledger_session.commit()
@@ -3185,6 +3206,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
         if cy < 256 and cx < 256 and occ_gallery[cy, cx] == 0:
             clean_m = {k: v for k, v in m.items() if k != "contour"}
+            clean_m["source_side"] = "gallery"
             valid_gallery_marks.append(clean_m)
             
     valid_probe_marks = []
@@ -3192,11 +3214,8 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
         if cy < 256 and cx < 256 and occ_probe[cy, cx] == 0:
             clean_m = {k: v for k, v in m.items() if k != "contour"}
+            clean_m["source_side"] = "probe"
             valid_probe_marks.append(clean_m)
-
-    assigned_pairs, unmatched_gal, unmatched_pro, rejected_cands = match_facial_marks(valid_gallery_marks, valid_probe_marks)
-    mark_result = compute_mark_correspondence(valid_gallery_marks, valid_probe_marks, matched_pairs=assigned_pairs)
-    tier4_score = mark_result["score"]  # None if insufficient marks
 
     # ── Exact Self-Match Detection ──
     exact_image_match = (probe_file_hash == gallery_file_hash) if (probe_file_hash and gallery_file_hash) else False
@@ -3226,6 +3245,10 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             "lr_marks": 1.0, "mark_lrs": [],
         }
     else:
+        assigned_pairs, unmatched_gal, unmatched_pro, rejected_cands = match_facial_marks(valid_gallery_marks, valid_probe_marks)
+        mark_result = compute_mark_correspondence(valid_gallery_marks, valid_probe_marks, matched_pairs=assigned_pairs)
+        tier4_score = mark_result["score"]  # None if insufficient marks
+
         # Determine mark_match_status
         if len(valid_probe_marks) < 2 or len(valid_gallery_marks) < 2:
             mark_match_status = "INSUFFICIENT_MARKS"
@@ -3357,6 +3380,15 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         posterior_probability=finite_or_none(posterior),
         mark_lrs=[finite_or_none(lr) for lr in mark_result.get("mark_lrs", [])],
         bayesian_fused_score=finite_or_none(bayesian_fused_score),
+        # Mark Evidence Audit Trail (v2.0)
+        mark_match_status=mark_match_status,
+        marks_detected_probe=mark_result.get("total_probe", 0),
+        marks_detected_gallery=mark_result.get("total_gallery", 0),
+        mark_lrs_json=json.dumps([finite_or_none(lr) for lr in mark_result.get("mark_lrs", [])]),
+        accepted_mark_correspondences_json=json.dumps(assigned_pairs),
+        mark_detector_version=MARK_DETECTOR_VERSION,
+        mark_matcher_version=MARK_MATCHER_VERSION,
+        mark_overlay_url=None,
     )
 
     # Build correspondences list for the UI (enriched with forensic metadata)
@@ -3590,6 +3622,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             accepted_mark_correspondences_json=json.dumps(correspondences),
             mark_detector_version=MARK_DETECTOR_VERSION,
             mark_matcher_version=MARK_MATCHER_VERSION,
+            mark_overlay_url=None,
         )
         ledger_session.add(event)
         ledger_session.commit()

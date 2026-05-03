@@ -17,6 +17,7 @@ type ForensicPoint = {
   area?: number;
   lr?: number;
   isMatched?: boolean;
+  matchIndex?: number;
 };
 
 interface SymmetryMergeProps {
@@ -30,7 +31,7 @@ type ViewMode = 'aligned' | 'mesh' | 'delta' | 'overlap' | 'marks' | 'debug';
 const VIEW_TOOLTIPS: Record<ViewMode, string> = {
   aligned: 'Procrustes normalized planar view. Scales and centers faces to eliminate distance and angle bias.',
   mesh: '468-point MediaPipe face mesh overlay. Visualizes landmark positions used for alignment and geometric ratio extraction.',
-  delta: 'Edge-based differential overlay between aligned gallery and probe crops. Highlights persistent structural deviations.',
+  delta: 'Edge-based differential overlay between aligned gallery and probe crops. Highlights persistent structural deviations. NOTE: This is NOT scar/mole/blemish correspondence evidence.',
   overlap: 'Alpha-blended composite layout for manual symmetry verification.',
   marks: 'Accepted forensic mark correspondences. Shows confirmed shared marks (scars, moles, blemishes) between probe and gallery.',
   debug: 'Raw backend mark debug visualization with OpenCV overlays.',
@@ -148,17 +149,24 @@ function drawPane(
         // Green — explicit matched correspondence
         ctx.strokeStyle = 'rgba(0, 220, 80, 0.9)';
         ctx.lineWidth = 2 / scale;
+        ctx.stroke();
+
+        if (p.matchIndex !== undefined) {
+          ctx.fillStyle = 'rgba(0, 220, 80, 0.9)';
+          ctx.font = `bold ${11 / scale}px monospace`;
+          ctx.fillText((p.matchIndex + 1).toString(), px + r + (4 / scale), py + (4 / scale));
+        }
       } else if (p.isMatched === false) {
         // Cyan — detected but not matched by index
         ctx.strokeStyle = 'rgba(0, 200, 220, 0.9)';
         ctx.lineWidth = 1 / scale;
+        ctx.stroke();
       } else {
         // Gray — unknown (no index correspondence data)
         ctx.strokeStyle = 'rgba(150, 150, 150, 0.6)';
         ctx.lineWidth = 1 / scale;
+        ctx.stroke();
       }
-      
-      ctx.stroke();
     });
   }
 
@@ -226,9 +234,10 @@ export default function SymmetryMerge({
   // 1. Debug mode active, AND
   // 2. Backend did NOT provide pre-rendered debug overlay images
   const shouldDrawFrontendMarkPoints =
-    isDebugMode &&
+    mode === "marks" ||
+    (isDebugMode &&
     !results?.probe_mark_debug_b64 &&
-    !results?.gallery_mark_debug_b64;
+    !results?.gallery_mark_debug_b64);
 
   // ── LEFT PANE = PROBE (+ wireframe in mesh mode) ──
   const getLeftOverlay = useCallback((): HTMLImageElement | null => {
@@ -297,19 +306,39 @@ export default function SymmetryMerge({
     const matchedProbeIndices = new Set<number>();
     const matchedGalleryIndices = new Set<number>();
     const probeLrByIndex = new Map<number, number>();
+    const probeLrByIndex = new Map<number, number>();
     const galleryLrByIndex = new Map<number, number>();
+    const probeIndexToPairId = new Map<number, number>();
+    const galleryIndexToPairId = new Map<number, number>();
 
+    let pairId = 0;
     for (const c of corrs) {
       const lr = typeof c.lr === "number" ? c.lr : undefined;
+      const pIdx = c.probe_idx as number;
+      const gIdx = c.gallery_idx as number;
 
-      if (Number.isInteger(c.probe_idx) && (c.probe_idx as number) >= 0 && (c.probe_idx as number) < probeMarksSource.length) {
-        matchedProbeIndices.add(c.probe_idx as number);
-        if (lr !== undefined) probeLrByIndex.set(c.probe_idx as number, lr);
-      }
+      const pValid = Number.isInteger(pIdx) && pIdx >= 0 && pIdx < probeMarksSource.length;
+      const gValid = Number.isInteger(gIdx) && gIdx >= 0 && gIdx < galleryMarksSource.length;
 
-      if (Number.isInteger(c.gallery_idx) && (c.gallery_idx as number) >= 0 && (c.gallery_idx as number) < galleryMarksSource.length) {
-        matchedGalleryIndices.add(c.gallery_idx as number);
-        if (lr !== undefined) galleryLrByIndex.set(c.gallery_idx as number, lr);
+      if (pValid && gValid) {
+        matchedProbeIndices.add(pIdx);
+        matchedGalleryIndices.add(gIdx);
+        if (lr !== undefined) {
+          probeLrByIndex.set(pIdx, lr);
+          galleryLrByIndex.set(gIdx, lr);
+        }
+        probeIndexToPairId.set(pIdx, pairId);
+        galleryIndexToPairId.set(gIdx, pairId);
+        pairId++;
+      } else {
+        if (pValid) {
+          matchedProbeIndices.add(pIdx);
+          if (lr !== undefined) probeLrByIndex.set(pIdx, lr);
+        }
+        if (gValid) {
+          matchedGalleryIndices.add(gIdx);
+          if (lr !== undefined) galleryLrByIndex.set(gIdx, lr);
+        }
       }
     }
 
@@ -319,6 +348,8 @@ export default function SymmetryMerge({
       matchedGalleryIndices,
       probeLrByIndex,
       galleryLrByIndex,
+      probeIndexToPairId,
+      galleryIndexToPairId,
       hasIndexCorrespondences: matchedProbeIndices.size > 0 || matchedGalleryIndices.size > 0,
     };
   }, [results, probeMarksSource.length, galleryMarksSource.length]);
@@ -335,6 +366,9 @@ export default function SymmetryMerge({
       const lrMap = isProbe
         ? markMatchData.probeLrByIndex
         : markMatchData.galleryLrByIndex;
+      const matchIndexMap = isProbe
+        ? markMatchData.probeIndexToPairId
+        : markMatchData.galleryIndexToPairId;
 
       return {
         x,
@@ -344,6 +378,7 @@ export default function SymmetryMerge({
         isMatched: markMatchData.hasIndexCorrespondences
           ? matchedSet.has(index)
           : undefined,
+        matchIndex: matchIndexMap.get(index),
       };
     },
     [getPointCoords, markMatchData]
@@ -365,13 +400,16 @@ export default function SymmetryMerge({
   useEffect(() => {
     if (!imagesReady || mode === 'overlap') return;
 
+    const probePts = shouldDrawFrontendMarkPoints ? (mode === 'marks' ? probePoints.filter(p => p.isMatched === true) : probePoints) : undefined;
+    const galleryPts = shouldDrawFrontendMarkPoints ? (mode === 'marks' ? galleryPoints.filter(p => p.isMatched === true) : galleryPoints) : undefined;
+
     if (leftCanvasRef.current && probeImg) {
-      drawPane(leftCanvasRef.current, probeImg, getLeftOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, shouldDrawFrontendMarkPoints ? probePoints : undefined);
+      drawPane(leftCanvasRef.current, probeImg, getLeftOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, probePts);
     }
     if (rightCanvasRef.current && galleryImg) {
-      drawPane(rightCanvasRef.current, galleryImg, getRightOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, shouldDrawFrontendMarkPoints ? galleryPoints : undefined);
+      drawPane(rightCanvasRef.current, galleryImg, getRightOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, galleryPts);
     }
-  }, [imagesReady, mode, probeImg, getLeftOverlay, zoom, pan, getBorderColor, baseOpacity, overlayOpacity, isXrayMode, probePoints, galleryImg, getRightOverlay, galleryPoints]);
+  }, [imagesReady, mode, probeImg, getLeftOverlay, zoom, pan, getBorderColor, baseOpacity, overlayOpacity, isXrayMode, probePoints, galleryImg, getRightOverlay, galleryPoints, shouldDrawFrontendMarkPoints]);
 
   // Draw overlap panes — LEFT = PROBE, RIGHT = GALLERY
   useEffect(() => {
@@ -451,7 +489,7 @@ export default function SymmetryMerge({
             {deltaImageSrc && (
               <Tooltip text={VIEW_TOOLTIPS.delta}>
                 <button onClick={() => setMode('delta')} className={`px-3 py-1 transition-colors border-l ${mode === 'delta' ? 'bg-[#1a0005] text-[#ff2040] font-bold border-[#5a0015] shadow-[inset_0_0_12px_rgba(180,0,30,0.3)]' : 'text-gray-400 hover:text-red-300 border-[#333]'}`}>
-                  DELTA
+                  EDGE DELTA
                 </button>
               </Tooltip>
             )}
@@ -526,14 +564,14 @@ export default function SymmetryMerge({
             {/* Provenance Module */}
             <div className={`px-2 py-1 border flex justify-between items-center ${results.failed_provenance_veto ? 'bg-[#1a0005] border-[#5a0015] text-[#ff2040]' : 'bg-[#050505] border-[#222] text-gray-500'}`}>
                <span className="tracking-widest text-[9px]">PROVENANCE CHECK:</span>
-               <span className="font-bold text-gray-300">{results.synthetic_anomaly_score !== undefined ? results.synthetic_anomaly_score.toFixed(4) : 'N/A'}</span>
+               <span className="font-bold text-gray-300">{results.synthetic_anomaly_score !== undefined && results.synthetic_anomaly_score !== null ? results.synthetic_anomaly_score.toFixed(4) : '0.0000'}</span>
             </div>
 
             {/* Occlusion Module */}
             <div className="px-2 py-1 border bg-[#050505] border-[#222] text-gray-500 flex justify-between items-center">
               <span className="tracking-widest text-[9px]">GEOMETRY COVERAGE:</span>
               <span className="font-bold text-gray-300">
-                {results.occlusion_percentage !== undefined ? `${(results.occlusion_percentage).toFixed(1)}% (${results.effective_geometric_ratios_used ?? 0} ACTIVE)` : 'N/A'}
+                {results.occlusion_percentage !== undefined && results.occlusion_percentage !== null ? `${(results.occlusion_percentage).toFixed(1)}% (${results.effective_geometric_ratios_used ?? 0} ACTIVE)` : '0.0% (0 ACTIVE)'}
               </span>
             </div>
           </div>
@@ -640,122 +678,140 @@ export default function SymmetryMerge({
           <div className="absolute top-2 left-3 text-[9px] font-mono text-[#D4AF37]/60 tracking-widest pointer-events-none">PROBE</div>
           <div className="absolute top-2 right-3 text-[9px] font-mono text-[#D4AF37]/60 tracking-widest pointer-events-none">GALLERY</div>
         </div>
-      ) : mode === 'marks' ? (
-        /* ── MARKS MODE: Professional Correspondence Evidence Card ── */
-        <div className="flex-1 min-h-0 flex flex-col overflow-y-auto bg-[#050505] border border-emerald-900/40 rounded p-3 gap-3">
-          {/* Status Banner */}
-          {(() => {
-            const status = results?.mark_match_status as MarkMatchStatus | null | undefined;
-            const probeCount = results?.marks_detected_probe ?? 0;
-            const galCount = results?.marks_detected_gallery ?? 0;
-            const matchCount = results?.marks_matched ?? 0;
-            const lrMarks = results?.lr_marks;
-
-            let statusLabel = 'UNKNOWN';
-            let statusColor = 'text-gray-400 border-gray-700 bg-[#0a0a0a]';
-            if (status === 'EXACT_SELF_MATCH') {
-              statusLabel = 'Exact image self-match. Mark evidence is self-corresponding by identity.';
-              statusColor = 'text-emerald-300 border-emerald-700 bg-emerald-950/40';
-            } else if (status === 'MATCHED') {
-              statusLabel = 'Shared facial marks detected';
-              statusColor = 'text-emerald-300 border-emerald-700 bg-emerald-950/40';
-            } else if (status === 'INSUFFICIENT_MARKS') {
-              statusLabel = 'Insufficient marks for correspondence';
-              statusColor = 'text-yellow-400 border-yellow-800 bg-yellow-950/30';
-            } else if (status === 'NO_MATCHES') {
-              statusLabel = 'No matching marks found';
-              statusColor = 'text-orange-400 border-orange-800 bg-orange-950/30';
-            } else if (status === 'DETECTOR_UNAVAILABLE') {
-              statusLabel = 'Mark detector unavailable';
-              statusColor = 'text-red-400 border-red-800 bg-red-950/30';
-            }
-
-            return (
-              <>
-                <div className={`px-3 py-2 border rounded font-mono text-xs tracking-wider ${statusColor}`}>
-                  <div className="flex justify-between items-center">
-                    <span className="font-bold">{statusLabel}</span>
-                    <span className="text-[10px] opacity-70">{matchCount} of {Math.max(probeCount, galCount)} marks matched</span>
-                  </div>
-                  <div className="flex justify-between items-center mt-1 text-[10px] opacity-60">
-                    <span>PROBE: {probeCount} marks · GALLERY: {galCount} marks</span>
-                    {lrMarks != null && <span>LR_MARKS: {lrMarks.toFixed(4)}</span>}
-                  </div>
-                </div>
-
-                {/* Self-match LR transparency note */}
-                {status === 'EXACT_SELF_MATCH' && (
-                  <div className="px-3 py-1.5 border border-emerald-900/30 rounded bg-emerald-950/20 font-mono text-[9px] text-emerald-400/70 leading-relaxed">
-                    Mark LR is neutral (1.0) for exact byte-identical image comparisons. The probe and gallery are the same source image, so mark evidence is self-corresponding by identity rather than independent forensic evidence. Identity confidence is handled by the exact-image sanity path.
-                  </div>
-                )}
-
-                {/* Correspondence Evidence Cards */}
-                {(() => {
-                  const safeCorrespondences = Array.isArray(results?.correspondences) ? results.correspondences : [];
-                  if (safeCorrespondences.length === 0) {
-                    return (
-                      <div className="flex-1 flex items-center justify-center text-gray-500 font-mono text-xs tracking-widest">
-                        NO ACCEPTED CORRESPONDENCES
-                      </div>
-                    );
-                  }
-                  return (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      {safeCorrespondences.map((c: Correspondence, i: number) => {
-                        const lr = typeof c.lr === 'number' ? c.lr : 0;
-                        const lrColor = lr >= 10 ? 'text-emerald-300' : lr >= 1 ? 'text-yellow-300' : 'text-red-300';
-                        return (
-                          <div key={`mark-card-${i}`} className="border border-emerald-900/40 bg-[#0a0f0a] rounded p-2 font-mono text-[10px]">
-                            <div className="flex justify-between items-center mb-1">
-                              <span className="text-emerald-400 font-bold tracking-wider">
-                                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-800/60 text-emerald-200 text-[9px] mr-1.5">{i + 1}</span>
-                                MARK {i + 1}
-                              </span>
-                              <span className={`font-bold ${lrColor}`}>LR: {lr.toFixed(2)}</span>
-                            </div>
-                            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-gray-400">
-                              <div>TYPE: <span className="text-gray-200">{c.mark_type ?? '—'}</span></div>
-                              <div>REGION: <span className="text-gray-200">{c.face_region ?? '—'}</span></div>
-                              <div>P [{c.probe_idx ?? '?'}]: <span className="text-gray-300">{c.probe_centroid ? `(${c.probe_centroid[0]?.toFixed(3)}, ${c.probe_centroid[1]?.toFixed(3)})` : '—'}</span></div>
-                              <div>G [{c.gallery_idx ?? '?'}]: <span className="text-gray-300">{c.gallery_centroid ? `(${c.gallery_centroid[0]?.toFixed(3)}, ${c.gallery_centroid[1]?.toFixed(3)})` : '—'}</span></div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
-
-                {/* Version Footer */}
-                <div className="text-[8px] font-mono text-gray-600 tracking-wider flex justify-between">
-                  <span>DETECTOR: v{results?.mark_detector_version ?? '?'} · MATCHER: v{results?.mark_matcher_version ?? '?'}</span>
-                  <span>MARK LRs: [{(results?.mark_lrs ?? []).map((lr: number) => lr?.toFixed(2) ?? '?').join(', ')}]</span>
-                </div>
-              </>
-            );
-          })()}
-        </div>
       ) : (
         /* ── DUAL-PANE: Left=Probe, Right=Gallery ── */
-        <div className="flex-1 min-h-0 grid grid-cols-2 gap-1">
-          {/* Left Pane: Probe */}
-          <div
-            className={`relative overflow-hidden rounded border ${mode === 'delta' ? 'border-red-900/60' : mode === 'mesh' ? 'border-[#D4AF37]/30' : 'border-[#333]'} bg-[#050505] cursor-move`}
-            {...commonPaneEvents}
+        <div className="flex-1 min-h-0 flex flex-col gap-2">
+          <div className="flex-1 min-h-0 grid grid-cols-2 gap-1">
+            {/* Left Pane: Probe */}
+            <div
+              className={`relative overflow-hidden rounded border ${mode === 'delta' ? 'border-red-900/60' : mode === 'mesh' ? 'border-[#D4AF37]/30' : 'border-[#333]'} bg-[#050505] cursor-move`}
+              {...commonPaneEvents}
+            >
+              <canvas ref={leftCanvasRef} className="block w-full h-full" />
+              <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">PROBE + DELTA</span> : mode === 'debug' ? <span className="text-yellow-500">PROBE MARK DEBUG</span> : 'PROBE (A)'}</div>
+            </div>
+
+            {/* Right Pane: Gallery */}
+            <div
+              className={`relative overflow-hidden rounded border ${mode === 'delta' ? 'border-red-900/60' : mode === 'mesh' ? 'border-[#D4AF37]/30' : 'border-[#333]'} bg-[#050505] cursor-move`}
+              {...commonPaneEvents}
+            >
+              <canvas ref={rightCanvasRef} className="block w-full h-full" />
+              <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">GALLERY + DELTA</span> : mode === 'debug' ? <span className="text-yellow-500">GALLERY MARK DEBUG</span> : 'GALLERY (B)'}</div>
+            </div>
+          </div>
+
+          {mode === 'marks' && (
+            /* ── MARKS MODE: Professional Correspondence Evidence Card ── */
+            <div className="h-48 flex-shrink-0 flex flex-col overflow-y-auto bg-[#050505] border border-emerald-900/40 rounded p-3 gap-3">
+              {/* Status Banner */}
+              {(() => {
+                const status = results?.mark_match_status as MarkMatchStatus | null | undefined;
+                const probeCount = results?.marks_detected_probe ?? 0;
+                const galCount = results?.marks_detected_gallery ?? 0;
+                const matchCount = results?.marks_matched ?? 0;
+                const lrMarks = results?.lr_marks;
+
+                let statusLabel = 'UNKNOWN';
+                let statusColor = 'text-gray-400 border-gray-700 bg-[#0a0a0a]';
+                if (status === 'EXACT_SELF_MATCH') {
+                  statusLabel = 'Exact image self-match. Mark evidence is self-corresponding by identity.';
+                  statusColor = 'text-emerald-300 border-emerald-700 bg-emerald-950/40';
+                } else if (status === 'MATCHED') {
+                  statusLabel = 'Shared facial marks detected';
+                  statusColor = 'text-emerald-300 border-emerald-700 bg-emerald-950/40';
+                } else if (status === 'INSUFFICIENT_MARKS') {
+                  statusLabel = 'Insufficient marks for correspondence';
+                  statusColor = 'text-yellow-400 border-yellow-800 bg-yellow-950/30';
+                } else if (status === 'NO_MATCHES') {
+                  statusLabel = 'No matching marks found';
+                  statusColor = 'text-orange-400 border-orange-800 bg-orange-950/30';
+                } else if (status === 'DETECTOR_UNAVAILABLE') {
+                  statusLabel = 'Mark detector unavailable';
+                  statusColor = 'text-red-400 border-red-800 bg-red-950/30';
+                }
+
+                return (
+                  <>
+                    <div className={`px-3 py-2 border rounded font-mono text-xs tracking-wider ${statusColor}`}>
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold">{statusLabel}</span>
+                        <span className="text-[10px] opacity-70">{matchCount} of {Math.max(probeCount, galCount)} marks matched</span>
+                      </div>
+                      <div className="flex justify-between items-center mt-1 text-[10px] opacity-60">
+                        <span>PROBE: {probeCount} marks · GALLERY: {galCount} marks</span>
+                        {lrMarks != null && <span>LR_MARKS: {lrMarks.toFixed(4)}</span>}
+                      </div>
+                    </div>
+
+                    {/* Self-match LR transparency note */}
+                    {status === 'EXACT_SELF_MATCH' && (
+                      <div className="px-3 py-1.5 border border-emerald-900/30 rounded bg-emerald-950/20 font-mono text-[9px] text-emerald-400/70 leading-relaxed">
+                        Mark LR is neutral (1.0) for exact byte-identical image comparisons. The probe and gallery are the same source image, so mark evidence is self-corresponding by identity rather than independent forensic evidence. Identity confidence is handled by the exact-image sanity path.
+                      </div>
+                    )}
+
+                    {/* Correspondence Evidence Cards */}
+                    {(() => {
+                      const safeCorrespondences = Array.isArray(results?.correspondences) ? results.correspondences : [];
+                      if (safeCorrespondences.length === 0) {
+                        return (
+                          <div className="flex-1 flex items-center justify-center text-gray-500 font-mono text-xs tracking-widest">
+                            NO ACCEPTED CORRESPONDENCES
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          {safeCorrespondences.map((c: Correspondence, i: number) => {
+                            const lr = typeof c.lr === 'number' ? c.lr : 0;
+                            const lrColor = lr >= 10 ? 'text-emerald-300' : lr >= 1 ? 'text-yellow-300' : 'text-red-300';
+                            return (
+                              <div key={`mark-card-${i}`} className="border border-emerald-900/40 bg-[#0a0f0a] rounded p-2 font-mono text-[10px]">
+                                <div className="flex justify-between items-center mb-1">
+                                  <span className="text-emerald-400 font-bold tracking-wider">
+                                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-800/60 text-emerald-200 text-[9px] mr-1.5">{i + 1}</span>
+                                    MARK {i + 1}
+                                  </span>
+                                  <span className={`font-bold ${lrColor}`}>LR: {lr.toFixed(2)}</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-gray-400">
+                                  <div>TYPE: <span className="text-gray-200">{c.mark_type ?? '—'}</span></div>
+                                  <div>REGION: <span className="text-gray-200">{c.face_region ?? '—'}</span></div>
+                                  <div>P [{c.probe_idx ?? '?'}]: <span className="text-gray-300">{c.probe_centroid ? `(${c.probe_centroid[0]?.toFixed(3)}, ${c.probe_centroid[1]?.toFixed(3)})` : '—'}</span></div>
+                                  <div>G [{c.gallery_idx ?? '?'}]: <span className="text-gray-300">{c.gallery_centroid ? `(${c.gallery_centroid[0]?.toFixed(3)}, ${c.gallery_centroid[1]?.toFixed(3)})` : '—'}</span></div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Version Footer */}
+                    <div className="text-[8px] font-mono text-gray-600 tracking-wider flex justify-between">
+                      <span>DETECTOR: v{results?.mark_detector_version ?? '?'} · MATCHER: v{results?.mark_matcher_version ?? '?'}</span>
+                      <span>MARK LRs: [{(results?.mark_lrs ?? []).map((lr: number) => lr?.toFixed(2) ?? '?').join(', ')}]</span>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+        </div>
           >
             <canvas ref={leftCanvasRef} className="block w-full h-full" />
             <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">PROBE + DELTA</span> : mode === 'debug' ? <span className="text-yellow-500">PROBE MARK DEBUG</span> : 'PROBE (A)'}</div>
           </div>
 
-          {/* Right Pane: Gallery */}
-          <div
-            className={`relative overflow-hidden rounded border ${mode === 'delta' ? 'border-red-900/60' : mode === 'mesh' ? 'border-[#D4AF37]/30' : 'border-[#333]'} bg-[#050505] cursor-move`}
-            {...commonPaneEvents}
-          >
-            <canvas ref={rightCanvasRef} className="block w-full h-full" />
-            <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">GALLERY + DELTA</span> : mode === 'debug' ? <span className="text-yellow-500">GALLERY MARK DEBUG</span> : 'GALLERY (B)'}</div>
-          </div>
+            {/* Right Pane: Gallery */}
+            <div
+              className={`relative overflow-hidden rounded border ${mode === 'delta' ? 'border-red-900/60' : mode === 'mesh' ? 'border-[#D4AF37]/30' : 'border-[#333]'} bg-[#050505] cursor-move`}
+              {...commonPaneEvents}
+            >
+              <canvas ref={rightCanvasRef} className="block w-full h-full" />
+              <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">GALLERY + DELTA</span> : mode === 'debug' ? <span className="text-yellow-500">GALLERY MARK DEBUG</span> : 'GALLERY (B)'}</div>
+            </div>
         </div>
       )}
 
@@ -893,7 +949,7 @@ export default function SymmetryMerge({
         <span>
           {mode === 'aligned' && 'CANONICAL ALIGNMENT'}
           {mode === 'mesh' && <span className="text-[#D4AF37]">3DMM WIREFRAME HUD</span>}
-          {mode === 'delta' && <span className="text-red-500">PAIRWISE EDGE DELTA — NOT CONFIRMED SCAR MATCHES</span>}
+          {mode === 'delta' && <span className="text-red-500">PAIRWISE EDGE DELTA - NOT FOR SCAR/MOLE/BLEMISH CORRESPONDENCE</span>}
           {mode === 'overlap' && <span className="text-[#D4AF37]">DRAG TO COMPARE OVERLAP</span>}
           {mode === 'marks' && <span className="text-emerald-400">CONFIRMED MARK CORRESPONDENCES — FORENSIC EVIDENCE ONLY</span>}
           {mode === 'debug' && <span className="text-yellow-500">GREEN = ACCEPTED MATCH · CYAN = UNMATCHED DETECTED MARK · GRAY = UNKNOWN</span>}

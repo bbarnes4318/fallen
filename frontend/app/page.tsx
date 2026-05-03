@@ -1120,7 +1120,7 @@ export default function Home() {
 
         {/* ════ RESULTS DASHBOARD — Zero-Scroll 70/30 Grid ════ */}
         {step === 'complete' && results && (
-          <div className="h-full flex flex-col gap-3 min-h-0 overflow-y-auto">
+          <div className="relative h-full flex flex-col gap-3 min-h-0 overflow-hidden">
             <div className="flex-1 flex gap-3 min-h-0">
 
             {/* ── LEFT PANEL (70%): Dual-Pane Visualizer ── */}
@@ -1225,7 +1225,7 @@ export default function Home() {
                         ? 'text-gray-500'
                         : results.soft_biometrics_score > 80 ? 'text-emerald-400' : results.soft_biometrics_score > 60 ? 'text-amber-400' : 'text-red-400'
                     }`}>
-                      {results.geometry_status && results.geometry_status !== 'OK' ? 'N/A' : `${results.soft_biometrics_score}%`}
+                      {results.geometry_status && results.geometry_status !== 'OK' ? 'FAILED' : `${results.soft_biometrics_score}%`}
                     </span>
                   </div>
                   <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden">
@@ -1357,132 +1357,137 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Export Dossier */}
-              <button
-                onClick={generateForensicReport}
-                disabled={isExporting}
-                className={`w-full py-2.5 text-[10px] font-bold tracking-[0.2em] border-2 rounded-lg transition-all shrink-0 ${
-                  isExporting
-                    ? 'border-[#333] bg-[#111] text-gray-500 cursor-wait'
-                    : 'border-[#D4AF37]/50 bg-[#0a0a0a] text-[#D4AF37] hover:bg-[#D4AF37]/10 hover:border-[#D4AF37] hover:shadow-[0_0_20px_rgba(212,175,55,0.4)]'
-                }`}
-              >
-                {isExporting ? 'COMPILING...' : '↓ DOWNLOAD FULL REPORT'}
-              </button>
-            </div>
-            </div>
-
-            {/* ── Full-Width Technical Details Block ── */}
-            <div className="shrink-0 w-full flex flex-col gap-2">
-              <button
-                onClick={() => setAuditExpanded(!auditExpanded)}
-                className={`w-full flex items-center justify-between px-5 py-2.5 rounded font-mono tracking-[0.2em] transition-all border-2 ${
-                  auditExpanded
-                    ? 'border-[#D4AF37] bg-[#D4AF37]/10 text-[#D4AF37] shadow-[0_0_20px_rgba(212,175,55,0.2)]'
-                    : 'border-[#D4AF37]/50 bg-[#0a0a0a] text-[#D4AF37]/90 hover:border-[#D4AF37] hover:bg-[#111] hover:shadow-[0_0_15px_rgba(212,175,55,0.3)]'
-                }`}
-              >
-                <span className="flex items-center gap-3 font-bold text-[11px]">
-                  <span className="relative flex h-3 w-3">
+              {/* Export Dossier and Technical Breakdown Buttons */}
+              <div className="flex gap-2 shrink-0">
+                <button
+                  onClick={generateForensicReport}
+                  disabled={isExporting}
+                  className={`flex-1 py-2.5 px-2 text-[10px] font-bold tracking-[0.2em] border-2 rounded-lg transition-all flex items-center justify-center text-center leading-tight ${
+                    isExporting
+                      ? 'border-[#333] bg-[#111] text-gray-500 cursor-wait'
+                      : 'border-[#D4AF37]/50 bg-[#0a0a0a] text-[#D4AF37] hover:bg-[#D4AF37]/10 hover:border-[#D4AF37] hover:shadow-[0_0_20px_rgba(212,175,55,0.4)]'
+                  }`}
+                >
+                  {isExporting ? 'COMPILING...' : 'DOWNLOAD FULL REPORT'}
+                </button>
+                <button
+                  onClick={() => setAuditExpanded(true)}
+                  className="flex-1 py-2.5 px-2 text-[10px] font-bold tracking-[0.2em] border-2 rounded-lg transition-all flex items-center justify-center text-center leading-tight border-[#D4AF37]/50 bg-[#0a0a0a] text-[#D4AF37] hover:bg-[#D4AF37]/10 hover:border-[#D4AF37] hover:shadow-[0_0_20px_rgba(212,175,55,0.4)]"
+                >
+                  <span className="relative flex h-2 w-2 mr-2 shrink-0">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#D4AF37] opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-3 w-3 bg-[#D4AF37]"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-[#D4AF37]"></span>
                   </span>
-                  VIEW DETAILED TECHNICAL BREAKDOWN
-                </span>
-                <span className="text-lg font-bold">{auditExpanded ? '−' : '+'}</span>
-              </button>
-
-              {/* ── Technical Details (3-column) ── */}
-              {auditExpanded && results.audit_log && (
-                <div className="border border-[#1a1a0a] bg-[#000000] rounded p-2.5 font-mono text-[9px] leading-relaxed shadow-[inset_0_0_30px_rgba(0,0,0,0.5)] max-h-[60vh] overflow-y-auto">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-1 w-full min-w-0">
-
-                    {/* Block 1: Confidence & Accuracy */}
-                    <div className="border border-[#1a2a1a] rounded p-2 bg-[#010201] min-w-0">
-                      <div className="text-green-500/80 tracking-[0.2em] mb-1 border-b border-green-900/30 pb-1 text-[8px]">▸ CONFIDENCE &amp; ACCURACY</div>
-                      <p className="text-[7px] text-gray-600 mb-1.5 leading-relaxed">How confident is the system in this result? Lower error rates mean higher reliability.</p>
-                      <div className="space-y-0.5 pl-1">
-                        <div className="flex justify-between"><span className="text-gray-500">Error Probability</span><span className={`font-bold ${results.audit_log.false_acceptance_rate === 'UNCALIBRATED' || results.audit_log.false_acceptance_rate === 'Inconclusive' ? 'text-yellow-400' : results.audit_log.false_acceptance_rate === 'DIFFERENT IDENTITIES' ? 'text-red-400' : 'text-green-400'}`}>{results.audit_log.false_acceptance_rate}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-500">Confidence Level</span><span className={`font-bold ${results.audit_log.statistical_certainty === 'UNCALIBRATED' ? 'text-yellow-400' : results.audit_log.statistical_certainty.startsWith('<') || results.audit_log.statistical_certainty.startsWith('0%') ? 'text-red-400' : 'text-green-400'}`}>{results.audit_log.statistical_certainty}</span></div>
-                        <div className="flex justify-between group relative"><span className="text-gray-500">Face Points Mapped</span><span className="text-white font-bold">{results.audit_log.nodes_mapped}/468</span><div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-50"><div className="bg-[#111] border border-[#333] rounded px-3 py-2 text-[8px] text-gray-300 font-mono leading-relaxed shadow-[0_4px_20px_rgba(0,0,0,0.8)]">The system maps up to 468 points on each face to measure geometry. More points = more accurate comparison.<div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#333]"></div></div></div></div>
-                        <div className="flex justify-between"><span className="text-gray-500">Raw Similarity Score</span><span className="text-white font-bold">{results.audit_log.raw_cosine_score.toFixed(6)}</span></div>
-                        {results.audit_log.calibration_benchmark && (
-                          <div className="flex justify-between mt-0.5"><span className="text-gray-500">Tested Against</span><span className={`font-bold ${results.audit_log.calibration_benchmark === 'N/A' ? 'text-yellow-400' : 'text-green-400'}`}>{results.audit_log.calibration_benchmark}{results.audit_log.calibration_pairs ? ` (${results.audit_log.calibration_pairs.toLocaleString()} pairs)` : ''}</span></div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Block 2: Image Quality & Authenticity */}
-                    <div className="border border-[#2a1a1a] rounded p-2 bg-[#020101] min-w-0">
-                      <div className="text-cyan-500/80 tracking-[0.2em] mb-1 border-b border-cyan-900/30 pb-1 text-[8px]">▸ IMAGE QUALITY &amp; AUTHENTICITY</div>
-                      <p className="text-[7px] text-gray-600 mb-1.5 leading-relaxed">How were the photos corrected for comparison, and are they real photographs?</p>
-                      <div className="space-y-0.5 pl-1">
-                        {results.audit_log.alignment_variance && (<>
-                          <div className="flex justify-between"><span className="text-gray-500">Left-Right Correction</span><span className="text-cyan-300">{results.audit_log.alignment_variance.yaw}</span></div>
-                          <div className="flex justify-between"><span className="text-gray-500">Up-Down Correction</span><span className="text-cyan-300">{results.audit_log.alignment_variance.pitch}</span></div>
-                          <div className="flex justify-between"><span className="text-gray-500">Tilt Correction</span><span className="text-cyan-300">{results.audit_log.alignment_variance.roll}</span></div>
-                        </>)}
-                        {results.audit_log.liveness_check && (<>
-                          <div className="flex justify-between mt-1"><span className="text-gray-500">Detection Method</span><span className="text-cyan-300 font-bold">{results.audit_log.liveness_check.method}</span></div>
-                          <div className="flex justify-between"><span className="text-gray-500">Fake Photo Risk</span><span className={`font-bold ${results.audit_log.liveness_check.status.includes('PASSED') || results.audit_log.liveness_check.status.includes('VERIFIED') || results.audit_log.liveness_check.status.includes('LIVE') ? 'text-green-400' : 'text-red-400'}`}>{results.audit_log.liveness_check.spoof_probability}</span></div>
-                          <div className="flex justify-between"><span className="text-gray-500">Authenticity</span><span className={`font-bold ${results.audit_log.liveness_check.status.includes('PASSED') || results.audit_log.liveness_check.status.includes('VERIFIED') || results.audit_log.liveness_check.status.includes('LIVE') ? 'text-green-400' : 'text-red-400'}`}>{results.audit_log.liveness_check.status}</span></div>
-                          {results.audit_log.liveness_check.laplacian_variance != null && (
-                            <div className="flex justify-between"><span className="text-gray-500">Image Sharpness</span><span className="text-cyan-300">{results.audit_log.liveness_check.laplacian_variance}</span></div>
-                          )}
-                        </>)}
-                      </div>
-                    </div>
-
-                    {/* Block 3: Security & Data Integrity */}
-                    <div className="border border-[#1a1a2a] rounded p-2 bg-[#010102] min-w-0">
-                      <div className="text-amber-500/80 tracking-[0.2em] mb-1 border-b border-amber-900/30 pb-1 text-[8px]">▸ SECURITY &amp; DATA INTEGRITY</div>
-                      <p className="text-[7px] text-gray-600 mb-1.5 leading-relaxed">Cryptographic proof that the biometric data was not tampered with during analysis.</p>
-                      <div className="space-y-0.5 pl-1">
-                        {results.audit_log.vector_hash && (
-                          <div><span className="text-gray-500">Digital Fingerprint</span><div className="text-amber-300/80 text-[8px] break-all whitespace-pre-wrap w-full min-w-0 mt-0.5">{results.audit_log.vector_hash}</div></div>
-                        )}
-                        {results.audit_log.crypto_envelope && (<>
-                          <div className="flex justify-between items-start gap-2 break-words w-full min-w-0 mt-1"><span className="text-gray-500">Encryption Standard</span><span className="text-amber-300">{results.audit_log.crypto_envelope.standard}</span></div>
-                          <div className="flex justify-between items-start gap-2 break-words w-full min-w-0"><span className="text-gray-500">Decryption Speed</span><span className="text-amber-300">{results.audit_log.crypto_envelope.decryption_time}</span></div>
-                        </>)}
-                        {results.audit_log.matched_user_id && (
-                          <div className="flex justify-between items-start gap-2 break-words w-full min-w-0 mt-1"><span className="text-gray-500">Matched Profile ID</span><span className="text-white">{results.audit_log.matched_user_id}</span></div>
-                        )}
-                        {results.audit_log.person_name && (
-                          <div className="flex justify-between items-start gap-2 break-words w-full min-w-0"><span className="text-gray-500">Matched Name</span><span className="text-white">{results.audit_log.person_name}</span></div>
-                        )}
-                        {results.audit_log.license_short_name && (
-                          <div className="flex justify-between items-start gap-2 break-words w-full min-w-0"><span className="text-gray-500">Image License</span><span className="text-gray-400">{results.audit_log.license_short_name}</span></div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Block 4: Bayesian Evidence — Forensic Trail */}
-                    <div className="border border-[#2a1a2a] rounded p-2 bg-[#020102] min-w-0">
-                      <div className="text-purple-400/80 tracking-[0.2em] mb-1 border-b border-purple-900/30 pb-1 text-[8px]">▸ BAYESIAN EVIDENCE</div>
-                      <p className="text-[8px] break-words text-gray-600 mb-1.5 leading-relaxed">Likelihood Ratios quantifying the strength of evidence for visual similarity.</p>
-                      <div className="space-y-0.5 pl-1">
-                        <div className="flex justify-between"><span className="text-gray-500">LR<sub>arcface</sub></span><span className="text-purple-300 font-bold break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_arcface)}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-500">LR<sub>marks</sub></span><span className="text-purple-300 font-bold break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_marks)}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-500">LR<sub>total</sub></span><span className="text-[#D4AF37] font-bold break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_total)}</span></div>
-                        <div className="flex justify-between mt-1 pt-1 border-t border-purple-900/20"><span className="text-gray-500">Similarity Probability</span><span className="text-[#D4AF37] font-bold">{results.audit_log.posterior_probability != null ? `${(results.audit_log.posterior_probability * 100).toFixed(6)}%` : 'N/A'}</span></div>
-                        {results.audit_log.mark_lrs && results.audit_log.mark_lrs.length > 0 && (
-                          <div className="mt-1 pt-1 border-t border-purple-900/20">
-                            <div className="text-gray-500 mb-0.5">Individual Mark LRs ({results.audit_log.mark_lrs.length})</div>
-                            <div className="flex flex-wrap gap-1">
-                              {results.audit_log.mark_lrs.map((lr, i) => (
-                                <span key={i} className={`text-[7px] px-1 py-0.5 rounded ${lr > 10 ? 'bg-[#D4AF37]/15 text-[#D4AF37]' : 'bg-gray-800 text-gray-400'}`}>{lr.toFixed(1)}</span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-2 pt-1.5 border-t border-[#1a1a0a] text-[7px] text-gray-700 tracking-widest text-center">REPORT GENERATED AT {new Date().toISOString()}</div>
-                </div>
-              )}
+                  TECHNICAL BREAKDOWN
+                </button>
+              </div>
             </div>
+            </div>
+
+            {/* ── Full-Width Technical Details Overlay ── */}
+            {auditExpanded && results.audit_log && (
+              <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-md p-6 flex flex-col justify-center items-center">
+                <div className="w-full max-w-4xl max-h-full bg-[#050505] border border-[#D4AF37]/30 rounded-lg shadow-[0_0_50px_rgba(0,0,0,0.8)] flex flex-col overflow-hidden">
+                  <div className="shrink-0 px-5 py-4 border-b border-[#1a1a0a] flex justify-between items-center bg-[#0a0a0a]">
+                    <span className="flex items-center gap-3 font-bold text-[#D4AF37] tracking-[0.2em] text-[11px]">
+                      <span className="relative flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#D4AF37] opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-[#D4AF37]"></span>
+                      </span>
+                      DETAILED TECHNICAL BREAKDOWN
+                    </span>
+                    <button onClick={() => setAuditExpanded(false)} className="text-gray-500 hover:text-white p-2 text-xl leading-none font-bold">✕</button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-6 font-mono text-[9px] leading-relaxed custom-scrollbar">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full min-w-0">
+
+                      {/* Block 1: Confidence & Accuracy */}
+                      <div className="border border-[#1a2a1a] rounded-lg p-4 bg-[#010201] min-w-0 shadow-[inset_0_0_20px_rgba(0,20,0,0.2)]">
+                        <div className="text-green-500/80 tracking-[0.2em] mb-2 border-b border-green-900/30 pb-2 text-[10px] font-bold">▸ CONFIDENCE &amp; ACCURACY</div>
+                        <p className="text-[9px] text-gray-500 mb-3 leading-relaxed">How confident is the system in this result? Lower error rates mean higher reliability.</p>
+                        <div className="space-y-1.5 pl-1 text-[10px]">
+                          <div className="flex justify-between"><span className="text-gray-500">Error Probability</span><span className={`font-bold ${results.audit_log.false_acceptance_rate === 'UNCALIBRATED' || results.audit_log.false_acceptance_rate === 'Inconclusive' ? 'text-yellow-400' : results.audit_log.false_acceptance_rate === 'DIFFERENT IDENTITIES' ? 'text-red-400' : 'text-green-400'}`}>{results.audit_log.false_acceptance_rate}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-500">Confidence Level</span><span className={`font-bold ${results.audit_log.statistical_certainty === 'UNCALIBRATED' ? 'text-yellow-400' : results.audit_log.statistical_certainty.startsWith('<') || results.audit_log.statistical_certainty.startsWith('0%') ? 'text-red-400' : 'text-green-400'}`}>{results.audit_log.statistical_certainty}</span></div>
+                          <div className="flex justify-between group relative"><span className="text-gray-500">Face Points Mapped</span><span className="text-white font-bold">{results.audit_log.nodes_mapped}/468</span></div>
+                          <div className="flex justify-between"><span className="text-gray-500">Raw Similarity Score</span><span className="text-white font-bold">{results.audit_log.raw_cosine_score.toFixed(6)}</span></div>
+                          {results.audit_log.calibration_benchmark && (
+                            <div className="flex justify-between mt-1"><span className="text-gray-500">Tested Against</span><span className={`font-bold ${results.audit_log.calibration_benchmark === 'N/A' ? 'text-yellow-400' : 'text-green-400'}`}>{results.audit_log.calibration_benchmark}{results.audit_log.calibration_pairs ? ` (${results.audit_log.calibration_pairs.toLocaleString()} pairs)` : ''}</span></div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Block 2: Image Quality & Authenticity */}
+                      <div className="border border-[#2a1a1a] rounded-lg p-4 bg-[#020101] min-w-0 shadow-[inset_0_0_20px_rgba(0,20,20,0.1)]">
+                        <div className="text-cyan-500/80 tracking-[0.2em] mb-2 border-b border-cyan-900/30 pb-2 text-[10px] font-bold">▸ IMAGE QUALITY &amp; AUTHENTICITY</div>
+                        <p className="text-[9px] text-gray-500 mb-3 leading-relaxed">How were the photos corrected for comparison, and are they real photographs?</p>
+                        <div className="space-y-1.5 pl-1 text-[10px]">
+                          {results.audit_log.alignment_variance && (<>
+                            <div className="flex justify-between"><span className="text-gray-500">Left-Right Correction</span><span className="text-cyan-300">{results.audit_log.alignment_variance.yaw}</span></div>
+                            <div className="flex justify-between"><span className="text-gray-500">Up-Down Correction</span><span className="text-cyan-300">{results.audit_log.alignment_variance.pitch}</span></div>
+                            <div className="flex justify-between"><span className="text-gray-500">Tilt Correction</span><span className="text-cyan-300">{results.audit_log.alignment_variance.roll}</span></div>
+                          </>)}
+                          {results.audit_log.liveness_check && (<>
+                            <div className="flex justify-between mt-2"><span className="text-gray-500">Detection Method</span><span className="text-cyan-300 font-bold">{results.audit_log.liveness_check.method}</span></div>
+                            <div className="flex justify-between"><span className="text-gray-500">Fake Photo Risk</span><span className={`font-bold ${results.audit_log.liveness_check.status.includes('PASSED') || results.audit_log.liveness_check.status.includes('VERIFIED') || results.audit_log.liveness_check.status.includes('LIVE') ? 'text-green-400' : 'text-red-400'}`}>{results.audit_log.liveness_check.spoof_probability}</span></div>
+                            <div className="flex justify-between"><span className="text-gray-500">Authenticity</span><span className={`font-bold ${results.audit_log.liveness_check.status.includes('PASSED') || results.audit_log.liveness_check.status.includes('VERIFIED') || results.audit_log.liveness_check.status.includes('LIVE') ? 'text-green-400' : 'text-red-400'}`}>{results.audit_log.liveness_check.status}</span></div>
+                            {results.audit_log.liveness_check.laplacian_variance != null && (
+                              <div className="flex justify-between"><span className="text-gray-500">Image Sharpness</span><span className="text-cyan-300">{results.audit_log.liveness_check.laplacian_variance}</span></div>
+                            )}
+                          </>)}
+                        </div>
+                      </div>
+
+                      {/* Block 3: Security & Data Integrity */}
+                      <div className="border border-[#1a1a2a] rounded-lg p-4 bg-[#010102] min-w-0 shadow-[inset_0_0_20px_rgba(20,10,0,0.1)]">
+                        <div className="text-amber-500/80 tracking-[0.2em] mb-2 border-b border-amber-900/30 pb-2 text-[10px] font-bold">▸ SECURITY &amp; DATA INTEGRITY</div>
+                        <p className="text-[9px] text-gray-500 mb-3 leading-relaxed">Cryptographic proof that the biometric data was not tampered with during analysis.</p>
+                        <div className="space-y-1.5 pl-1 text-[10px]">
+                          {results.audit_log.vector_hash && (
+                            <div><span className="text-gray-500">Digital Fingerprint</span><div className="text-amber-300/80 text-[8px] break-all whitespace-pre-wrap w-full min-w-0 mt-1">{results.audit_log.vector_hash}</div></div>
+                          )}
+                          {results.audit_log.crypto_envelope && (<>
+                            <div className="flex justify-between items-start gap-2 break-words w-full min-w-0 mt-2"><span className="text-gray-500">Encryption Standard</span><span className="text-amber-300">{results.audit_log.crypto_envelope.standard}</span></div>
+                            <div className="flex justify-between items-start gap-2 break-words w-full min-w-0"><span className="text-gray-500">Decryption Speed</span><span className="text-amber-300">{results.audit_log.crypto_envelope.decryption_time}</span></div>
+                          </>)}
+                          {results.audit_log.matched_user_id && (
+                            <div className="flex justify-between items-start gap-2 break-words w-full min-w-0 mt-2"><span className="text-gray-500">Matched Profile ID</span><span className="text-white">{results.audit_log.matched_user_id}</span></div>
+                          )}
+                          {results.audit_log.person_name && (
+                            <div className="flex justify-between items-start gap-2 break-words w-full min-w-0"><span className="text-gray-500">Matched Name</span><span className="text-white">{results.audit_log.person_name}</span></div>
+                          )}
+                          {results.audit_log.license_short_name && (
+                            <div className="flex justify-between items-start gap-2 break-words w-full min-w-0"><span className="text-gray-500">Image License</span><span className="text-gray-400">{results.audit_log.license_short_name}</span></div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Block 4: Bayesian Evidence — Forensic Trail */}
+                      <div className="border border-[#2a1a2a] rounded-lg p-4 bg-[#020102] min-w-0 shadow-[inset_0_0_20px_rgba(20,0,20,0.1)]">
+                        <div className="text-purple-400/80 tracking-[0.2em] mb-2 border-b border-purple-900/30 pb-2 text-[10px] font-bold">▸ BAYESIAN EVIDENCE</div>
+                        <p className="text-[9px] break-words text-gray-500 mb-3 leading-relaxed">Likelihood Ratios quantifying the strength of evidence for visual similarity.</p>
+                        <div className="space-y-1.5 pl-1 text-[10px]">
+                          <div className="flex justify-between"><span className="text-gray-500">LR<sub>arcface</sub></span><span className="text-purple-300 font-bold break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_arcface)}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-500">LR<sub>marks</sub></span><span className="text-purple-300 font-bold break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_marks)}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-500">LR<sub>total</sub></span><span className="text-[#D4AF37] font-bold break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_total)}</span></div>
+                          <div className="flex justify-between mt-2 pt-2 border-t border-purple-900/20"><span className="text-gray-500">Similarity Probability</span><span className="text-[#D4AF37] font-bold">{results.audit_log.posterior_probability != null ? `${(results.audit_log.posterior_probability * 100).toFixed(6)}%` : 'N/A'}</span></div>
+                          {results.audit_log.mark_lrs && results.audit_log.mark_lrs.length > 0 && (
+                            <div className="mt-2 pt-2 border-t border-purple-900/20">
+                              <div className="text-gray-500 mb-1.5">Individual Mark LRs ({results.audit_log.mark_lrs.length})</div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {results.audit_log.mark_lrs.map((lr, i) => (
+                                  <span key={i} className={`text-[8px] px-1.5 py-1 rounded font-bold ${lr > 10 ? 'bg-[#D4AF37]/15 text-[#D4AF37]' : 'bg-gray-800 text-gray-400'}`}>{lr.toFixed(1)}</span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-6 pt-3 border-t border-[#1a1a0a] text-[8px] text-gray-700 tracking-widest text-center">REPORT GENERATED AT {new Date().toISOString()}</div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
