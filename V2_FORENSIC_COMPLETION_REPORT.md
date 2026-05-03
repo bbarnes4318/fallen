@@ -1,10 +1,11 @@
 # Court-Survivable Forensic Scoring Refactor v2 Completion Report
 
 ## 1. Commit Status
-**Current Commit SHA:** `4b0903d`
+**Current Commit SHA:** `100ff49`
 
 ## 2. v2 Commits
 The following sequence of commits represents the full forensic refactor v2:
+- `100ff49` Fix UnboundLocalError in generate_mark_overlay_receipt and tune mark detection thresholds for production
 - `4b0903d` Phase 6: Add mark diagnostics and repeatability API tests to e2e bayesian suite
 - `fae8fda` fix(forensic): clean phase 5b audit schema and pass ci
 - `b92b4f0` fix(frontend): correct detector status narrowing in marks diagnostics
@@ -57,11 +58,12 @@ All requisite v2 features have been validated and merged:
 
 ## 6. Known Limitations
 - This refactor makes mark evidence visible, diagnosable, and auditable.
+- Mark Detector logic has been tuned (lowered minimum contrast and overlap thresholds) to reduce false-negatives (silent zero marks) in production.
 - It does not by itself prove the mark detector is court-validated.
 - Separate benchmark validation is still required.
 
 ## 7. Deployment Status
-- **commit SHA deployed:** `4b0903d`
+- **commit SHA deployed:** `100ff49`
 - **build ID:** Pending GitHub Actions propagation
 - **environment variables required:**
   - `GIT_COMMIT_SHA`
