@@ -482,41 +482,29 @@ class AuditLog(BaseModel):
     marks_detected_gallery: Optional[int] = None
 
     # Full Forensic Provenance Audit (v3.0)
-    probe_source_file_hash: Optional[str] = None
-    gallery_source_file_hash: Optional[str] = None
-    probe_decoded_image_hash: Optional[str] = None
-    gallery_decoded_image_hash: Optional[str] = None
-    probe_aligned_crop_hash: Optional[str] = None
-    gallery_aligned_crop_hash: Optional[str] = None
+    # Legacy / Backwards Compatibility Fields
     probe_image_dimensions: Optional[str] = None
     gallery_image_dimensions: Optional[str] = None
     preprocessing_steps_applied: Optional[str] = None
-    code_commit_hash: Optional[str] = None
-    docker_image_digest: Optional[str] = None
-    arcface_model_name: Optional[str] = None
-    arcface_weight_hash: Optional[str] = None
     secondary_weight_hash: Optional[str] = None
-    mediapipe_version: Optional[str] = None
-    opencv_version: Optional[str] = None
-    deepface_version: Optional[str] = None
-    calibration_file_hash: Optional[str] = None
-    calibration_pair_count: Optional[int] = None
+    probe_aligned_crop_hash: Optional[str] = None
+    gallery_aligned_crop_hash: Optional[str] = None
     mark_lrs_json: Optional[str] = None
     accepted_mark_correspondences_json: Optional[str] = None
     mark_detector_version: Optional[str] = None
     mark_matcher_version: Optional[str] = None
     mark_overlay_url: Optional[str] = None
-    # Chain of Custody — Pre-decode binary hashes
-    probe_file_hash: Optional[str] = None
-    gallery_file_hash: Optional[str] = None
-    # Chain of Custody — Decoded & aligned image hashes
+
+    # New Canonical Fields (Phase 5B)
+    probe_source_file_hash: Optional[str] = None
+    gallery_source_file_hash: Optional[str] = None
     probe_decoded_image_hash: Optional[str] = None
     gallery_decoded_image_hash: Optional[str] = None
     probe_aligned_crop_hash_pre_clahe: Optional[str] = None
     gallery_aligned_crop_hash_pre_clahe: Optional[str] = None
     probe_aligned_crop_hash_post_clahe: Optional[str] = None
     gallery_aligned_crop_hash_post_clahe: Optional[str] = None
-    # Image dimensions at each stage
+    
     probe_original_dimensions: Optional[str] = None
     gallery_original_dimensions: Optional[str] = None
     probe_decoded_dimensions: Optional[str] = None
@@ -524,11 +512,12 @@ class AuditLog(BaseModel):
     probe_aligned_dimensions: Optional[str] = None
     gallery_aligned_dimensions: Optional[str] = None
     preprocessing_steps: Optional[list] = None
-    # Face-Model Evidence Fields
+    
     raw_arcface_similarity: Optional[float] = None
     raw_secondary_similarity: Optional[float] = None
     fused_face_model_similarity: Optional[float] = None
     lr_face_model: Optional[float] = None
+
     # Model Provenance
     code_commit_hash: Optional[str] = None
     docker_image_digest: Optional[str] = None
@@ -539,6 +528,8 @@ class AuditLog(BaseModel):
     opencv_version: Optional[str] = None
     deepface_version: Optional[str] = None
     calibration_file_hash: Optional[str] = None
+    calibration_pair_count: Optional[int] = None
+    
     # Pipeline reproducibility
     pipeline_version: str = PIPELINE_VERSION
     dependency_versions: Optional[dict] = None
@@ -3224,6 +3215,18 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             deepface_version=audit.deepface_version,
             calibration_file_hash=audit.calibration_file_hash,
             calibration_pair_count=audit.calibration_pair_count,
+            probe_original_dimensions=audit.probe_original_dimensions,
+            gallery_original_dimensions=audit.gallery_original_dimensions,
+            probe_decoded_dimensions=audit.probe_decoded_dimensions,
+            gallery_decoded_dimensions=audit.gallery_decoded_dimensions,
+            probe_aligned_dimensions=audit.probe_aligned_dimensions,
+            gallery_aligned_dimensions=audit.gallery_aligned_dimensions,
+            preprocessing_steps=json.dumps(audit.preprocessing_steps) if audit.preprocessing_steps else None,
+            raw_arcface_similarity=audit.raw_arcface_similarity,
+            raw_secondary_similarity=audit.raw_secondary_similarity,
+            fused_face_model_similarity=audit.fused_face_model_similarity,
+            lr_face_model=audit.lr_face_model,
+            secondary_model_weight_hash=audit.secondary_model_weight_hash,
         )
         ledger_session.add(event)
         ledger_session.commit()
@@ -4302,6 +4305,18 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             deepface_version=audit.deepface_version,
             calibration_file_hash=audit.calibration_file_hash,
             calibration_pair_count=audit.calibration_pair_count,
+            probe_original_dimensions=audit.probe_original_dimensions,
+            gallery_original_dimensions=audit.gallery_original_dimensions,
+            probe_decoded_dimensions=audit.probe_decoded_dimensions,
+            gallery_decoded_dimensions=audit.gallery_decoded_dimensions,
+            probe_aligned_dimensions=audit.probe_aligned_dimensions,
+            gallery_aligned_dimensions=audit.gallery_aligned_dimensions,
+            preprocessing_steps=json.dumps(audit.preprocessing_steps) if audit.preprocessing_steps else None,
+            raw_arcface_similarity=audit.raw_arcface_similarity,
+            raw_secondary_similarity=audit.raw_secondary_similarity,
+            fused_face_model_similarity=audit.fused_face_model_similarity,
+            lr_face_model=audit.lr_face_model,
+            secondary_model_weight_hash=audit.secondary_model_weight_hash,
         )
         ledger_session.add(event)
         ledger_session.commit()

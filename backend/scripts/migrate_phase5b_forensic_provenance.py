@@ -16,6 +16,14 @@ def migrate():
     columns = [col['name'] for col in inspector.get_columns("verification_events")]
     
     new_columns = {
+        "probe_source_file_hash": "VARCHAR(64)",
+        "gallery_source_file_hash": "VARCHAR(64)",
+        "probe_decoded_image_hash": "VARCHAR(64)",
+        "gallery_decoded_image_hash": "VARCHAR(64)",
+        "probe_aligned_crop_hash_pre_clahe": "VARCHAR(64)",
+        "gallery_aligned_crop_hash_pre_clahe": "VARCHAR(64)",
+        "probe_aligned_crop_hash_post_clahe": "VARCHAR(64)",
+        "gallery_aligned_crop_hash_post_clahe": "VARCHAR(64)",
         "probe_original_dimensions": "VARCHAR(32)",
         "gallery_original_dimensions": "VARCHAR(32)",
         "probe_decoded_dimensions": "VARCHAR(32)",
