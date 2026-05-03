@@ -463,12 +463,14 @@ class VerificationResponse(BaseModel):
     probe_heatmap_b64: str
     gallery_aligned_b64: str
     probe_aligned_b64: str
-    scar_delta_b64: str
+    scar_delta_b64: str  # Backwards compatibility — prefer edge_delta_b64
+    edge_delta_b64: Optional[str] = None  # Forward-compatible field name
     gallery_wireframe_b64: str
     probe_wireframe_b64: str
     probe_mark_debug_b64: Optional[str] = None
     gallery_mark_debug_b64: Optional[str] = None
-    mark_debug: Optional[dict] = None
+    mark_debug: Optional[dict] = None  # Full debug payload (DEBUG_FORENSIC only)
+    mark_diagnostics: Optional[dict] = None  # Lightweight always-on diagnostics
     # Tier 2: Geometry telemetry
     geometry_status: Optional[str] = None  # OK, NO_VALID_RATIOS, INVALID_IOD
     geometric_ratio_distance: Optional[float] = None
@@ -2113,7 +2115,7 @@ def compute_mark_correspondence(marks_gallery: list, marks_probe: list, matched_
     }
 
 
-def generate_scar_delta_map(
+def generate_edge_delta_map(
     img_gallery: np.ndarray,
     img_probe: np.ndarray,
     marks_gallery: list = None,
@@ -2121,13 +2123,10 @@ def generate_scar_delta_map(
     mark_matches: list = None,
 ) -> str:
     """
-    Biological Topography Delta — Scar Mapper.
-    Isolates persistent micro-topology (scars, pores, creases) that appears
-    consistently across both the gallery and probe aligned face crops.
-
-    Now also visualizes detected marks:
-      - Green circles: matched marks (present in both faces)
-      - Yellow circles: unmatched marks (only in one face)
+    Edge-Based Pixel Difference Map.
+    Computes the pixel/edge difference between aligned gallery and probe crops.
+    This is NOT scar/mole/blemish correspondence evidence — it only shows
+    structural pixel differences after Procrustes alignment.
 
     ALGORITHM:
     1. Convert both images to grayscale.
@@ -2137,10 +2136,8 @@ def generate_scar_delta_map(
     4. bitwise_and(gallery_edges, probe_edges, persistent_mask) isolates
        topology that exists in BOTH images and didn't shift between captures.
     5. Dilate slightly for UI readability.
-    6. Overlay in neon crimson (BGR: 30, 0, 180) on a darkened, desaturated
-       version of the gallery image.
-    7. Draw mark detection circles if mark data is provided.
-    8. Base64 encode and return as a data URI.
+    6. Render in neon crimson (BGRA: 30, 0, 180, 255) on a transparent canvas.
+    7. Base64 encode and return as a data URI.
     """
     h, w = img_gallery.shape[:2]
 
@@ -2159,21 +2156,20 @@ def generate_scar_delta_map(
 
     # 4. Intersection: edges present in BOTH images AND persistent
     common_edges = cv2.bitwise_and(edges_gallery, edges_probe)
-    true_scars = cv2.bitwise_and(common_edges, persistent_mask)
+    edge_diff = cv2.bitwise_and(common_edges, persistent_mask)
 
     # 5. Dilate for UI visibility (2×2 kernel, 1 iteration)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-    true_scars = cv2.dilate(true_scars, kernel, iterations=1)
+    edge_diff = cv2.dilate(edge_diff, kernel, iterations=1)
 
-    # 6. Build overlay canvas: transparent RGBA (so it can be overlaid without blending faces)
+    # 6. Build overlay canvas: transparent RGBA (standalone diagnostic map)
     canvas = np.zeros((h, w, 4), dtype=np.uint8)
 
-    # Paint neon crimson (BGRA: 30, 0, 180, 255) where scars are detected
-    canvas[true_scars > 0] = (30, 0, 180, 255)
+    # Paint neon crimson (BGRA: 30, 0, 180, 255) where edge differences are detected
+    canvas[edge_diff > 0] = (30, 0, 180, 255)
 
-    # Removed drawing of mark circles from backend.
-    # The frontend now draws perfectly scaled and aligned SVG-style 
-    # vector circles for both the gallery and the probe images dynamically.
+    # Mark circles are drawn in the frontend, not here.
+    # This map is a standalone pixel/edge difference diagnostic only.
 
     # 8. Encode to base64 data URI
     _, buffer = cv2.imencode('.png', canvas)
@@ -2663,8 +2659,8 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     _, pro_buf = cv2.imencode('.png', probe_aligned)
     probe_aligned_b64 = f"data:image/png;base64,{base64.b64encode(pro_buf).decode('utf-8')}"
 
-    # Biological Topography Delta (Scar Mapper — now with mark visualization)
-    scar_delta = generate_scar_delta_map(
+    # Edge-Based Pixel Difference Map (standalone diagnostic — NOT mark evidence)
+    edge_delta = generate_edge_delta_map(
         gallery_aligned, probe_aligned,
         marks_gallery=marks_gallery,
         marks_probe=marks_probe,
@@ -2786,6 +2782,16 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     gallery_mark_debug_b64 = None
     mark_debug_payload = None
 
+    # ── Lightweight always-on mark diagnostics (production-safe) ──
+    mark_diagnostics_payload = {
+        "raw_probe_marks_count": len(valid_probe_marks),
+        "raw_gallery_marks_count": len(valid_gallery_marks),
+        "accepted_correspondences_count": mark_result.get("matched", 0),
+        "rejected_candidates_count": len(rejected_cands) if rejected_cands else 0,
+        "detector_status": "OK" if (len(marks_gallery) > 0 or len(marks_probe) > 0) else "NO_CANDIDATES",
+        "matcher_status": "OK" if mark_result.get("matched", 0) > 0 else ("NO_MATCHES" if (len(valid_probe_marks) > 0 and len(valid_gallery_marks) > 0) else "INSUFFICIENT_INPUT"),
+    }
+
     if os.getenv("DEBUG_FORENSIC") == "true":
         gal_debug_img = gallery_aligned.copy()
         pro_debug_img = probe_aligned.copy()
@@ -2887,12 +2893,14 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         probe_heatmap_b64=probe_heatmap,
         gallery_aligned_b64=gallery_aligned_b64,
         probe_aligned_b64=probe_aligned_b64,
-        scar_delta_b64=scar_delta,
+        scar_delta_b64=edge_delta,
+        edge_delta_b64=edge_delta,
         gallery_wireframe_b64=gallery_wireframe,
         probe_wireframe_b64=probe_wireframe,
         probe_mark_debug_b64=probe_mark_debug_b64,
         gallery_mark_debug_b64=gallery_mark_debug_b64,
         mark_debug=mark_debug_payload,
+        mark_diagnostics=mark_diagnostics_payload,
         geometry_status=geometry_status,
         geometric_ratio_distance=round(ratio_l2, 6) if ratio_l2 is not None else None,
         mark_correspondence_score=tier4_score,
@@ -3309,7 +3317,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     _, pro_buf = cv2.imencode('.png', probe_aligned)
     probe_aligned_b64 = f"data:image/png;base64,{base64.b64encode(pro_buf).decode('utf-8')}"
 
-    scar_delta = generate_scar_delta_map(
+    edge_delta = generate_edge_delta_map(
         gallery_aligned, probe_aligned,
         marks_gallery=marks_gallery,
         marks_probe=marks_probe,
@@ -3436,6 +3444,16 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     gallery_mark_debug_b64 = None
     mark_debug_payload = None
 
+    # ── Lightweight always-on mark diagnostics (production-safe) ──
+    mark_diagnostics_payload = {
+        "raw_probe_marks_count": len(valid_probe_marks),
+        "raw_gallery_marks_count": len(valid_gallery_marks),
+        "accepted_correspondences_count": mark_result.get("matched", 0),
+        "rejected_candidates_count": len(rejected_cands) if rejected_cands else 0,
+        "detector_status": "OK" if (len(marks_gallery) > 0 or len(marks_probe) > 0) else "NO_CANDIDATES",
+        "matcher_status": "OK" if mark_result.get("matched", 0) > 0 else ("NO_MATCHES" if (len(valid_probe_marks) > 0 and len(valid_gallery_marks) > 0) else "INSUFFICIENT_INPUT"),
+    }
+
     if os.getenv("DEBUG_FORENSIC") == "true":
         gal_debug_img = gallery_aligned.copy()
         pro_debug_img = probe_aligned.copy()
@@ -3537,12 +3555,14 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         probe_heatmap_b64=probe_heatmap,
         gallery_aligned_b64=gallery_aligned_b64,
         probe_aligned_b64=probe_aligned_b64,
-        scar_delta_b64=scar_delta,
+        scar_delta_b64=edge_delta,
+        edge_delta_b64=edge_delta,
         gallery_wireframe_b64=gallery_wireframe_b64,
         probe_wireframe_b64=probe_wireframe_b64,
         probe_mark_debug_b64=probe_mark_debug_b64,
         gallery_mark_debug_b64=gallery_mark_debug_b64,
         mark_debug=mark_debug_payload,
+        mark_diagnostics=mark_diagnostics_payload,
         geometry_status=geometry_status,
         geometric_ratio_distance=round(ratio_l2, 6) if ratio_l2 is not None else None,
         mark_correspondence_score=tier4_score,

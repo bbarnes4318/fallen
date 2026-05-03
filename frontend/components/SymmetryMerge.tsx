@@ -31,9 +31,9 @@ type ViewMode = 'aligned' | 'mesh' | 'delta' | 'overlap' | 'marks' | 'debug';
 const VIEW_TOOLTIPS: Record<ViewMode, string> = {
   aligned: 'Procrustes normalized planar view. Scales and centers faces to eliminate distance and angle bias.',
   mesh: '468-point MediaPipe face mesh overlay. Visualizes landmark positions used for alignment and geometric ratio extraction.',
-  delta: 'Edge-based differential overlay between aligned gallery and probe crops. Highlights persistent structural deviations. NOTE: This is NOT scar/mole/blemish correspondence evidence.',
+  delta: 'Pixel/edge difference map between aligned crops. Shows structural deviations only — NOT scar, mole, blemish, or mark correspondence evidence.',
   overlap: 'Alpha-blended composite layout for manual symmetry verification.',
-  marks: 'Accepted forensic mark correspondences. Shows confirmed shared marks (scars, moles, blemishes) between probe and gallery.',
+  marks: 'Forensic mark visualization. Shows all raw detected marks (unmatched in cyan, matched correspondences in green) with diagnostic counts.',
   debug: 'Raw backend mark debug visualization with OpenCV overlays.',
 };
 
@@ -193,7 +193,7 @@ export default function SymmetryMerge({
 }: SymmetryMergeProps) {
   const galleryImageSrc = results?.gallery_aligned_b64;
   const probeImageSrc = results?.probe_aligned_b64;
-  const deltaImageSrc = results?.scar_delta_b64;
+  const deltaImageSrc = results?.edge_delta_b64 ?? results?.scar_delta_b64;
   const galleryWireframeSrc = results?.gallery_wireframe_b64;
   const probeWireframeSrc = results?.probe_wireframe_b64;
   const [mode, setMode] = useState<ViewMode>('aligned');
@@ -239,21 +239,19 @@ export default function SymmetryMerge({
     !results?.probe_mark_debug_b64 &&
     !results?.gallery_mark_debug_b64);
 
-  // ── LEFT PANE = PROBE (+ wireframe in mesh mode) ──
+  // ── LEFT PANE = PROBE (wireframe in mesh, debug overlay in debug — NO delta overlay) ──
   const getLeftOverlay = useCallback((): HTMLImageElement | null => {
     if (mode === 'mesh' && pWireImg) return pWireImg;
-    if (mode === 'delta' && deltaImg) return deltaImg;
     if (mode === 'debug' && pMarkDebugImg) return pMarkDebugImg;
     return null;
-  }, [mode, pWireImg, deltaImg, pMarkDebugImg]);
+  }, [mode, pWireImg, pMarkDebugImg]);
 
-  // ── RIGHT PANE = GALLERY (+ delta overlay in delta mode, + wireframe in mesh mode) ──
+  // ── RIGHT PANE = GALLERY (wireframe in mesh, debug overlay in debug — NO delta overlay) ──
   const getRightOverlay = useCallback((): HTMLImageElement | null => {
     if (mode === 'mesh' && gWireImg) return gWireImg;
-    if (mode === 'delta' && deltaImg) return deltaImg;
     if (mode === 'debug' && gMarkDebugImg) return gMarkDebugImg;
     return null;
-  }, [mode, gWireImg, deltaImg, gMarkDebugImg]);
+  }, [mode, gWireImg, gMarkDebugImg]);
 
   const getBorderColor = useCallback((): string | undefined => {
     if (mode === 'delta') return 'rgba(180, 0, 30, 0.5)';
@@ -399,8 +397,9 @@ export default function SymmetryMerge({
   useEffect(() => {
     if (!imagesReady || mode === 'overlap') return;
 
-    const probePts = shouldDrawFrontendMarkPoints ? (mode === 'marks' ? probePoints.filter(p => p.isMatched === true) : probePoints) : undefined;
-    const galleryPts = shouldDrawFrontendMarkPoints ? (mode === 'marks' ? galleryPoints.filter(p => p.isMatched === true) : galleryPoints) : undefined;
+    // MARKS mode: show ALL raw marks (matched green, unmatched cyan). No filtering.
+    const probePts = shouldDrawFrontendMarkPoints ? probePoints : undefined;
+    const galleryPts = shouldDrawFrontendMarkPoints ? galleryPoints : undefined;
 
     if (leftCanvasRef.current && probeImg) {
       drawPane(leftCanvasRef.current, probeImg, getLeftOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, probePts);
@@ -488,7 +487,7 @@ export default function SymmetryMerge({
             {deltaImageSrc && (
               <Tooltip text={VIEW_TOOLTIPS.delta}>
                 <button onClick={() => setMode('delta')} className={`px-3 py-1 transition-colors border-l ${mode === 'delta' ? 'bg-[#1a0005] text-[#ff2040] font-bold border-[#5a0015] shadow-[inset_0_0_12px_rgba(180,0,30,0.3)]' : 'text-gray-400 hover:text-red-300 border-[#333]'}`}>
-                  EDGE DELTA
+                  PIXEL DELTA
                 </button>
               </Tooltip>
             )}
@@ -697,7 +696,7 @@ export default function SymmetryMerge({
               {...commonPaneEvents}
             >
               <canvas ref={leftCanvasRef} className="block w-full h-full" />
-              <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">PROBE + DELTA</span> : mode === 'debug' ? <span className="text-yellow-500">PROBE MARK DEBUG</span> : 'PROBE (A)'}</div>
+              <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'debug' ? <span className="text-yellow-500">PROBE MARK DEBUG</span> : 'PROBE (A)'}</div>
             </div>
 
             {/* Right Pane: Gallery */}
@@ -706,7 +705,7 @@ export default function SymmetryMerge({
               {...commonPaneEvents}
             >
               <canvas ref={rightCanvasRef} className="block w-full h-full" />
-              <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'delta' ? <span className="text-red-500">GALLERY + DELTA</span> : mode === 'debug' ? <span className="text-yellow-500">GALLERY MARK DEBUG</span> : 'GALLERY (B)'}</div>
+              <div className="absolute top-2 left-3 text-[9px] font-mono text-gray-600 tracking-widest pointer-events-none">{mode === 'debug' ? <span className="text-yellow-500">GALLERY MARK DEBUG</span> : 'GALLERY (B)'}</div>
             </div>
           </div>
 
@@ -716,9 +715,10 @@ export default function SymmetryMerge({
               {/* Status Banner */}
               {(() => {
                 const status = results?.mark_match_status as MarkMatchStatus | null | undefined;
-                const probeCount = results?.marks_detected_probe ?? 0;
-                const galCount = results?.marks_detected_gallery ?? 0;
-                const matchCount = results?.marks_matched ?? 0;
+                const diag = results?.mark_diagnostics;
+                const probeCount = diag?.raw_probe_marks_count ?? results?.marks_detected_probe ?? 0;
+                const galCount = diag?.raw_gallery_marks_count ?? results?.marks_detected_gallery ?? 0;
+                const matchCount = diag?.accepted_correspondences_count ?? results?.marks_matched ?? 0;
                 const lrMarks = results?.lr_marks;
 
                 let statusLabel = 'UNKNOWN';
@@ -748,10 +748,32 @@ export default function SymmetryMerge({
                         <span className="text-[10px] opacity-70">{matchCount} of {Math.max(probeCount, galCount)} marks matched</span>
                       </div>
                       <div className="flex justify-between items-center mt-1 text-[10px] opacity-60">
-                        <span>PROBE: {probeCount} marks · GALLERY: {galCount} marks</span>
+                        <span>PROBE: {probeCount} raw marks · GALLERY: {galCount} raw marks · CORRESPONDENCES: {matchCount}</span>
                         {lrMarks != null && <span>LR_MARKS: {lrMarks.toFixed(4)}</span>}
                       </div>
                     </div>
+
+                    {/* Diagnostic messaging for empty states */}
+                    {probeCount === 0 && galCount === 0 && (
+                      <div className="px-3 py-1.5 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[9px] text-yellow-400/70 leading-relaxed">
+                        No raw marks detected on either probe or gallery. The detector found no reliable candidates — likely due to lighting conditions, image crop, occlusion, or threshold filters.
+                      </div>
+                    )}
+                    {(probeCount === 0 && galCount > 0) && (
+                      <div className="px-3 py-1.5 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[9px] text-yellow-400/70 leading-relaxed">
+                        No raw marks detected on probe. The detector rejected all candidates on the probe side due to lighting, crop, occlusion, or threshold filters.
+                      </div>
+                    )}
+                    {(probeCount > 0 && galCount === 0) && (
+                      <div className="px-3 py-1.5 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[9px] text-yellow-400/70 leading-relaxed">
+                        No raw marks detected on gallery. The detector rejected all candidates on the gallery side due to lighting, crop, occlusion, or threshold filters.
+                      </div>
+                    )}
+                    {probeCount > 0 && galCount > 0 && matchCount === 0 && status !== 'EXACT_SELF_MATCH' && (
+                      <div className="px-3 py-1.5 border border-orange-900/30 rounded bg-orange-950/20 font-mono text-[9px] text-orange-400/70 leading-relaxed">
+                        Marks were detected, but no accepted correspondences passed the matcher. The detected marks did not meet the spatial or morphological similarity thresholds required for forensic correspondence.
+                      </div>
+                    )}
 
                     {/* Self-match LR transparency note */}
                     {status === 'EXACT_SELF_MATCH' && (
@@ -809,8 +831,39 @@ export default function SymmetryMerge({
           )}
 
           {mode === 'delta' && (
-            <div className="shrink-0 text-[9px] font-mono text-red-300/70 tracking-widest border border-red-900/40 bg-red-950/10 rounded px-3 py-2 mt-2">
-              EDGE DIFFERENCE MAP — NOT SCAR/MOLE/BLEMISH MATCH EVIDENCE
+            /* ── PIXEL DELTA: Standalone Diagnostic Panel ── */
+            <div className="shrink-0 flex flex-col gap-2 mt-2">
+              <div className="relative overflow-hidden rounded border border-red-900/40 bg-[#050505] flex items-center justify-center" style={{ height: '180px' }}>
+                {deltaImg ? (
+                  <canvas
+                    ref={(el) => {
+                      if (!el || !deltaImg) return;
+                      const ctx = el.getContext('2d');
+                      if (!ctx) return;
+                      const cw = el.clientWidth;
+                      const ch = el.clientHeight;
+                      el.width = cw;
+                      el.height = ch;
+                      const iw = deltaImg.width;
+                      const ih = deltaImg.height;
+                      const scale = Math.min(cw / iw, ch / ih, 1);
+                      const dw = iw * scale;
+                      const dh = ih * scale;
+                      const ox = (cw - dw) / 2;
+                      const oy = (ch - dh) / 2;
+                      ctx.clearRect(0, 0, cw, ch);
+                      ctx.drawImage(deltaImg, ox, oy, dw, dh);
+                    }}
+                    className="block w-full h-full"
+                  />
+                ) : (
+                  <span className="text-gray-600 font-mono text-[10px] tracking-widest">NO DELTA IMAGE AVAILABLE</span>
+                )}
+                <div className="absolute top-2 left-3 text-[9px] font-mono text-red-400/70 tracking-widest pointer-events-none">PIXEL DIFFERENCE MAP</div>
+              </div>
+              <div className="text-[9px] font-mono text-red-300/70 tracking-wider border border-red-900/40 bg-red-950/10 rounded px-3 py-2 leading-relaxed">
+                This is not scar, mole, blemish, or mark correspondence evidence. This view only shows pixel/edge differences after alignment.
+              </div>
             </div>
           )}
         </div>
@@ -950,9 +1003,9 @@ export default function SymmetryMerge({
         <span>
           {mode === 'aligned' && 'CANONICAL ALIGNMENT'}
           {mode === 'mesh' && <span className="text-[#D4AF37]">3DMM WIREFRAME HUD</span>}
-          {mode === 'delta' && <span className="text-red-500">PAIRWISE EDGE DELTA - NOT FOR SCAR/MOLE/BLEMISH CORRESPONDENCE</span>}
+          {mode === 'delta' && <span className="text-red-500">PIXEL DELTA — STRUCTURAL DIFFERENCE ONLY</span>}
           {mode === 'overlap' && <span className="text-[#D4AF37]">DRAG TO COMPARE OVERLAP</span>}
-          {mode === 'marks' && <span className="text-emerald-400">CONFIRMED MARK CORRESPONDENCES — FORENSIC EVIDENCE ONLY</span>}
+          {mode === 'marks' && <span className="text-emerald-400">MARK DETECTIONS — GREEN = MATCHED · CYAN = UNMATCHED RAW · GRAY = UNKNOWN</span>}
           {mode === 'debug' && <span className="text-yellow-500">GREEN = ACCEPTED MATCH · CYAN = UNMATCHED DETECTED MARK · GRAY = UNKNOWN</span>}
           {isXrayMode && <span className="ml-2 text-[#D4AF37] animate-pulse">· X-RAY ACTIVE</span>}
         </span>

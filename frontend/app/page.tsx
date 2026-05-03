@@ -199,6 +199,9 @@ export default function Home() {
         })
         .then(data => {
           setResults(data);
+          if (process.env.NEXT_PUBLIC_DEBUG_FORENSIC === 'true') {
+            console.log('MARK DEBUG', { raw_probe_marks: data.raw_probe_marks, raw_gallery_marks: data.raw_gallery_marks, correspondences: data.correspondences, mark_debug: data.mark_debug, mark_diagnostics: data.mark_diagnostics });
+          }
           setStep('complete');
           sessionStorage.removeItem('lockedJob');
         })
@@ -347,6 +350,9 @@ export default function Home() {
         setStep('paywall');
       } else {
         setResults(data);
+        if (process.env.NEXT_PUBLIC_DEBUG_FORENSIC === 'true') {
+          console.log('MARK DEBUG', { raw_probe_marks: data.raw_probe_marks, raw_gallery_marks: data.raw_gallery_marks, correspondences: data.correspondences, mark_debug: data.mark_debug, mark_diagnostics: data.mark_diagnostics });
+        }
         setStep('complete');
       }
       
@@ -386,6 +392,9 @@ export default function Home() {
         setStep('paywall');
       } else {
         setResults(data);
+        if (process.env.NEXT_PUBLIC_DEBUG_FORENSIC === 'true') {
+          console.log('MARK DEBUG', { raw_probe_marks: data.raw_probe_marks, raw_gallery_marks: data.raw_gallery_marks, correspondences: data.correspondences, mark_debug: data.mark_debug, mark_diagnostics: data.mark_diagnostics });
+        }
         setStep('complete');
       }
     } catch (err: unknown) {
@@ -1093,6 +1102,9 @@ export default function Home() {
                       if (!res.ok) throw new Error('Bypass failed');
                       const data = await res.json();
                       setResults(data);
+                      if (process.env.NEXT_PUBLIC_DEBUG_FORENSIC === 'true') {
+                        console.log('MARK DEBUG', { raw_probe_marks: data.raw_probe_marks, raw_gallery_marks: data.raw_gallery_marks, correspondences: data.correspondences, mark_debug: data.mark_debug, mark_diagnostics: data.mark_diagnostics });
+                      }
                       sessionStorage.removeItem('lockedJob');
                       setBypassCode('');
                       setStep('complete');

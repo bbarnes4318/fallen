@@ -127,6 +127,16 @@ export interface FaceDataPayload {
   [key: string]: unknown;
 }
 
+/** Lightweight always-on mark diagnostics (production-safe) */
+export interface MarkDiagnostics {
+  raw_probe_marks_count: number;
+  raw_gallery_marks_count: number;
+  accepted_correspondences_count: number;
+  rejected_candidates_count: number;
+  detector_status: string;  // "OK" | "NO_CANDIDATES"
+  matcher_status: string;   // "OK" | "NO_MATCHES" | "INSUFFICIENT_INPUT"
+}
+
 /** Bayesian scoring trace — returned only when DEBUG_FORENSIC=true */
 export interface ScoringTrace {
   calibration_status?: string;
@@ -184,12 +194,14 @@ export interface VerificationResult {
   probe_heatmap_b64: string;
   gallery_aligned_b64: string;
   probe_aligned_b64: string;
-  scar_delta_b64: string;
+  scar_delta_b64: string;  // Backwards compat — prefer edge_delta_b64
+  edge_delta_b64?: string | null;  // Forward-compatible field name
   gallery_wireframe_b64: string;
   probe_wireframe_b64: string;
   probe_mark_debug_b64?: string | null;
   gallery_mark_debug_b64?: string | null;
-  mark_debug?: MarkDebugPayload | null;
+  mark_debug?: MarkDebugPayload | null;  // Full debug payload (DEBUG_FORENSIC only)
+  mark_diagnostics?: MarkDiagnostics | null;  // Lightweight always-on diagnostics
   correspondences?: Correspondence[];
   audit_log?: AuditLog;
   probe_data?: FaceDataPayload;
