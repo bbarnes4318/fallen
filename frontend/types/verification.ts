@@ -25,6 +25,9 @@ export interface AuditLog {
   posterior_probability?: number | null;
   mark_lrs?: number[] | null;
   bayesian_fused_score?: number | null;
+  // Chain of Custody — Source file hashes
+  probe_source_file_hash?: string;
+  gallery_source_file_hash?: string;
   // Chain of Custody — Decoded & aligned image hashes
   probe_decoded_image_hash?: string;
   gallery_decoded_image_hash?: string;
@@ -45,10 +48,12 @@ export interface AuditLog {
   docker_image_digest?: string;
   arcface_model_name?: string;
   arcface_weight_hash?: string;
+  secondary_model_weight_hash?: string;
   mediapipe_version?: string;
   opencv_version?: string;
   deepface_version?: string;
   calibration_file_hash?: string;
+  calibration_pair_count?: number;
 }
 
 export type RawPoint = 
@@ -160,7 +165,7 @@ export interface MarkDiagnostics {
   detector_status: string;  // "OK" | "NO_CANDIDATES"
   matcher_status: string;   // "OK" | "NO_MATCHES" | "INSUFFICIENT_INPUT"
   lr_marks: number | null;
-  mark_match_status: string;
+  mark_match_status: string | null;
   rejection_summary: string | null;
 }
 
@@ -193,6 +198,7 @@ export type MarkMatchStatus =
   | "MATCHED"
   | "INSUFFICIENT_MARKS"
   | "NO_MATCHES"
+  | "FACE_NOT_DETECTED"
   | "DETECTOR_UNAVAILABLE"
   | "UNKNOWN";
 
@@ -247,9 +253,9 @@ export interface VerificationResult {
   mark_matcher_version?: string | null;
   exact_image_match?: boolean;
   // Face-model evidence (explicit decomposition)
-  raw_arcface_similarity?: number;
-  raw_secondary_similarity?: number;
-  fused_face_model_similarity?: number;
+  raw_arcface_similarity?: number | null;
+  raw_secondary_similarity?: number | null;
+  fused_face_model_similarity?: number | null;
   lr_face_model?: number | null;
 }
 
