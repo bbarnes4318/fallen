@@ -825,6 +825,13 @@ export default function SymmetryMerge({
                   statusColor = 'text-red-400 border-red-800 bg-red-950/30';
                 }
 
+                const detectorStatus = diag?.detector_status;
+                const detectorFailed =
+                  detectorStatus !== undefined &&
+                  detectorStatus !== null &&
+                  detectorStatus !== "OK" &&
+                  detectorStatus !== "NO_CANDIDATES";
+
                 return (
                   <>
                     <div className={`px-3 py-2 border rounded font-mono text-xs tracking-wider ${statusColor}`}>
@@ -879,9 +886,9 @@ export default function SymmetryMerge({
                     )}
 
                     {/* Detector/matcher unavailable diagnostics */}
-                    {(diag.detector_status === 'FACE_NOT_DETECTED' || diag.detector_status === 'UNKNOWN') && diag.detector_status !== 'OK' && diag.detector_status !== 'NO_CANDIDATES' && (
+                    {detectorFailed && (
                       <div className="px-3 py-1.5 border border-red-900/40 rounded bg-red-950/20 font-mono text-[9px] text-red-400/80 leading-relaxed">
-                        Mark detector returned status: {diag.detector_status}. Mark evidence cannot be evaluated.
+                        Detector status: {detectorStatus}. Mark evidence cannot be evaluated.
                       </div>
                     )}
                     {(diag.matcher_status === 'UNKNOWN') && (
