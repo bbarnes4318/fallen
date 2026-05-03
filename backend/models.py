@@ -163,6 +163,32 @@ class VerificationEvent(Base):
     mark_matcher_version = Column(String(64), nullable=True)
     mark_overlay_url = Column(Text, nullable=True)               # GCS URI (private), not raw blob
 
+    # ---------------------------------------------------------
+    # Full Forensic Provenance Audit (v3.0)
+    # ---------------------------------------------------------
+    # Raw Input Audit
+    probe_source_file_hash = Column(String(64), nullable=True)
+    gallery_source_file_hash = Column(String(64), nullable=True)
+    probe_decoded_image_hash = Column(String(64), nullable=True)
+    gallery_decoded_image_hash = Column(String(64), nullable=True)
+    probe_aligned_crop_hash = Column(String(64), nullable=True)
+    gallery_aligned_crop_hash = Column(String(64), nullable=True)
+    probe_image_dimensions = Column(String(32), nullable=True)
+    gallery_image_dimensions = Column(String(32), nullable=True)
+    preprocessing_steps_applied = Column(Text, nullable=True)
+
+    # Model Provenance
+    code_commit_hash = Column(String(64), nullable=True)
+    docker_image_digest = Column(String(128), nullable=True)
+    arcface_model_name = Column(String(64), nullable=True)
+    arcface_weight_hash = Column(String(64), nullable=True)
+    secondary_weight_hash = Column(String(64), nullable=True)
+    mediapipe_version = Column(String(32), nullable=True)
+    opencv_version = Column(String(32), nullable=True)
+    deepface_version = Column(String(32), nullable=True)
+    calibration_file_hash = Column(String(64), nullable=True)
+    calibration_pair_count = Column(Integer, nullable=True)
+
     # Phase 7: Synthetic Provenance Veto (Deepfake Detection)
     synthetic_anomaly_score = Column(Float, nullable=True)
     failed_provenance_veto = Column(Boolean, nullable=True, default=False)

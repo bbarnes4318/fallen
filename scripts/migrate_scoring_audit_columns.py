@@ -50,6 +50,26 @@ def run_migration():
                 "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS mark_detector_version VARCHAR(64);",
                 "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS mark_matcher_version VARCHAR(64);",
                 "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS mark_overlay_url TEXT;",
+                # Full Forensic Provenance Audit (v3.0)
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS probe_source_file_hash VARCHAR(64);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS gallery_source_file_hash VARCHAR(64);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS probe_decoded_image_hash VARCHAR(64);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS gallery_decoded_image_hash VARCHAR(64);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS probe_aligned_crop_hash VARCHAR(64);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS gallery_aligned_crop_hash VARCHAR(64);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS probe_image_dimensions VARCHAR(32);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS gallery_image_dimensions VARCHAR(32);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS preprocessing_steps_applied TEXT;",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS code_commit_hash VARCHAR(64);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS docker_image_digest VARCHAR(128);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS arcface_model_name VARCHAR(64);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS arcface_weight_hash VARCHAR(64);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS secondary_weight_hash VARCHAR(64);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS mediapipe_version VARCHAR(32);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS opencv_version VARCHAR(32);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS deepface_version VARCHAR(32);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS calibration_file_hash VARCHAR(64);",
+                "ALTER TABLE verification_events ADD COLUMN IF NOT EXISTS calibration_pair_count INTEGER;",
             ]
             
             for stmt in statements:
@@ -67,6 +87,12 @@ def run_migration():
                 "mark_match_status", "marks_detected_probe", "marks_detected_gallery",
                 "mark_lrs_json", "accepted_mark_correspondences_json",
                 "mark_detector_version", "mark_matcher_version", "mark_overlay_url",
+                "probe_source_file_hash", "gallery_source_file_hash", "probe_decoded_image_hash",
+                "gallery_decoded_image_hash", "probe_aligned_crop_hash", "gallery_aligned_crop_hash",
+                "probe_image_dimensions", "gallery_image_dimensions", "preprocessing_steps_applied",
+                "code_commit_hash", "docker_image_digest", "arcface_model_name", "arcface_weight_hash",
+                "secondary_weight_hash", "mediapipe_version", "opencv_version", "deepface_version",
+                "calibration_file_hash", "calibration_pair_count",
             ]
             result = conn.execute(text(
                 "SELECT column_name FROM information_schema.columns "

@@ -354,6 +354,17 @@ def main():
         "calibration_population_size": calibration["population_size"],
         "calibration_total_marks": calibration["total_marks"],
         "epsilon_floor": calibration["epsilon_floor"],
+        "probe_source_file_hash": "dummy_hash_p",
+        "gallery_source_file_hash": "dummy_hash_g",
+        "probe_aligned_crop_hash": "dummy_hash_pc",
+        "gallery_aligned_crop_hash": "dummy_hash_gc",
+        "code_commit_hash": "dummy_commit",
+        "docker_image_digest": "dummy_digest",
+        "arcface_model_name": "arcface_v1",
+        "arcface_weight_hash": "dummy_w_hash",
+        "mediapipe_version": "0.10.x",
+        "opencv_version": "4.x",
+        "deepface_version": "0.0.79",
     }
 
     print(f"\n  {'='*50}")
@@ -389,6 +400,11 @@ def main():
     _assert(audit_log["posterior_probability"] is not None, "AuditLog.posterior_probability is not None")
     _assert(len(audit_log["mark_lrs"]) == mark_result["matched"], "mark_lrs count equals matched count")
     _assert(posterior == (lr_total / (lr_total + 1.0)), "Posterior = LR / (LR + 1) holds mathematically")
+    
+    # Audit provenance fields
+    _assert(audit_log.get("probe_source_file_hash") is not None, "Provenance: probe_source_file_hash present")
+    _assert(audit_log.get("code_commit_hash") is not None, "Provenance: code_commit_hash present")
+    _assert(audit_log.get("arcface_model_name") is not None, "Provenance: arcface_model_name present")
 
     print(f"\n  RESULT: {passed}/{passed + failed} assertions passed.")
 

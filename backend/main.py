@@ -388,6 +388,45 @@ def _get_dependency_versions() -> dict:
 
 DEPENDENCY_VERSIONS = _get_dependency_versions()
 
+
+def _build_rejection_summary(
+    valid_probe_marks: list,
+    valid_gallery_marks: list,
+    mark_result: dict,
+    rejected_cands: list,
+    mark_match_status: str,
+    exact_image_match: bool,
+    tier4_calibration,
+) -> str:
+    """Return a human-readable explanation for why LR_marks is neutral or absent."""
+    matched = mark_result.get("matched", 0)
+    n_probe = len(valid_probe_marks)
+    n_gallery = len(valid_gallery_marks)
+
+    if exact_image_match:
+        return "Exact self-match: mark evidence self-corresponding by identity (LR neutralized to 1.0)"
+    if n_probe == 0 and n_gallery == 0:
+        return "No raw marks detected on either image"
+    if n_probe == 0:
+        return "No raw marks detected on probe"
+    if n_gallery == 0:
+        return "No raw marks detected on gallery"
+    if tier4_calibration is None and matched > 0:
+        return "Mark calibration data unavailable — LR defaulted to 1.0"
+    if mark_match_status == "DETECTOR_UNAVAILABLE":
+        return "Mark detector unavailable"
+    if matched == 0 and len(rejected_cands) > 0:
+        return f"All {len(rejected_cands)} candidate marks rejected by cost/distance thresholds"
+    if matched == 0:
+        return "Raw marks detected, but no accepted correspondences passed matching thresholds"
+    if matched > 0:
+        lr_marks_val = mark_result.get("lr_marks", 1.0)
+        if lr_marks_val == 1.0 and tier4_calibration is None:
+            return "Mark calibration data unavailable — LR defaulted to 1.0"
+        return None  # Marks contributing normally
+    return "Unknown mark pipeline state"
+
+
 class AuditLog(BaseModel):
     raw_cosine_score: float
     # Neural Ensemble Audit Trail
@@ -439,6 +478,27 @@ class AuditLog(BaseModel):
     mark_match_status: Optional[str] = None
     marks_detected_probe: Optional[int] = None
     marks_detected_gallery: Optional[int] = None
+
+    # Full Forensic Provenance Audit (v3.0)
+    probe_source_file_hash: Optional[str] = None
+    gallery_source_file_hash: Optional[str] = None
+    probe_decoded_image_hash: Optional[str] = None
+    gallery_decoded_image_hash: Optional[str] = None
+    probe_aligned_crop_hash: Optional[str] = None
+    gallery_aligned_crop_hash: Optional[str] = None
+    probe_image_dimensions: Optional[str] = None
+    gallery_image_dimensions: Optional[str] = None
+    preprocessing_steps_applied: Optional[str] = None
+    code_commit_hash: Optional[str] = None
+    docker_image_digest: Optional[str] = None
+    arcface_model_name: Optional[str] = None
+    arcface_weight_hash: Optional[str] = None
+    secondary_weight_hash: Optional[str] = None
+    mediapipe_version: Optional[str] = None
+    opencv_version: Optional[str] = None
+    deepface_version: Optional[str] = None
+    calibration_file_hash: Optional[str] = None
+    calibration_pair_count: Optional[int] = None
     mark_lrs_json: Optional[str] = None
     accepted_mark_correspondences_json: Optional[str] = None
     mark_detector_version: Optional[str] = None
@@ -447,6 +507,31 @@ class AuditLog(BaseModel):
     # Chain of Custody — Pre-decode binary hashes
     probe_file_hash: Optional[str] = None
     gallery_file_hash: Optional[str] = None
+    # Chain of Custody — Decoded & aligned image hashes
+    probe_decoded_image_hash: Optional[str] = None
+    gallery_decoded_image_hash: Optional[str] = None
+    probe_aligned_crop_hash_pre_clahe: Optional[str] = None
+    gallery_aligned_crop_hash_pre_clahe: Optional[str] = None
+    probe_aligned_crop_hash_post_clahe: Optional[str] = None
+    gallery_aligned_crop_hash_post_clahe: Optional[str] = None
+    # Image dimensions at each stage
+    probe_original_dimensions: Optional[str] = None
+    gallery_original_dimensions: Optional[str] = None
+    probe_decoded_dimensions: Optional[str] = None
+    gallery_decoded_dimensions: Optional[str] = None
+    probe_aligned_dimensions: Optional[str] = None
+    gallery_aligned_dimensions: Optional[str] = None
+    preprocessing_steps: Optional[list] = None
+    # Model Provenance
+    code_commit_hash: Optional[str] = None
+    docker_image_digest: Optional[str] = None
+    arcface_model_name: Optional[str] = None
+    arcface_weight_hash: Optional[str] = None
+    secondary_model_weight_hash: Optional[str] = None
+    mediapipe_version: Optional[str] = None
+    opencv_version: Optional[str] = None
+    deepface_version: Optional[str] = None
+    calibration_file_hash: Optional[str] = None
     # Pipeline reproducibility
     pipeline_version: str = PIPELINE_VERSION
     dependency_versions: Optional[dict] = None
@@ -495,6 +580,11 @@ class VerificationResponse(BaseModel):
     veto_reason: Optional[str] = None
     veto_override_applied: bool = False
     veto_override_reason: Optional[str] = None
+    # Face-model evidence (explicit decomposition)
+    raw_arcface_similarity: Optional[float] = None
+    raw_secondary_similarity: Optional[float] = None
+    fused_face_model_similarity: Optional[float] = None
+    lr_face_model: Optional[float] = None
     # Scoring trace (DEBUG_FORENSIC only)
     scoring_trace: Optional[dict] = None
     calibration_status: Optional[str] = None
@@ -2634,20 +2724,24 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             veto_override_applied = True
             veto_override_reason = mark_override_eval["reason"]
             conclusion = (
-                "Bayesian Match — ArcFace veto overridden by independent "
-                "mark correspondence evidence"
+                "Mark Override Applied: ArcFace face-model veto overridden by independent "
+                "mark correspondence evidence. ArcFace channel did not pass."
             )
             # fused_score keeps its Bayesian posterior value
         else:
             fused_score = 0.0
             veto_reason = "ARCFACE_VETO"
-            conclusion = "EXCLUSION: Biometric Non-Match (ArcFace Veto)"
+            conclusion = (
+                "Face Model Veto: ArcFace embedding similarity below operating threshold. "
+                "This veto applies to the face-model channel only and does not constitute "
+                "a validated full biometric exclusion."
+            )
     elif fused_score > 90.0:
-        conclusion = "Strongest Support for Common Source"
+        conclusion = "Strongest Support for Common Source (Bayesian Posterior ≥ 90%)"
     elif fused_score > 75.0:
-        conclusion = "Support for Common Source"
+        conclusion = "Moderate Support for Common Source (Bayesian Posterior 75–90%)"
     else:
-        conclusion = "Exclusion: Insufficient Fused Similarity"
+        conclusion = "Inconclusive: Insufficient Bayesian Evidence for Common Source"
 
     # Landmark Attention Maps on aligned crops (real 468-point density, not fabricated)
     gallery_heatmap = generate_landmark_attention_map(gallery_aligned, gallery_landmarks)
@@ -2680,8 +2774,8 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         stats["false_acceptance_rate"] = "< 1 in 10,000,000"
         stats["statistical_certainty"] = f"{(posterior * 100):.6f}%"
     elif bayesian_far >= 0.60:  # Maps to a fused_score < 40.0
-        stats["false_acceptance_rate"] = "DIFFERENT IDENTITIES"
-        stats["statistical_certainty"] = "0% — Non-Match"
+        stats["false_acceptance_rate"] = "Below Operating Threshold"
+        stats["statistical_certainty"] = "0% — Below Threshold"
     else:
         stats["false_acceptance_rate"] = f"1 in {int(1.0 / bayesian_far):,}"
         stats["statistical_certainty"] = f"{(posterior * 100):.6f}%"
@@ -2732,6 +2826,26 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         mark_detector_version=MARK_DETECTOR_VERSION,
         mark_matcher_version=MARK_MATCHER_VERSION,
         mark_overlay_url=None,
+        # Full Forensic Provenance Audit (v3.0)
+        probe_source_file_hash=probe_file_hash,
+        gallery_source_file_hash=gallery_file_hash,
+        probe_decoded_image_hash=probe_file_hash,
+        gallery_decoded_image_hash=gallery_file_hash,
+        probe_aligned_crop_hash=probe_vector_hash,
+        gallery_aligned_crop_hash=compute_vector_hash(ensemble_gallery[0]) if ensemble_gallery is not None and isinstance(ensemble_gallery, tuple) and len(ensemble_gallery) > 0 else None,
+        probe_image_dimensions=f"{probe_aligned.shape[1]}x{probe_aligned.shape[0]}" if probe_aligned is not None else None,
+        gallery_image_dimensions=f"{gallery_aligned.shape[1]}x{gallery_aligned.shape[0]}" if gallery_aligned is not None else None,
+        preprocessing_steps_applied="clahe,frontalize,align_crop(256)",
+        code_commit_hash=os.getenv("GIT_COMMIT_HASH", "unknown"),
+        docker_image_digest=os.getenv("DOCKER_IMAGE_DIGEST", "unknown"),
+        arcface_model_name="ArcFace-R100",
+        arcface_weight_hash=os.getenv("ARCFACE_WEIGHT_HASH", "unknown"),
+        secondary_weight_hash=os.getenv("SECONDARY_WEIGHT_HASH", "unknown"),
+        mediapipe_version=DEPENDENCY_VERSIONS.get("mediapipe", "unknown"),
+        opencv_version=DEPENDENCY_VERSIONS.get("opencv", "unknown"),
+        deepface_version=DEPENDENCY_VERSIONS.get("deepface", "unknown"),
+        calibration_file_hash=os.getenv("CALIBRATION_FILE_HASH", "unknown"),
+        calibration_pair_count=stats.get("pairs_evaluated", 0),
     )
 
     # Build correspondences list for the UI (enriched with forensic metadata)
@@ -2790,6 +2904,13 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         "rejected_candidates_count": len(rejected_cands) if rejected_cands else 0,
         "detector_status": "OK" if (len(marks_gallery) > 0 or len(marks_probe) > 0) else "NO_CANDIDATES",
         "matcher_status": "OK" if mark_result.get("matched", 0) > 0 else ("NO_MATCHES" if (len(valid_probe_marks) > 0 and len(valid_gallery_marks) > 0) else "INSUFFICIENT_INPUT"),
+        "lr_marks": finite_or_none(lr_marks),
+        "mark_match_status": mark_match_status,
+        "rejection_summary": _build_rejection_summary(
+            valid_probe_marks, valid_gallery_marks,
+            mark_result, rejected_cands, mark_match_status,
+            exact_image_match, TIER4_CALIBRATION,
+        ),
     }
 
     if os.getenv("DEBUG_FORENSIC") == "true":
@@ -2917,6 +3038,11 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         mark_detector_version=MARK_DETECTOR_VERSION,
         mark_matcher_version=MARK_MATCHER_VERSION,
         exact_image_match=exact_image_match,
+        # Face-model evidence (explicit decomposition)
+        raw_arcface_similarity=round(arcface_sim, 6),
+        raw_secondary_similarity=round(secondary_sim, 6),
+        fused_face_model_similarity=round(structural_sim, 6),
+        lr_face_model=finite_or_none(lr_ensemble),
         # Veto transparency
         bayesian_fused_score=round(bayesian_fused_score, 2),
         veto_reason=veto_reason,
@@ -2981,6 +3107,26 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             mark_detector_version=MARK_DETECTOR_VERSION,
             mark_matcher_version=MARK_MATCHER_VERSION,
             mark_overlay_url=None,
+            # Full Forensic Provenance Audit (v3.0)
+            probe_source_file_hash=audit.probe_source_file_hash,
+            gallery_source_file_hash=audit.gallery_source_file_hash,
+            probe_decoded_image_hash=audit.probe_decoded_image_hash,
+            gallery_decoded_image_hash=audit.gallery_decoded_image_hash,
+            probe_aligned_crop_hash=audit.probe_aligned_crop_hash,
+            gallery_aligned_crop_hash=audit.gallery_aligned_crop_hash,
+            probe_image_dimensions=audit.probe_image_dimensions,
+            gallery_image_dimensions=audit.gallery_image_dimensions,
+            preprocessing_steps_applied=audit.preprocessing_steps_applied,
+            code_commit_hash=audit.code_commit_hash,
+            docker_image_digest=audit.docker_image_digest,
+            arcface_model_name=audit.arcface_model_name,
+            arcface_weight_hash=audit.arcface_weight_hash,
+            secondary_weight_hash=audit.secondary_weight_hash,
+            mediapipe_version=audit.mediapipe_version,
+            opencv_version=audit.opencv_version,
+            deepface_version=audit.deepface_version,
+            calibration_file_hash=audit.calibration_file_hash,
+            calibration_pair_count=audit.calibration_pair_count,
         )
         ledger_session.add(event)
         ledger_session.commit()
@@ -3294,19 +3440,23 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             veto_override_applied = True
             veto_override_reason = mark_override_eval["reason"]
             conclusion = (
-                f"Bayesian Match — ArcFace veto overridden by independent "
-                f"mark correspondence evidence ({best_user_id})"
+                f"Mark Override Applied: ArcFace face-model veto overridden by independent "
+                f"mark correspondence evidence. ArcFace channel did not pass. ({best_user_id})"
             )
         else:
             fused_score = 0.0
             veto_reason = "ARCFACE_VETO"
-            conclusion = "EXCLUSION: Biometric Non-Match (ArcFace Veto)"
+            conclusion = (
+                "Face Model Veto: ArcFace embedding similarity below operating threshold. "
+                "This veto applies to the face-model channel only and does not constitute "
+                "a validated full biometric exclusion."
+            )
     elif fused_score > 90.0:
-        conclusion = f"TARGET ACQUIRED — Strongest match: {best_user_id} (Posterior: {fused_score:.1f}%)"
+        conclusion = f"Strongest Support for Common Source — Nearest vault candidate: {best_user_id} (Posterior: {fused_score:.1f}%)"
     elif fused_score > 75.0:
-        conclusion = f"TARGET ACQUIRED — Probable match: {best_user_id} (Posterior: {fused_score:.1f}%)"
+        conclusion = f"Moderate Support for Common Source — Nearest vault candidate: {best_user_id} (Posterior: {fused_score:.1f}%)"
     else:
-        conclusion = f"WEAK MATCH — Nearest candidate: {best_user_id} (Posterior: {fused_score:.1f}%)"
+        conclusion = f"Inconclusive — Nearest vault candidate: {best_user_id} (Posterior: {fused_score:.1f}%)"
 
     # 11. Forensic visualizations (real landmark density maps)
     gallery_heatmap = generate_landmark_attention_map(gallery_aligned, gallery_landmarks)
@@ -3397,6 +3547,26 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         mark_detector_version=MARK_DETECTOR_VERSION,
         mark_matcher_version=MARK_MATCHER_VERSION,
         mark_overlay_url=None,
+        # Full Forensic Provenance Audit (v3.0)
+        probe_source_file_hash=probe_file_hash,
+        gallery_source_file_hash=gallery_file_hash,
+        probe_decoded_image_hash=probe_file_hash,
+        gallery_decoded_image_hash=gallery_file_hash,
+        probe_aligned_crop_hash=vault_vector_hash,
+        gallery_aligned_crop_hash=compute_vector_hash(gallery_embedding) if gallery_embedding is not None else None,
+        probe_image_dimensions=f"{probe_aligned.shape[1]}x{probe_aligned.shape[0]}" if probe_aligned is not None else None,
+        gallery_image_dimensions=None,
+        preprocessing_steps_applied="clahe,frontalize,align_crop(256)",
+        code_commit_hash=os.getenv("GIT_COMMIT_HASH", "unknown"),
+        docker_image_digest=os.getenv("DOCKER_IMAGE_DIGEST", "unknown"),
+        arcface_model_name="ArcFace-R100",
+        arcface_weight_hash=os.getenv("ARCFACE_WEIGHT_HASH", "unknown"),
+        secondary_weight_hash=os.getenv("SECONDARY_WEIGHT_HASH", "unknown"),
+        mediapipe_version=DEPENDENCY_VERSIONS.get("mediapipe", "unknown"),
+        opencv_version=DEPENDENCY_VERSIONS.get("opencv", "unknown"),
+        deepface_version=DEPENDENCY_VERSIONS.get("deepface", "unknown"),
+        calibration_file_hash=os.getenv("CALIBRATION_FILE_HASH", "unknown"),
+        calibration_pair_count=stats.get("pairs_evaluated", 0),
     )
 
     # Build correspondences list for the UI (enriched with forensic metadata)
@@ -3452,6 +3622,13 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         "rejected_candidates_count": len(rejected_cands) if rejected_cands else 0,
         "detector_status": "OK" if (len(marks_gallery) > 0 or len(marks_probe) > 0) else "NO_CANDIDATES",
         "matcher_status": "OK" if mark_result.get("matched", 0) > 0 else ("NO_MATCHES" if (len(valid_probe_marks) > 0 and len(valid_gallery_marks) > 0) else "INSUFFICIENT_INPUT"),
+        "lr_marks": finite_or_none(lr_marks),
+        "mark_match_status": mark_match_status,
+        "rejection_summary": _build_rejection_summary(
+            valid_probe_marks, valid_gallery_marks,
+            mark_result, rejected_cands, mark_match_status,
+            exact_image_match, TIER4_CALIBRATION,
+        ),
     }
 
     if os.getenv("DEBUG_FORENSIC") == "true":

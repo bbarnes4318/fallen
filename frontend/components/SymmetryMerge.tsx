@@ -543,14 +543,14 @@ export default function SymmetryMerge({
               <>
                 <div className={`px-2 py-1.5 flex justify-between items-center border ${results.veto_triggered ? 'bg-[#1a0005] border-[#5a0015] text-[#ff2040]' : (fusedScore >= 40.0 ? 'bg-[#111100] border-[#D4AF37]/40 text-[#D4AF37]' : 'bg-[#0a0a0a] border-[#333] text-gray-400')}`}>
                   <span className="font-bold tracking-wider text-xs">
-                    {results.veto_triggered ? 'VERDICT: MISMATCH (ARCFACE VETO)' : (fusedScore >= 40.0 ? 'VERDICT: MATCH' : 'VERDICT: INCONCLUSIVE')}
+                    {results.veto_triggered ? 'VERDICT: MISMATCH (FACE MODEL VETO)' : (fusedScore >= 40.0 ? 'VERDICT: MATCH' : 'VERDICT: INCONCLUSIVE')}
                   </span>
-                  <span className="tracking-widest font-bold">FUSED SCORE: {fusedScore.toFixed(2)}%</span>
+                  <span className="tracking-widest font-bold">POSTERIOR PROBABILITY: {fusedScore.toFixed(2)}%</span>
                 </div>
                 {results.veto_triggered && (
                   <div className="px-2 py-1 flex justify-between items-center border border-[#5a0015]/60 bg-[#0d0002] text-[#ff6070] text-[9px] tracking-wider">
                     <span>BAYESIAN PRE-VETO: {bayesianPreVeto.toFixed(2)}%</span>
-                    <span>DISPLAYED: 0% — {results.veto_reason ?? 'ARCFACE_VETO'} POLICY</span>
+                    <span>DISPLAYED: 0% — {results.veto_reason === 'ARCFACE_VETO' ? 'FACE MODEL VETO' : results.veto_reason} POLICY</span>
                   </div>
                 )}
               </>
@@ -714,12 +714,22 @@ export default function SymmetryMerge({
             <div className="h-48 flex-shrink-0 flex flex-col overflow-y-auto bg-[#050505] border border-emerald-900/40 rounded p-3 gap-3">
               {/* Status Banner */}
               {(() => {
-                const status = results?.mark_match_status as MarkMatchStatus | null | undefined;
                 const diag = results?.mark_diagnostics;
-                const probeCount = diag?.raw_probe_marks_count ?? results?.marks_detected_probe ?? 0;
-                const galCount = diag?.raw_gallery_marks_count ?? results?.marks_detected_gallery ?? 0;
-                const matchCount = diag?.accepted_correspondences_count ?? results?.marks_matched ?? 0;
-                const lrMarks = results?.lr_marks;
+                if (!diag) {
+                  return (
+                    <div className="px-3 py-2 border border-red-900/50 rounded bg-red-950/30 font-mono text-xs text-red-400">
+                      <div className="font-bold tracking-wider mb-1">Mark evidence diagnostics unavailable.</div>
+                      <div className="text-[10px] opacity-70 leading-relaxed">The backend did not return mark_diagnostics. This comparison cannot be audited for mark evidence.</div>
+                    </div>
+                  );
+                }
+
+                const status = diag.mark_match_status || results?.mark_match_status || 'UNKNOWN';
+                const probeCount = diag.raw_probe_marks_count;
+                const galCount = diag.raw_gallery_marks_count;
+                const matchCount = diag.accepted_correspondences_count;
+                const lrMarks = diag.lr_marks ?? results?.lr_marks;
+                const rejectionSummary = diag.rejection_summary;
 
                 let statusLabel = 'UNKNOWN';
                 let statusColor = 'text-gray-400 border-gray-700 bg-[#0a0a0a]';
@@ -743,36 +753,54 @@ export default function SymmetryMerge({
                 return (
                   <>
                     <div className={`px-3 py-2 border rounded font-mono text-xs tracking-wider ${statusColor}`}>
-                      <div className="flex justify-between items-center">
+                      <div className="flex justify-between items-center mb-1.5">
                         <span className="font-bold">{statusLabel}</span>
-                        <span className="text-[10px] opacity-70">{matchCount} of {Math.max(probeCount, galCount)} marks matched</span>
+                        <div className="flex items-center gap-2 text-[8px] opacity-70">
+                          <span>DETECTOR: {diag.detector_status || 'UNKNOWN'}</span>
+                          <span>·</span>
+                          <span>MATCHER: {diag.matcher_status || 'UNKNOWN'}</span>
+                        </div>
                       </div>
-                      <div className="flex justify-between items-center mt-1 text-[10px] opacity-60">
-                        <span>PROBE: {probeCount} raw marks · GALLERY: {galCount} raw marks · CORRESPONDENCES: {matchCount}</span>
-                        {lrMarks != null && <span>LR_MARKS: {lrMarks.toFixed(4)}</span>}
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[9px] opacity-80 mb-1.5">
+                        <div className="flex justify-between"><span>Probe Marks Detected</span><span className="font-bold">{probeCount}</span></div>
+                        <div className="flex justify-between"><span>Gallery Marks Detected</span><span className="font-bold">{galCount}</span></div>
+                        <div className="flex justify-between"><span>Accepted Correspondences</span><span className="font-bold text-emerald-400">{matchCount}</span></div>
+                        <div className="flex justify-between"><span>Rejected Candidates</span><span className="font-bold text-amber-400">{diag.rejected_candidates_count ?? 0}</span></div>
+                      </div>
+                      <div className="flex justify-between items-center pt-1 border-t border-white/10 text-[10px]">
+                        <span className="opacity-60">{matchCount} of {Math.max(probeCount, galCount)} marks matched</span>
+                        {lrMarks != null && <span className="font-bold">LR_MARKS: {lrMarks.toFixed(4)}</span>}
                       </div>
                     </div>
 
                     {/* Diagnostic messaging for empty states */}
-                    {probeCount === 0 && galCount === 0 && (
-                      <div className="px-3 py-1.5 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[9px] text-yellow-400/70 leading-relaxed">
-                        No raw marks detected on either probe or gallery. The detector found no reliable candidates — likely due to lighting conditions, image crop, occlusion, or threshold filters.
+                    {rejectionSummary ? (
+                      <div className="px-3 py-1.5 border border-amber-900/30 rounded bg-amber-950/20 font-mono text-[9px] text-amber-400/80 leading-relaxed">
+                        {rejectionSummary}
                       </div>
-                    )}
-                    {(probeCount === 0 && galCount > 0) && (
-                      <div className="px-3 py-1.5 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[9px] text-yellow-400/70 leading-relaxed">
-                        No raw marks detected on probe. The detector rejected all candidates on the probe side due to lighting, crop, occlusion, or threshold filters.
-                      </div>
-                    )}
-                    {(probeCount > 0 && galCount === 0) && (
-                      <div className="px-3 py-1.5 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[9px] text-yellow-400/70 leading-relaxed">
-                        No raw marks detected on gallery. The detector rejected all candidates on the gallery side due to lighting, crop, occlusion, or threshold filters.
-                      </div>
-                    )}
-                    {probeCount > 0 && galCount > 0 && matchCount === 0 && status !== 'EXACT_SELF_MATCH' && (
-                      <div className="px-3 py-1.5 border border-orange-900/30 rounded bg-orange-950/20 font-mono text-[9px] text-orange-400/70 leading-relaxed">
-                        Marks were detected, but no accepted correspondences passed the matcher. The detected marks did not meet the spatial or morphological similarity thresholds required for forensic correspondence.
-                      </div>
+                    ) : (
+                      <>
+                        {probeCount === 0 && galCount === 0 && (
+                          <div className="px-3 py-1.5 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[9px] text-yellow-400/70 leading-relaxed">
+                            No raw marks detected on either probe or gallery. The detector found no reliable candidates — likely due to lighting conditions, image crop, occlusion, or threshold filters.
+                          </div>
+                        )}
+                        {(probeCount === 0 && galCount > 0) && (
+                          <div className="px-3 py-1.5 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[9px] text-yellow-400/70 leading-relaxed">
+                            No raw marks detected on probe. The detector rejected all candidates on the probe side due to lighting, crop, occlusion, or threshold filters.
+                          </div>
+                        )}
+                        {(probeCount > 0 && galCount === 0) && (
+                          <div className="px-3 py-1.5 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[9px] text-yellow-400/70 leading-relaxed">
+                            No raw marks detected on gallery. The detector rejected all candidates on the gallery side due to lighting, crop, occlusion, or threshold filters.
+                          </div>
+                        )}
+                        {probeCount > 0 && galCount > 0 && matchCount === 0 && status !== 'EXACT_SELF_MATCH' && (
+                          <div className="px-3 py-1.5 border border-orange-900/30 rounded bg-orange-950/20 font-mono text-[9px] text-orange-400/70 leading-relaxed">
+                            Marks were detected, but no accepted correspondences passed the matcher. The detected marks did not meet the spatial or morphological similarity thresholds required for forensic correspondence.
+                          </div>
+                        )}
+                      </>
                     )}
 
                     {/* Self-match LR transparency note */}

@@ -25,6 +25,30 @@ export interface AuditLog {
   posterior_probability?: number | null;
   mark_lrs?: number[] | null;
   bayesian_fused_score?: number | null;
+  // Chain of Custody — Decoded & aligned image hashes
+  probe_decoded_image_hash?: string;
+  gallery_decoded_image_hash?: string;
+  probe_aligned_crop_hash_pre_clahe?: string;
+  gallery_aligned_crop_hash_pre_clahe?: string;
+  probe_aligned_crop_hash_post_clahe?: string;
+  gallery_aligned_crop_hash_post_clahe?: string;
+  // Image dimensions at each stage
+  probe_original_dimensions?: string;
+  gallery_original_dimensions?: string;
+  probe_decoded_dimensions?: string;
+  gallery_decoded_dimensions?: string;
+  probe_aligned_dimensions?: string;
+  gallery_aligned_dimensions?: string;
+  preprocessing_steps?: string[];
+  // Model Provenance
+  code_commit_hash?: string;
+  docker_image_digest?: string;
+  arcface_model_name?: string;
+  arcface_weight_hash?: string;
+  mediapipe_version?: string;
+  opencv_version?: string;
+  deepface_version?: string;
+  calibration_file_hash?: string;
 }
 
 export type RawPoint = 
@@ -135,6 +159,9 @@ export interface MarkDiagnostics {
   rejected_candidates_count: number;
   detector_status: string;  // "OK" | "NO_CANDIDATES"
   matcher_status: string;   // "OK" | "NO_MATCHES" | "INSUFFICIENT_INPUT"
+  lr_marks: number | null;
+  mark_match_status: string;
+  rejection_summary: string | null;
 }
 
 /** Bayesian scoring trace — returned only when DEBUG_FORENSIC=true */
@@ -219,6 +246,11 @@ export interface VerificationResult {
   mark_detector_version?: string | null;
   mark_matcher_version?: string | null;
   exact_image_match?: boolean;
+  // Face-model evidence (explicit decomposition)
+  raw_arcface_similarity?: number;
+  raw_secondary_similarity?: number;
+  fused_face_model_similarity?: number;
+  lr_face_model?: number | null;
 }
 
 export interface ForensicPoint {
