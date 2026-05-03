@@ -4,13 +4,13 @@
 
 This report confirms the end-to-end integration and stability of the forensic mark correspondence pipeline.
 
-- **Status of backend mark detector**: Fully operational. Reliably identifies blemishes, scars, and dark spots based on OpenCV contour analysis with integrated skin-masking.
-- **Status of backend matcher**: Fully operational. Matches based on Hungarian assignment using 5D Bayesian LR scoring matrix.
-- **Status of lr_marks multiplier**: Fully operational. Valid non-structural mark evidence generates a valid `lr_marks` product, seamlessly integrating with `LR_total`.
-- **Status of MARKS tab**: Fully operational. Displays verified mark evidence seamlessly and handles exact self-match scenarios accurately.
-- **Status of EDGE DELTA separation**: Fully operational. Re-labeled correctly and decoupled from mark evidence logic.
-- **Status of audit persistence**: Fully operational. The schema guard strictly enforces all forensic data points into PostgreSQL.
-- **Status of CI/CD validation**: Pipeline code passes strict local test coverage; awaiting final remote verification.
+- **Status of backend mark detector**: Status: Implemented in code; pending hosted CI/CD verification.
+- **Status of backend matcher**: Status: Implemented in code; pending hosted CI/CD verification.
+- **Status of lr_marks multiplier**: Status: Implemented in code; pending hosted CI/CD verification.
+- **Status of MARKS tab**: Status: Implemented in code; pending hosted CI/CD verification.
+- **Status of EDGE DELTA separation**: Status: Implemented in code; pending hosted CI/CD verification.
+- **Status of audit persistence**: Status: Implemented in code; pending hosted CI/CD verification.
+- **Status of CI/CD validation**: Tests were added/updated in the repository. Hosted GitHub Actions / Cloud Run CI/CD is the source of truth.
 
 ## 2. Formula Confirmation
 
@@ -87,3 +87,16 @@ A strict, logical handling protocol is applied for functionally identical images
 ## 8. Hosted Validation Status
 
 Hosted CI/CD status: NOT AVAILABLE (Awaiting remote pipeline execution completion in GitHub Actions).
+
+## Hosted Validation Checklist
+
+- [ ] GitHub Actions frontend lint passed
+- [ ] GitHub Actions frontend build passed
+- [ ] Backend checks passed
+- [ ] Cloud Run migration job executed successfully
+- [ ] Backend deployed successfully
+- [ ] Frontend deployed successfully
+- [ ] Live UI shows EDGE DELTA label
+- [ ] Live UI shows MARKS tab
+- [ ] Live MARKS tab shows green numbered accepted correspondences
+- [ ] Live HUD shows `Not evaluated` for missing provenance/geometry data, not fake zero values

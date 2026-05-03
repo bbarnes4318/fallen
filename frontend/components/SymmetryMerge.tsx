@@ -306,7 +306,6 @@ export default function SymmetryMerge({
     const matchedProbeIndices = new Set<number>();
     const matchedGalleryIndices = new Set<number>();
     const probeLrByIndex = new Map<number, number>();
-    const probeLrByIndex = new Map<number, number>();
     const galleryLrByIndex = new Map<number, number>();
     const probeIndexToPairId = new Map<number, number>();
     const galleryIndexToPairId = new Map<number, number>();
@@ -564,14 +563,24 @@ export default function SymmetryMerge({
             {/* Provenance Module */}
             <div className={`px-2 py-1 border flex justify-between items-center ${results.failed_provenance_veto ? 'bg-[#1a0005] border-[#5a0015] text-[#ff2040]' : 'bg-[#050505] border-[#222] text-gray-500'}`}>
                <span className="tracking-widest text-[9px]">PROVENANCE CHECK:</span>
-               <span className="font-bold text-gray-300">{results.synthetic_anomaly_score !== undefined && results.synthetic_anomaly_score !== null ? results.synthetic_anomaly_score.toFixed(4) : '0.0000'}</span>
+               <span className="font-bold text-gray-300">
+                 {results.failed_provenance_veto === true
+                   ? "FAILED — synthetic anomaly detected"
+                   : typeof results.synthetic_anomaly_score === "number"
+                   ? `PASSED · score ${results.synthetic_anomaly_score.toFixed(4)}`
+                   : "Not evaluated"}
+               </span>
             </div>
 
             {/* Occlusion Module */}
             <div className="px-2 py-1 border bg-[#050505] border-[#222] text-gray-500 flex justify-between items-center">
               <span className="tracking-widest text-[9px]">GEOMETRY COVERAGE:</span>
               <span className="font-bold text-gray-300">
-                {results.occlusion_percentage !== undefined && results.occlusion_percentage !== null ? `${(results.occlusion_percentage).toFixed(1)}% (${results.effective_geometric_ratios_used ?? 0} ACTIVE)` : '0.0% (0 ACTIVE)'}
+                {typeof results.effective_geometric_ratios_used === "number"
+                  ? `${results.effective_geometric_ratios_used} ratios active${typeof results.occlusion_percentage === "number" ? ` · ${results.occlusion_percentage.toFixed(1)}% occluded` : ''}`
+                  : typeof results.occlusion_percentage === "number"
+                  ? `${results.occlusion_percentage.toFixed(1)}% occluded`
+                  : "Not evaluated"}
               </span>
             </div>
           </div>
