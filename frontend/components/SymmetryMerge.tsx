@@ -807,6 +807,12 @@ export default function SymmetryMerge({
               })()}
             </div>
           )}
+
+          {mode === 'delta' && (
+            <div className="shrink-0 text-[9px] font-mono text-red-300/70 tracking-widest border border-red-900/40 bg-red-950/10 rounded px-3 py-2 mt-2">
+              EDGE DIFFERENCE MAP — NOT SCAR/MOLE/BLEMISH MATCH EVIDENCE
+            </div>
+          )}
         </div>
       )}
 
