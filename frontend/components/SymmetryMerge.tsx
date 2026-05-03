@@ -584,7 +584,7 @@ export default function SymmetryMerge({
               <>
                 <div className={`px-2 py-1.5 flex justify-between items-center border ${results.veto_triggered ? 'bg-[#1a0005] border-[#5a0015] text-[#ff2040]' : (fusedScore >= 40.0 ? 'bg-[#111100] border-[#D4AF37]/40 text-[#D4AF37]' : 'bg-[#0a0a0a] border-[#333] text-gray-400')}`}>
                   <span className="font-bold tracking-wider text-xs">
-                    {results.veto_triggered ? 'VERDICT: MISMATCH (FACE MODEL VETO)' : (fusedScore >= 40.0 ? 'VERDICT: MATCH' : 'VERDICT: INCONCLUSIVE')}
+                    {results.veto_triggered ? 'BELOW THRESHOLD (FACE MODEL VETO)' : (fusedScore >= 40.0 ? 'EVIDENCE SUPPORTS COMMON SOURCE' : 'INCONCLUSIVE')}
                   </span>
                   <span className="tracking-widest font-bold">POSTERIOR PROBABILITY: {fusedScore.toFixed(2)}%</span>
                 </div>
@@ -1066,8 +1066,8 @@ export default function SymmetryMerge({
               <div>LR_MARKS: {st.lr_marks_display ?? 'N/A'}</div>
               <div>LR_TOTAL: {st.lr_total_display ?? 'N/A'}</div>
               <div>POSTERIOR: {st.posterior_raw != null ? (st.posterior_raw * 100).toFixed(4) + '%' : 'N/A'}</div>
-              <div>PRE-VETO SCORE: {st.fused_score_pre_veto?.toFixed(2) ?? 'N/A'}</div>
-              <div>POST-VETO SCORE: {st.fused_score_post_veto?.toFixed(2) ?? 'N/A'}</div>
+              <div>BAYESIAN POSTERIOR PRE-VETO: {st.fused_score_pre_veto?.toFixed(2) ?? 'N/A'}</div>
+              <div>DISPLAYED DECISION SCORE: {st.fused_score_post_veto?.toFixed(2) ?? 'N/A'}</div>
               <div>VETO: <span className={vetoColor}>{vetoLabel}</span></div>
               <div>REASON: {st.veto_reason ?? 'NONE'}</div>
               <div>MARK OVERRIDE: <span className={st.mark_override_eligible ? 'text-yellow-400' : 'text-gray-500'}>{st.mark_override_eligible ? 'ELIGIBLE' : 'N/A'}</span></div>

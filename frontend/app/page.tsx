@@ -474,7 +474,7 @@ export default function Home() {
               <div style="font-size:7px;color:#666;letter-spacing:2px;margin-bottom:2px;">CONCLUSION</div>
               <div style="font-size:11px;color:${results.fused_identity_score < 40.0 ? '#f87171' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '#fbbf24' : '#e5e5e5'};font-weight:bold;">${results.conclusion}</div>
             </div>
-            <div style="padding:3px 10px;background:${results.fused_identity_score < 40.0 ? '#7f1d1d' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '#78350f' : '#0a0a0a'};color:${results.fused_identity_score < 40.0 ? '#fee2e2' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '#fef3c7' : '#22c55e'};font-size:8px;letter-spacing:2px;border:1px solid ${results.fused_identity_score < 40.0 ? '#ef4444' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '#d97706' : 'rgba(34,197,94,0.3)'};">${results.fused_identity_score < 40.0 ? 'ACE-V VETO' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? 'VETO OVERRIDDEN' : 'NO DISCREPANCY'}</div>
+            <div style="padding:3px 10px;background:${results.fused_identity_score < 40.0 ? '#7f1d1d' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '#78350f' : '#0a0a0a'};color:${results.fused_identity_score < 40.0 ? '#fee2e2' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '#fef3c7' : '#22c55e'};font-size:8px;letter-spacing:2px;border:1px solid ${results.fused_identity_score < 40.0 ? '#ef4444' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '#d97706' : 'rgba(34,197,94,0.3)'};">${results.fused_identity_score < 40.0 ? 'FACE MODEL VETO' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? 'VETO OVERRIDDEN' : 'NO DISCREPANCY'}</div>
           </div>
 
           <!-- CRYPTOGRAPHIC AUDIT LOG (Terminal Block) -->
@@ -1455,7 +1455,7 @@ export default function Home() {
               {/* ═══ VERDICT ═══ */}
               <div className={`rounded-lg overflow-hidden border-2 ${(results.fused_identity_score < 40.0) ? 'border-red-700/60' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? 'border-amber-700/50' : 'border-emerald-700/40'}`}>
                 <div className={`px-3 py-1.5 text-[9px] tracking-[0.15em] font-bold ${(results.fused_identity_score < 40.0) ? 'bg-red-900/40 text-red-300' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? 'bg-amber-900/40 text-amber-400' : 'bg-emerald-900/30 text-emerald-300'}`}>
-                  {(results.fused_identity_score < 40.0) ? '✗ VERDICT: NOT A MATCH' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '⚠ VERDICT: CONDITIONAL MATCH' : '✓ VERDICT: MATCH DETECTED'}
+                  {(results.fused_identity_score < 40.0) ? '✗ BELOW OPERATING THRESHOLD' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '⚠ FACE MODEL VETO — MARK OVERRIDE ACTIVE' : '✓ EVIDENCE SUPPORTS COMMON SOURCE'}
                 </div>
                 <div className={`px-3 py-3 ${(results.fused_identity_score < 40.0) ? 'bg-red-950/20' : 'bg-[#0d0d0e]'}`}>
                   <p className={`text-[11px] leading-relaxed break-all whitespace-normal overflow-hidden ${(results.fused_identity_score < 40.0) ? 'text-red-300/90' : 'text-gray-200'}`}>

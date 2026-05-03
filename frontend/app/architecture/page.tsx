@@ -48,7 +48,7 @@ const TIERS = [
         <circle cx="15" cy="10" r="1" fill="currentColor" />
       </svg>
     ),
-    body: "The primary gatekeeper. Each face is projected through a deep neural network into a multidimensional hypersphere. The cosine distance between two embeddings is the core structural similarity measure. Scores below a proprietary threshold trigger an automatic exclusion — the biometric equivalent of an ACE-V elimination.",
+    body: "The primary gatekeeper. Each face is projected through a deep neural network into a multidimensional hypersphere. The cosine distance between two embeddings is the core structural similarity measure. Scores below a configured operating threshold trigger a face-model veto — a channel-level decision that may be overridden by independent mark evidence under strict safeguards.",
     details: [
       "Model: Proprietary Neural Embedding Network",
       "Embedding normalization: L2-normalized unit vectors",
@@ -427,7 +427,7 @@ export default function ArchitecturePage() {
               <span style={{ color: C.gold }}>LR / (LR + 1)</span>
             </div>
             <p className="text-[11px] mt-3 max-w-[500px] mx-auto" style={{ color: C.textDim }}>
-              The similarity probability given all observed evidence.
+              The posterior probability P(Hp|E) given all observed evidence.
               Values approaching 1.0 indicate extremely strong similarity.
             </p>
           </div>

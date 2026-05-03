@@ -255,11 +255,11 @@ def main():
     print("=" * 70 + "\n")
 
     # 1. Select & process test pair
-    gallery_path = str(LFW_DIR / "Colin_Powell_0001.ppm")
-    probe_path = str(LFW_DIR / "Colin_Powell_0003.ppm")
+    gallery_path = str(PROJECT_ROOT / "arnold_test.jpg")
+    probe_path = str(PROJECT_ROOT / "coria_test.jpg")
 
     if not os.path.exists(gallery_path) or not os.path.exists(probe_path):
-        print(f"FATAL: Test images not found.")
+        print(f"FATAL: Test images not found at {gallery_path} and {probe_path}.")
         sys.exit(1)
     print(f"  [GALLERY] {Path(gallery_path).name}")
     print(f"  [PROBE]   {Path(probe_path).name}")
@@ -322,15 +322,15 @@ def main():
     veto_triggered = simulated_cosine < 0.40
     if veto_triggered:
         if lr_marks > 100.0 and mark_result["matched"] >= 1:
-            conclusion = f"CONDITIONAL MATCH -- ArcFace Veto, {mark_result['matched']} mark(s) LR={lr_marks:.1f}"
+            conclusion = f"VETO OVERRIDDEN -- Face Model Veto, {mark_result['matched']} mark(s) LR={lr_marks:.1f}"
         else:
-            conclusion = f"EXCLUSION -- Biometric Non-Match (ArcFace: {simulated_cosine:.4f})"
+            conclusion = f"BELOW THRESHOLD -- Face Model Veto (ArcFace: {simulated_cosine:.4f})"
     elif fused_score > 90.0:
-        conclusion = f"TARGET ACQUIRED -- Strongest match (Posterior: {fused_score:.1f}%)"
+        conclusion = f"EVIDENCE SUPPORTS COMMON SOURCE -- Strongest evidence (Posterior: {fused_score:.1f}%)"
     elif fused_score > 75.0:
-        conclusion = f"TARGET ACQUIRED -- Probable match (Posterior: {fused_score:.1f}%)"
+        conclusion = f"EVIDENCE SUPPORTS COMMON SOURCE -- Probable evidence (Posterior: {fused_score:.1f}%)"
     else:
-        conclusion = f"WEAK MATCH -- Nearest candidate (Posterior: {fused_score:.1f}%)"
+        conclusion = f"INCONCLUSIVE -- Nearest candidate (Posterior: {fused_score:.1f}%)"
 
     audit_log = {
         "pipeline_version": "Fallen Forensic-Grade v3.0 (Bayesian LR)",
@@ -680,25 +680,29 @@ def test_migration_columns_complete():
     """Migration script must include all 8 new mark-audit columns."""
     print("\n  [TEST] Migration Columns Complete")
 
-    migration_path = PROJECT_ROOT / "scripts" / "migrate_scoring_audit_columns.py"
+    migration_path = PROJECT_ROOT / "backend" / "scripts" / "migrate_phase5b_forensic_provenance.py"
     assert migration_path.exists(), f"Migration script not found at {migration_path}"
 
     migration_text = migration_path.read_text()
 
     required_columns = [
-        "mark_match_status",
-        "marks_detected_probe",
-        "marks_detected_gallery",
-        "mark_lrs_json",
-        "accepted_mark_correspondences_json",
-        "mark_detector_version",
-        "mark_matcher_version",
-        "mark_overlay_url",
+        "probe_original_dimensions",
+        "gallery_original_dimensions",
+        "probe_decoded_dimensions",
+        "gallery_decoded_dimensions",
+        "probe_aligned_dimensions",
+        "gallery_aligned_dimensions",
+        "preprocessing_steps",
+        "secondary_model_weight_hash",
+        "raw_arcface_similarity",
+        "raw_secondary_similarity",
+        "fused_face_model_similarity",
+        "lr_face_model"
     ]
     missing = [col for col in required_columns if col not in migration_text]
     assert not missing, f"Migration script missing columns: {missing}"
 
-    print(f"  [PASS] All {len(required_columns)} mark-audit columns present in migration script")
+    print(f"  [PASS] All {len(required_columns)} Phase 5B provenance columns present in migration script")
 
 
 if __name__ == "__main__":
