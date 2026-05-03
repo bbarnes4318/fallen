@@ -368,7 +368,7 @@ class VerificationRequest(BaseModel):
 # PIPELINE VERSION PINNING (Reproducibility)
 # ---------------------------------------------------------
 PIPELINE_VERSION = "Fallen Pipeline v4.0 (Ensemble + 3D Procrustes + Bayesian LR)"
-MARK_DETECTOR_VERSION = "2.0.0"
+MARK_DETECTOR_VERSION = "2.1.0"
 MARK_MATCHER_VERSION = "2.0.0"
 
 def _get_dependency_versions() -> dict:
@@ -1647,392 +1647,15 @@ def generate_landmark_attention_map(image: np.ndarray, landmarks: list) -> str:
 # and matches them between gallery and probe using spatial +
 # descriptor similarity via Hungarian optimal bipartite matching.
 
-# MediaPipe landmark indices for masking facial features
-# (eyes, brows, nose interior, lips) — we only want skin surface
-_LEFT_EYE_IDX = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]
-_RIGHT_EYE_IDX = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]
-_LEFT_BROW_IDX = [70, 63, 105, 66, 107, 55, 65, 52, 53, 46]
-_RIGHT_BROW_IDX = [300, 293, 334, 296, 336, 285, 295, 282, 283, 276]
-_NOSE_IDX = [1, 2, 98, 327, 168, 6, 197, 195, 5, 4, 45, 220, 115, 48, 64, 102, 49, 131, 134, 236, 196, 3, 51, 281, 275, 440, 344, 278, 294, 331, 279, 360, 363, 456, 420, 399, 412, 351]
-_LIPS_IDX = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95, 185, 40, 39, 37, 0, 267, 269, 270, 409, 415, 310, 311, 312, 13, 82, 81, 80, 191, 78]
-
-# MediaPipe FACEMESH_FACE_OVAL landmark indices — defines the face boundary
-_FACE_OVAL_IDX = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
-                  397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
-                  172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109]
-
-# Border exclusion margin (pixels) — marks near image edges are rejected
-_BORDER_MARGIN = 10
-
-def _build_skin_mask(shape: tuple, landmarks, margin: int = 5) -> np.ndarray:
-    """
-    Build a binary mask that covers ONLY the face skin surface.
-
-    1. Start with a ZERO mask (nothing valid)
-    2. Fill face oval polygon from MediaPipe FACEMESH_FACE_OVAL
-    3. Erode the mask slightly to remove hairline/boundary artifacts
-    4. Subtract feature interiors (eyes, brows, nose, lips)
-    5. Exclude image border pixels
-    """
-    h, w = shape[:2]
-    # Start with ZERO mask — only the face interior will be valid
-    skin_mask = np.zeros((h, w), dtype=np.uint8)
-
-    # Build face oval polygon from landmarks
-    oval_pts = []
-    for idx in _FACE_OVAL_IDX:
-        if idx < len(landmarks):
-            lm = landmarks[idx]
-            oval_pts.append([int(lm.x * w), int(lm.y * h)])
-
-    if len(oval_pts) >= 3:
-        oval_poly = np.array(oval_pts, dtype=np.int32)
-        cv2.fillPoly(skin_mask, [oval_poly], 255)
-
-        # Erode the face oval mask to remove hairline/boundary artifacts
-        erode_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
-        skin_mask = cv2.erode(skin_mask, erode_kernel, iterations=1)
-
-    # Subtract feature interiors (eyes, brows, nose, lips)
-    for idx_group in [_LEFT_EYE_IDX, _RIGHT_EYE_IDX, _LEFT_BROW_IDX, _RIGHT_BROW_IDX, _NOSE_IDX, _LIPS_IDX]:
-        pts = []
-        for idx in idx_group:
-            if idx < len(landmarks):
-                lm = landmarks[idx]
-                pts.append([int(lm.x * w), int(lm.y * h)])
-        if len(pts) >= 3:
-            hull = cv2.convexHull(np.array(pts, dtype=np.int32))
-            # Inflate slightly to ensure full coverage
-            M = cv2.moments(hull)
-            if M["m00"] > 0:
-                cx_h = int(M["m10"] / M["m00"])
-                cy_h = int(M["m01"] / M["m00"])
-                scale = 1.15  # 15% inflation
-                inflated = ((hull - [cx_h, cy_h]) * scale + [cx_h, cy_h]).astype(np.int32)
-                cv2.fillConvexPoly(skin_mask, inflated, 0)
-
-    # Exclude image border pixels
-    skin_mask[:_BORDER_MARGIN, :] = 0
-    skin_mask[-_BORDER_MARGIN:, :] = 0
-    skin_mask[:, :_BORDER_MARGIN] = 0
-    skin_mask[:, -_BORDER_MARGIN:] = 0
-
-    return skin_mask
-
-
-def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple[list, list, np.ndarray, dict, dict]:
-    """
-    Detects discrete facial anomalies (scars, moles, birthmarks, texture clusters)
-    on the skin surface using multi-pass detection with strict face-region validation.
-
-    Detection passes:
-        1. Dark moles/spots — adaptive threshold on grayscale
-        2. Light scars — inverse adaptive threshold for hypopigmented marks
-        3. Linear scars — Canny edge detection for elongated contours
-        4. Texture clusters — bilateral filter difference for subtle anomalies
-        5. Blemishes — low-contrast detections near noise floor
-
-    Returns a tuple:
-        - list of valid mark descriptors (enriched with index, contrast, eccentricity, etc.)
-        - list of rejected mark descriptors (with rejection_reason)
-        - occlusion_mask (np.ndarray): Mask of occluded regions
-    """
-    h, w = aligned_crop.shape[:2]
-    gray = cv2.cvtColor(aligned_crop, cv2.COLOR_BGR2GRAY)
-
-    # Build skin mask (face oval + erosion + feature exclusion + border exclusion)
-    skin_mask = _build_skin_mask(aligned_crop.shape, landmarks)
-
-    # Build occluded mask for Bayesian Penalty Nullification
-    occ_mask = np.zeros((h, w), dtype=np.uint8)
-    pts = []
-    for lm in landmarks:
-        if getattr(lm, "visibility", 1.0) < 0.85:
-            pts.append((int(lm.x * w), int(lm.y * h)))
-    for pt in pts:
-        cv2.circle(occ_mask, pt, int(min(h, w) * 0.05), 255, -1)
-
-    # Valid mask for detection
-    valid_mask = cv2.bitwise_and(skin_mask, cv2.bitwise_not(occ_mask))
-
-    trace = {
-        "initial_candidates": 0,
-        "after_skin_mask": 0,
-        "after_area_filter": 0,
-        "after_shape_filter": 0,
-        "after_region_exclusion": 0,
-        "after_contrast_filter": 0,
-        "final_valid_marks": 0
-    }
-    overlays = {}
-
-    marks = []
-    rejected_marks = []
-
-    # Minimum contour-mask overlap ratio to accept a mark
-    _MIN_OVERLAP_RATIO = 0.50
-    # Minimum contrast (absolute intensity difference from local mean) to accept
-    _MIN_CONTRAST = 1.5
-
-    # ── Pass 1: Dark spots/moles ──
-    dark_thresh = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV, blockSize=15, C=3
-    )
-    dark_masked = cv2.bitwise_and(dark_thresh, valid_mask)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    dark_cleaned = cv2.morphologyEx(dark_masked, cv2.MORPH_OPEN, kernel)
-    dark_contours, _ = cv2.findContours(dark_cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # ── Pass 2: Light scars (hypopigmented marks) ──
-    light_thresh = cv2.adaptiveThreshold(
-        255 - gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV, blockSize=15, C=3
-    )
-    light_masked = cv2.bitwise_and(light_thresh, valid_mask)
-    light_cleaned = cv2.morphologyEx(light_masked, cv2.MORPH_OPEN, kernel)
-    light_contours, _ = cv2.findContours(light_cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # ── Pass 3: Linear scars (elongated Canny edges inside skin) ──
-    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 30, 100)
-    edges_masked = cv2.bitwise_and(edges, valid_mask)
-    edges_closed = cv2.morphologyEx(edges_masked, cv2.MORPH_CLOSE, kernel)
-    linear_contours, _ = cv2.findContours(edges_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # ── Pass 4: Texture clusters (bilateral filter difference) ──
-    smoothed = cv2.bilateralFilter(gray, 9, 75, 75)
-    texture_diff = cv2.absdiff(gray, smoothed)
-    _, texture_thresh = cv2.threshold(texture_diff, 8, 255, cv2.THRESH_BINARY)
-    texture_masked = cv2.bitwise_and(texture_thresh, valid_mask)
-    texture_cleaned = cv2.morphologyEx(texture_masked, cv2.MORPH_OPEN, kernel)
-    texture_contours, _ = cv2.findContours(texture_cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Calculate initial candidates before mask (approximate by finding contours on raw thresholds)
-    dark_initial_cnts, _ = cv2.findContours(cv2.morphologyEx(dark_thresh, cv2.MORPH_OPEN, kernel), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    light_initial_cnts, _ = cv2.findContours(cv2.morphologyEx(light_thresh, cv2.MORPH_OPEN, kernel), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    edges_initial = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
-    linear_initial_cnts, _ = cv2.findContours(edges_initial, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    texture_initial_cnts, _ = cv2.findContours(cv2.morphologyEx(texture_thresh, cv2.MORPH_OPEN, kernel), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    trace["initial_candidates"] = len(dark_initial_cnts) + len(light_initial_cnts) + len(linear_initial_cnts) + len(texture_initial_cnts)
-
-    all_contours = [
-        (dark_contours, "dark"),
-        (light_contours, "light"),
-        (linear_contours, "linear_scar"),
-        (texture_contours, "texture_cluster"),
-    ]
-    
-    trace["after_skin_mask"] = sum(len(c[0]) for c in all_contours)
-
-    import os
-    if os.getenv("DEBUG_FORENSIC") == "true":
-        import base64
-        _, sm_buf = cv2.imencode('.png', skin_mask)
-        overlays["skin_mask_b64"] = f"data:image/png;base64,{base64.b64encode(sm_buf).decode('utf-8')}"
-        
-        cand_mask = np.zeros((h, w), dtype=np.uint8)
-        for cnt_list, _ in all_contours:
-            cv2.drawContours(cand_mask, cnt_list, -1, 255, 1)
-        _, cm_buf = cv2.imencode('.png', cand_mask)
-        overlays["candidate_mask_b64"] = f"data:image/png;base64,{base64.b64encode(cm_buf).decode('utf-8')}"
-
-
-    # Spatial grid to prevent overlapping duplicate detections
-    used_mask = np.zeros((h, w), dtype=np.uint8)
-    mark_index = 0
-
-    for cnt_list, base_type in all_contours:
-        for cnt in cnt_list:
-            area = cv2.contourArea(cnt)
-
-            # ── Rejection: area bounds ──
-            if area < 8:
-                continue  # Too small — noise
-            if area > 500:
-                continue  # Too large — shadow/region artifact
-            
-            trace["after_area_filter"] += 1
-
-            M = cv2.moments(cnt)
-            if M["m00"] == 0:
-                continue  # Invalid geometry — degenerate contour
-            
-            trace["after_shape_filter"] += 1
-
-            cx = M["m10"] / M["m00"]
-            cy = M["m01"] / M["m00"]
-
-            # Check for overlap with already-detected marks
-            ix, iy = int(cx), int(cy)
-            if iy >= h or ix >= w:
-                continue
-            if used_mask[iy, ix] > 0:
-                continue
-
-            perimeter = cv2.arcLength(cnt, True)
-            circularity = (4 * np.pi * area / (perimeter * perimeter)) if perimeter > 0 else 0
-
-            # Bounding box and aspect ratio
-            x, y, bw, bh = cv2.boundingRect(cnt)
-            aspect_ratio = float(bw) / bh if bh > 0 else 0
-
-            # Orientation and eccentricity via fitEllipse (requires >= 5 points)
-            orientation = None
-            eccentricity = 0.0
-            if len(cnt) >= 5:
-                try:
-                    ellipse = cv2.fitEllipse(cnt)
-                    orientation = ellipse[2]
-                    (major, minor) = (max(ellipse[1]), min(ellipse[1]))
-                    eccentricity = np.sqrt(1.0 - (minor / major) ** 2) if major > 0 else 0.0
-                except cv2.error:
-                    orientation = None
-                    eccentricity = 0.0
-
-            # Mean intensity of the mark region
-            mark_mask = np.zeros((h, w), dtype=np.uint8)
-            cv2.drawContours(mark_mask, [cnt], -1, 255, -1)
-            mean_intensity = float(cv2.mean(gray, mask=mark_mask)[0])
-
-            # Local mean intensity (20px radius around centroid for contrast computation)
-            local_radius = 20
-            ly0 = max(0, iy - local_radius)
-            ly1 = min(h, iy + local_radius)
-            lx0 = max(0, ix - local_radius)
-            lx1 = min(w, ix + local_radius)
-            local_patch = gray[ly0:ly1, lx0:lx1]
-            local_mean = float(np.mean(local_patch)) if local_patch.size > 0 else mean_intensity
-            contrast = abs(mean_intensity - local_mean)
-
-            # Nearest landmark
-            min_dist = float('inf')
-            nearest_lm_idx = -1
-            for idx, lm in enumerate(landmarks):
-                lm_x = int(lm.x * w)
-                lm_y = int(lm.y * h)
-                dist = (lm_x - cx)**2 + (lm_y - cy)**2
-                if dist < min_dist:
-                    min_dist = dist
-                    nearest_lm_idx = idx
-
-            # Face region heuristic based on nearest landmark
-            face_region = "unknown"
-            if nearest_lm_idx in _LEFT_EYE_IDX or nearest_lm_idx in _LEFT_BROW_IDX:
-                face_region = "left_periocular"
-            elif nearest_lm_idx in _RIGHT_EYE_IDX or nearest_lm_idx in _RIGHT_BROW_IDX:
-                face_region = "right_periocular"
-            elif nearest_lm_idx in _NOSE_IDX:
-                face_region = "nose"
-            elif nearest_lm_idx in _LIPS_IDX:
-                face_region = "mouth"
-            else:
-                if cy < h * 0.33:
-                    face_region = "forehead"
-                elif cy > h * 0.66:
-                    face_region = "chin/jaw"
-                elif cx < w * 0.5:
-                    face_region = "left_cheek"
-                else:
-                    face_region = "right_cheek"
-
-            # ── Mark type classification ──
-            if base_type == "dark":
-                # High circularity → mole, otherwise → dark spot
-                mark_type = "dark_mole" if circularity >= 0.6 else "dark_spot"
-            elif base_type == "light":
-                mark_type = "light_scar"
-            elif base_type == "linear_scar":
-                mark_type = "linear_scar"
-            elif base_type == "texture_cluster":
-                mark_type = "texture_cluster"
-            else:
-                mark_type = "unknown_mark"
-
-            mark_descriptor = {
-                "index": mark_index,
-                "centroid": (cx / w, cy / h),  # normalized [0,1]
-                "canonical_position": (cx / w, cy / h),
-                "area": area,
-                "contour_area": area,
-                "bbox": (x, y, bw, bh),
-                "intensity": mean_intensity,
-                "contrast": contrast,
-                "circularity": circularity,
-                "eccentricity": eccentricity,
-                "aspect_ratio": aspect_ratio,
-                "orientation": orientation,
-                "mark_type": mark_type,
-                "nearest_landmark_index": nearest_lm_idx,
-                "face_region": face_region,
-                "contour": cnt,  # keep for visualization (stripped before serialization)
-            }
-
-            # ── Face-region validation ──
-            rejection_reason = None
-
-            # Check 1: Centroid must be inside face oval mask
-            if skin_mask[iy, ix] == 0:
-                rejection_reason = "outside_face_mask"
-
-            # Check 2: Border artifact rejection
-            if rejection_reason is None:
-                if ix < _BORDER_MARGIN or ix >= (w - _BORDER_MARGIN) or iy < _BORDER_MARGIN or iy >= (h - _BORDER_MARGIN):
-                    rejection_reason = "border_artifact"
-
-            # Check 3: Contour-mask overlap ratio must be >= 70%
-            if rejection_reason is None:
-                contour_pixels = np.count_nonzero(mark_mask)
-                if contour_pixels > 0:
-                    overlap = cv2.bitwise_and(mark_mask, skin_mask)
-                    overlap_pixels = np.count_nonzero(overlap)
-                    overlap_ratio = overlap_pixels / contour_pixels
-                    if overlap_ratio < _MIN_OVERLAP_RATIO:
-                        rejection_reason = f"insufficient_face_overlap ({overlap_ratio:.2f})"
-                        
-            if rejection_reason is None:
-                trace["after_region_exclusion"] += 1
-
-            # Check 4: Low contrast rejection (noise floor)
-            if rejection_reason is None:
-                if contrast < _MIN_CONTRAST:
-                    # Reclassify as blemish if just barely below threshold
-                    if contrast >= 1.5:
-                        mark_descriptor["mark_type"] = "blemish"
-                    else:
-                        rejection_reason = "low_contrast"
-
-            if rejection_reason is not None:
-                mark_descriptor["rejection_reason"] = rejection_reason
-                # Remove contour before adding to rejected list (not serializable)
-                rejected_desc = {k: v for k, v in mark_descriptor.items() if k != "contour"}
-                rejected_marks.append(rejected_desc)
-                continue
-                
-            trace["after_contrast_filter"] += 1
-
-            # Mark it used to prevent overlaps
-            cv2.drawContours(used_mask, [cnt], -1, 255, -1)
-            mark_index += 1
-            marks.append(mark_descriptor)
-            trace["final_valid_marks"] += 1
-
-    if os.getenv("DEBUG_FORENSIC") == "true":
-        rej_overlay = aligned_crop.copy()
-        for rm in rejected_marks:
-            cv2.rectangle(rej_overlay, (rm["bbox"][0], rm["bbox"][1]), (rm["bbox"][0]+rm["bbox"][2], rm["bbox"][1]+rm["bbox"][3]), (0, 0, 255), 1)
-        _, ro_buf = cv2.imencode('.png', rej_overlay)
-        overlays["rejected_overlay_b64"] = f"data:image/png;base64,{base64.b64encode(ro_buf).decode('utf-8')}"
-        
-        fin_overlay = aligned_crop.copy()
-        for m in marks:
-            cv2.rectangle(fin_overlay, (m["bbox"][0], m["bbox"][1]), (m["bbox"][0]+m["bbox"][2], m["bbox"][1]+m["bbox"][3]), (0, 255, 0), 1)
-        _, fo_buf = cv2.imencode('.png', fin_overlay)
-        overlays["final_marks_overlay_b64"] = f"data:image/png;base64,{base64.b64encode(fo_buf).decode('utf-8')}"
-
-    return marks, rejected_marks, occ_mask, trace, overlays
-
-
+# MediaPipe landmark indices and mark detector imported from pure module
+from mark_detector import (
+    detect_facial_marks,
+    _build_skin_mask,
+    serialize_mark_descriptor,
+    MARK_DETECTOR_VERSION as _MDV,
+    _LEFT_EYE_IDX, _RIGHT_EYE_IDX, _LEFT_BROW_IDX, _RIGHT_BROW_IDX,
+    _NOSE_IDX, _LIPS_IDX, _FACE_OVAL_IDX, _BORDER_MARGIN,
+)
 
 
 def match_facial_marks(marks_gallery: list, marks_probe: list, dist_threshold: float = 0.20):
@@ -3592,8 +3215,12 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
             "spatial_distance_threshold": 0.20,
             "min_contour_area": 8,
             "max_contour_area": 500,
-            "min_contrast": 3.0,
-            "min_overlap_ratio": 0.70,
+            "min_contrast": 1.5,
+            "min_overlap_ratio": 0.50,
+            "fallback_min_contrast": 0.5,
+            "fallback_min_overlap": 0.30,
+            "fallback_lr_cap": 3.0,
+            "detector_version": MARK_DETECTOR_VERSION,
         } if TIER4_CALIBRATION else {},
     }
 
@@ -3601,8 +3228,8 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
     result = {
         "aligned_probe_b64": aligned_probe_b64,
         "aligned_gallery_b64": aligned_gallery_b64,
-        "raw_probe_marks": valid_probe_marks,
-        "raw_gallery_marks": valid_gallery_marks,
+        "raw_probe_marks": [serialize_mark_descriptor(m) for m in valid_probe_marks],
+        "raw_gallery_marks": [serialize_mark_descriptor(m) for m in valid_gallery_marks],
         "accepted_correspondences": correspondences,
         "mark_match_status": mark_match_status,
         "mark_diagnostics": mark_diagnostics_payload,
