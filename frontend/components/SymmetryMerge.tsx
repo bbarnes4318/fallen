@@ -18,6 +18,7 @@ type ForensicPoint = {
   lr?: number;
   isMatched?: boolean;
   matchIndex?: number;
+  isRejected?: boolean;
 };
 
 interface SymmetryMergeProps {
@@ -83,7 +84,8 @@ function drawPane(
   baseOpacity?: number,
   overlayOpacity?: number,
   xrayFilter?: boolean,
-  points?: ForensicPoint[]
+  points?: ForensicPoint[],
+  rejectedPoints?: ForensicPoint[]
 ) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -138,8 +140,6 @@ function drawPane(
       if (p.x === undefined || p.y === undefined) return;
       const px = p.x * iw;
       const py = p.y * ih;
-      // Area is calculated in image pixel space in backend. 
-      // Since canvas is scaled, we don't divide radius by scale, only strokeWidth.
       const r = Math.max(4, Math.sqrt(p.area || 0) * 0.8);
       
       ctx.beginPath();
@@ -167,6 +167,24 @@ function drawPane(
         ctx.lineWidth = 1 / scale;
         ctx.stroke();
       }
+    });
+  }
+
+  // Rejected candidates — dashed amber/red outlines (DEBUG_FORENSIC only)
+  if (rejectedPoints && rejectedPoints.length > 0) {
+    rejectedPoints.forEach(p => {
+      if (p.x === undefined || p.y === undefined) return;
+      const px = p.x * iw;
+      const py = p.y * ih;
+      const r = Math.max(4, Math.sqrt(p.area || 0) * 0.8);
+
+      ctx.beginPath();
+      ctx.setLineDash([3 / scale, 3 / scale]);
+      ctx.arc(px, py, r, 0, 2 * Math.PI);
+      ctx.strokeStyle = 'rgba(220, 140, 0, 0.7)';
+      ctx.lineWidth = 1.5 / scale;
+      ctx.stroke();
+      ctx.setLineDash([]);
     });
   }
 
@@ -393,6 +411,27 @@ export default function SymmetryMerge({
       .filter((p): p is ForensicPoint => p !== null);
   }, [galleryMarksSource, mapPoint]);
 
+  // ── Rejected points (DEBUG_FORENSIC only) ──
+  const rejectedProbePoints = useMemo((): ForensicPoint[] => {
+    if (!forensicDebugEnabled) return [];
+    const rejected = results?.mark_debug?.rejected_probe_marks;
+    if (!Array.isArray(rejected)) return [];
+    return rejected.map((m: MarkDescriptor) => {
+      const coords = m.centroid ? { x: m.centroid[0], y: m.centroid[1] } : { x: m.x, y: m.y };
+      return { x: coords.x ?? 0, y: coords.y ?? 0, area: m.area, isRejected: true };
+    }).filter((p): p is ForensicPoint => p.x !== undefined && p.y !== undefined);
+  }, [forensicDebugEnabled, results]);
+
+  const rejectedGalleryPoints = useMemo((): ForensicPoint[] => {
+    if (!forensicDebugEnabled) return [];
+    const rejected = results?.mark_debug?.rejected_gallery_marks;
+    if (!Array.isArray(rejected)) return [];
+    return rejected.map((m: MarkDescriptor) => {
+      const coords = m.centroid ? { x: m.centroid[0], y: m.centroid[1] } : { x: m.x, y: m.y };
+      return { x: coords.x ?? 0, y: coords.y ?? 0, area: m.area, isRejected: true };
+    }).filter((p): p is ForensicPoint => p.x !== undefined && p.y !== undefined);
+  }, [forensicDebugEnabled, results]);
+
   // Draw dual panes — LEFT = PROBE, RIGHT = GALLERY (both get delta overlay in delta mode)
   useEffect(() => {
     if (!imagesReady || mode === 'overlap') return;
@@ -400,14 +439,16 @@ export default function SymmetryMerge({
     // MARKS mode: show ALL raw marks (matched green, unmatched cyan). No filtering.
     const probePts = shouldDrawFrontendMarkPoints ? probePoints : undefined;
     const galleryPts = shouldDrawFrontendMarkPoints ? galleryPoints : undefined;
+    const rejProbePts = (shouldDrawFrontendMarkPoints && forensicDebugEnabled) ? rejectedProbePoints : undefined;
+    const rejGalleryPts = (shouldDrawFrontendMarkPoints && forensicDebugEnabled) ? rejectedGalleryPoints : undefined;
 
     if (leftCanvasRef.current && probeImg) {
-      drawPane(leftCanvasRef.current, probeImg, getLeftOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, probePts);
+      drawPane(leftCanvasRef.current, probeImg, getLeftOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, probePts, rejProbePts);
     }
     if (rightCanvasRef.current && galleryImg) {
-      drawPane(rightCanvasRef.current, galleryImg, getRightOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, galleryPts);
+      drawPane(rightCanvasRef.current, galleryImg, getRightOverlay(), zoom, pan, getBorderColor(), baseOpacity, overlayOpacity, isXrayMode, galleryPts, rejGalleryPts);
     }
-  }, [imagesReady, mode, probeImg, getLeftOverlay, zoom, pan, getBorderColor, baseOpacity, overlayOpacity, isXrayMode, probePoints, galleryImg, getRightOverlay, galleryPoints, shouldDrawFrontendMarkPoints]);
+  }, [imagesReady, mode, probeImg, getLeftOverlay, zoom, pan, getBorderColor, baseOpacity, overlayOpacity, isXrayMode, probePoints, galleryImg, getRightOverlay, galleryPoints, shouldDrawFrontendMarkPoints, forensicDebugEnabled, rejectedProbePoints, rejectedGalleryPoints]);
 
   // Draw overlap panes — LEFT = PROBE, RIGHT = GALLERY
   useEffect(() => {
@@ -745,6 +786,9 @@ export default function SymmetryMerge({
                 } else if (status === 'NO_MATCHES') {
                   statusLabel = 'No matching marks found';
                   statusColor = 'text-orange-400 border-orange-800 bg-orange-950/30';
+                } else if (status === 'FACE_NOT_DETECTED') {
+                  statusLabel = 'Face not detected — mark analysis could not proceed';
+                  statusColor = 'text-red-400 border-red-800 bg-red-950/30';
                 } else if (status === 'DETECTOR_UNAVAILABLE') {
                   statusLabel = 'Mark detector unavailable';
                   statusColor = 'text-red-400 border-red-800 bg-red-950/30';
@@ -797,16 +841,42 @@ export default function SymmetryMerge({
                         )}
                         {probeCount > 0 && galCount > 0 && matchCount === 0 && status !== 'EXACT_SELF_MATCH' && (
                           <div className="px-3 py-1.5 border border-orange-900/30 rounded bg-orange-950/20 font-mono text-[9px] text-orange-400/70 leading-relaxed">
-                            Marks were detected, but no accepted correspondences passed the matcher. The detected marks did not meet the spatial or morphological similarity thresholds required for forensic correspondence.
+                            Marks were detected, but no accepted correspondences passed the matcher. The detected marks did not meet the spatial or morphological thresholds required for forensic correspondence.
                           </div>
                         )}
                       </>
                     )}
 
+                    {/* Detector/matcher unavailable diagnostics */}
+                    {(diag.detector_status === 'FACE_NOT_DETECTED' || diag.detector_status === 'UNKNOWN') && diag.detector_status !== 'OK' && diag.detector_status !== 'NO_CANDIDATES' && (
+                      <div className="px-3 py-1.5 border border-red-900/40 rounded bg-red-950/20 font-mono text-[9px] text-red-400/80 leading-relaxed">
+                        Mark detector returned status: {diag.detector_status}. Mark evidence cannot be evaluated.
+                      </div>
+                    )}
+                    {(diag.matcher_status === 'UNKNOWN') && (
+                      <div className="px-3 py-1.5 border border-red-900/40 rounded bg-red-950/20 font-mono text-[9px] text-red-400/80 leading-relaxed">
+                        Mark matcher returned status: {diag.matcher_status}. Correspondence evaluation was not performed.
+                      </div>
+                    )}
+
+                    {/* All candidates rejected diagnostic */}
+                    {(diag.rejected_candidates_count > 0 && matchCount === 0 && probeCount > 0 && galCount > 0 && !rejectionSummary) && (
+                      <div className="px-3 py-1.5 border border-amber-900/30 rounded bg-amber-950/20 font-mono text-[9px] text-amber-400/70 leading-relaxed">
+                        All {diag.rejected_candidates_count} candidate mark pair(s) were rejected by the matcher. None met the required spatial and morphological thresholds.
+                      </div>
+                    )}
+
+                    {/* LR = 1.0 or null — always show rejection_summary if available */}
+                    {(lrMarks == null || lrMarks === 1.0) && rejectionSummary && (
+                      <div className="px-3 py-1.5 border border-amber-900/30 rounded bg-amber-950/20 font-mono text-[9px] text-amber-400/80 leading-relaxed">
+                        {rejectionSummary}
+                      </div>
+                    )}
+
                     {/* Self-match LR transparency note */}
                     {status === 'EXACT_SELF_MATCH' && (
                       <div className="px-3 py-1.5 border border-emerald-900/30 rounded bg-emerald-950/20 font-mono text-[9px] text-emerald-400/70 leading-relaxed">
-                        Mark LR is neutral (1.0) for exact byte-identical image comparisons. The probe and gallery are the same source image, so mark evidence is self-corresponding by identity rather than independent forensic evidence. Identity confidence is handled by the exact-image sanity path.
+                        Mark LR is neutral (1.0) for exact byte-identical image comparisons. The probe and gallery are the same source image, so mark evidence is self-corresponding by identity rather than independent forensic evidence.
                       </div>
                     )}
 
@@ -889,8 +959,8 @@ export default function SymmetryMerge({
                 )}
                 <div className="absolute top-2 left-3 text-[9px] font-mono text-red-400/70 tracking-widest pointer-events-none">PIXEL DIFFERENCE MAP</div>
               </div>
-              <div className="text-[9px] font-mono text-red-300/70 tracking-wider border border-red-900/40 bg-red-950/10 rounded px-3 py-2 leading-relaxed">
-                This is not scar, mole, blemish, or mark correspondence evidence. This view only shows pixel/edge differences after alignment.
+              <div className="text-[9px] font-mono text-red-300/70 tracking-wider border border-red-900/40 bg-red-950/10 rounded px-3 py-2 leading-relaxed" data-testid="pixel-delta-disclaimer">
+                This is not scar, mole, blemish, or mark correspondence evidence. Pixel Delta shows structural pixel/edge differences between aligned crops only. It does not detect, match, or score facial marks and must not be interpreted as forensic mark evidence.
               </div>
             </div>
           )}
