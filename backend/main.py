@@ -423,7 +423,9 @@ def _build_rejection_summary(
         lr_marks_val = mark_result.get("lr_marks", 1.0)
         if lr_marks_val == 1.0 and tier4_calibration is None:
             return "Mark calibration data unavailable — LR defaulted to 1.0"
-        return None  # Marks contributing normally
+        if lr_marks_val is None or lr_marks_val == 1.0:
+            return f"{matched} mark(s) matched but combined LR is neutral (1.0) — mark evidence neither supports nor refutes common source"
+        return None  # Marks contributing normally — LR != 1.0
     return "Unknown mark pipeline state"
 
 
@@ -860,6 +862,12 @@ def score_to_lr_ensemble(ensemble_score: float, temporal_delta: float = 0.0) -> 
 def compute_vector_hash(embedding: np.ndarray) -> str:
     """SHA-256 hash representation of the 512-D ArcFace embedding array."""
     return hashlib.sha256(embedding.tobytes()).hexdigest()
+
+
+def compute_image_hash(image: np.ndarray) -> str:
+    """SHA-256 hash of raw pixel bytes of an image array (BGR, uint8).
+    Used for chain-of-custody hashing at specific preprocessing stages."""
+    return hashlib.sha256(image.tobytes()).hexdigest()
 
 
 def compute_alignment_variance(image: np.ndarray) -> dict:
@@ -2590,13 +2598,23 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     else:
         liveness_telemetry = {"status": "BYPASSED", "method": "NONE"}
     
-    # 2. Preprocess (CLAHE)
+    # 2. Pre-CLAHE alignment for provenance hash (raw pixel chain-of-custody)
+    gallery_pre_clahe_crop, _gpc_lm = align_face_crop(gallery_img)
+    probe_pre_clahe_crop, _ppc_lm = align_face_crop(probe_img)
+    gallery_aligned_crop_hash_pre_clahe = compute_image_hash(gallery_pre_clahe_crop)
+    probe_aligned_crop_hash_pre_clahe = compute_image_hash(probe_pre_clahe_crop)
+
+    # 2.5 Preprocess (CLAHE)
     gallery_clahe = apply_clahe(gallery_img)
     probe_clahe = apply_clahe(probe_img)
     
     # 3. Face Alignment & Crop to canonical 256×256
     gallery_aligned, gallery_landmarks = align_face_crop(gallery_clahe)
     probe_aligned, probe_landmarks = align_face_crop(probe_clahe)
+
+    # Post-CLAHE aligned crop hashes (these are the actual model-input pixels)
+    gallery_aligned_crop_hash_post_clahe = compute_image_hash(gallery_aligned)
+    probe_aligned_crop_hash_post_clahe = compute_image_hash(probe_aligned)
     
     if gallery_landmarks is None or probe_landmarks is None:
         raise HTTPException(
@@ -2880,6 +2898,11 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         probe_image_dimensions=f"{probe_aligned.shape[1]}x{probe_aligned.shape[0]}" if probe_aligned is not None else None,
         gallery_image_dimensions=f"{gallery_aligned.shape[1]}x{gallery_aligned.shape[0]}" if gallery_aligned is not None else None,
         preprocessing_steps_applied="clahe,frontalize,align_crop(256)",
+        # Pre/Post CLAHE provenance hashes (chain of custody at each preprocessing stage)
+        probe_aligned_crop_hash_pre_clahe=probe_aligned_crop_hash_pre_clahe,
+        gallery_aligned_crop_hash_pre_clahe=gallery_aligned_crop_hash_pre_clahe,
+        probe_aligned_crop_hash_post_clahe=probe_aligned_crop_hash_post_clahe,
+        gallery_aligned_crop_hash_post_clahe=gallery_aligned_crop_hash_post_clahe,
         code_commit_hash=os.getenv("GIT_COMMIT_HASH", "unknown"),
         docker_image_digest=os.getenv("DOCKER_IMAGE_DIGEST", "unknown"),
         arcface_model_name="ArcFace-R100",
@@ -3158,6 +3181,10 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             gallery_decoded_image_hash=audit.gallery_decoded_image_hash,
             probe_aligned_crop_hash=audit.probe_aligned_crop_hash,
             gallery_aligned_crop_hash=audit.gallery_aligned_crop_hash,
+            probe_aligned_crop_hash_pre_clahe=audit.probe_aligned_crop_hash_pre_clahe,
+            gallery_aligned_crop_hash_pre_clahe=audit.gallery_aligned_crop_hash_pre_clahe,
+            probe_aligned_crop_hash_post_clahe=audit.probe_aligned_crop_hash_post_clahe,
+            gallery_aligned_crop_hash_post_clahe=audit.gallery_aligned_crop_hash_post_clahe,
             probe_image_dimensions=audit.probe_image_dimensions,
             gallery_image_dimensions=audit.gallery_image_dimensions,
             preprocessing_steps_applied=audit.preprocessing_steps_applied,
@@ -3260,9 +3287,16 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     else:
         liveness_telemetry_vault = {"status": "BYPASSED", "method": "NONE"}
 
-    # 3. Pre-process probe
+    # 3. Pre-CLAHE alignment for provenance hash (raw pixel chain-of-custody)
+    probe_pre_clahe_crop, _ppc_lm = align_face_crop(probe_img)
+    probe_aligned_crop_hash_pre_clahe = compute_image_hash(probe_pre_clahe_crop)
+
+    # 3.5 Pre-process probe (CLAHE + alignment)
     probe_clahe = apply_clahe(probe_img)
     probe_aligned, probe_landmarks = align_face_crop(probe_clahe)
+
+    # Post-CLAHE aligned crop hash (actual model-input pixels)
+    probe_aligned_crop_hash_post_clahe = compute_image_hash(probe_aligned)
 
     if probe_landmarks is None:
         raise HTTPException(
@@ -3306,15 +3340,25 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     gallery_landmarks = probe_landmarks
 
     gallery_file_hash = None  # Populated if gallery image is fetched
+    # Gallery CLAHE provenance defaults (probe-mirrored if no gallery fetched)
+    gallery_aligned_crop_hash_pre_clahe = probe_aligned_crop_hash_pre_clahe
+    gallery_aligned_crop_hash_post_clahe = probe_aligned_crop_hash_post_clahe
 
     if matched_profile_for_gallery and matched_profile_for_gallery.thumbnail_url:
         try:
             gallery_img, gallery_file_hash = fetch_image_from_url(matched_profile_for_gallery.thumbnail_url)
+            # Pre-CLAHE gallery provenance hash
+            gallery_pre_clahe_crop, _gpc_lm = align_face_crop(gallery_img)
+            gallery_aligned_crop_hash_pre_clahe = compute_image_hash(gallery_pre_clahe_crop)
             gallery_clahe = apply_clahe(gallery_img)
             gallery_aligned, gallery_landmarks = align_face_crop(gallery_clahe)
+            # Post-CLAHE gallery provenance hash
+            gallery_aligned_crop_hash_post_clahe = compute_image_hash(gallery_aligned)
             if gallery_landmarks is None:
                 gallery_aligned = probe_aligned
                 gallery_landmarks = probe_landmarks
+                gallery_aligned_crop_hash_pre_clahe = probe_aligned_crop_hash_pre_clahe
+                gallery_aligned_crop_hash_post_clahe = probe_aligned_crop_hash_post_clahe
         except Exception:
             pass  # Fallback to probe if gallery fetch fails
     else:
@@ -3322,11 +3366,18 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         gallery_file = _resolve_target_image(best_user_id)
         if gallery_file and os.path.isfile(gallery_file):
             gallery_img = cv2.imread(gallery_file)
+            # Pre-CLAHE gallery provenance hash
+            gallery_pre_clahe_crop, _gpc_lm = align_face_crop(gallery_img)
+            gallery_aligned_crop_hash_pre_clahe = compute_image_hash(gallery_pre_clahe_crop)
             gallery_clahe = apply_clahe(gallery_img)
             gallery_aligned, gallery_landmarks = align_face_crop(gallery_clahe)
+            # Post-CLAHE gallery provenance hash
+            gallery_aligned_crop_hash_post_clahe = compute_image_hash(gallery_aligned)
             if gallery_landmarks is None:
                 gallery_aligned = probe_aligned
                 gallery_landmarks = probe_landmarks
+                gallery_aligned_crop_hash_pre_clahe = probe_aligned_crop_hash_pre_clahe
+                gallery_aligned_crop_hash_post_clahe = probe_aligned_crop_hash_post_clahe
 
     # 6.4 Temporal Invariance Engine
     if gallery_landmarks is not None:
@@ -3597,10 +3648,15 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         probe_decoded_image_hash=probe_file_hash,
         gallery_decoded_image_hash=gallery_file_hash,
         probe_aligned_crop_hash=vault_vector_hash,
-        gallery_aligned_crop_hash=compute_vector_hash(gallery_embedding) if gallery_embedding is not None else None,
+        gallery_aligned_crop_hash=compute_image_hash(gallery_aligned) if gallery_aligned is not None else None,
         probe_image_dimensions=f"{probe_aligned.shape[1]}x{probe_aligned.shape[0]}" if probe_aligned is not None else None,
-        gallery_image_dimensions=None,
+        gallery_image_dimensions=f"{gallery_aligned.shape[1]}x{gallery_aligned.shape[0]}" if gallery_aligned is not None else None,
         preprocessing_steps_applied="clahe,frontalize,align_crop(256)",
+        # Pre/Post CLAHE provenance hashes (chain of custody at each preprocessing stage)
+        probe_aligned_crop_hash_pre_clahe=probe_aligned_crop_hash_pre_clahe,
+        gallery_aligned_crop_hash_pre_clahe=gallery_aligned_crop_hash_pre_clahe,
+        probe_aligned_crop_hash_post_clahe=probe_aligned_crop_hash_post_clahe,
+        gallery_aligned_crop_hash_post_clahe=gallery_aligned_crop_hash_post_clahe,
         code_commit_hash=os.getenv("GIT_COMMIT_HASH", "unknown"),
         docker_image_digest=os.getenv("DOCKER_IMAGE_DIGEST", "unknown"),
         arcface_model_name="ArcFace-R100",
@@ -3800,6 +3856,11 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         mark_detector_version=MARK_DETECTOR_VERSION,
         mark_matcher_version=MARK_MATCHER_VERSION,
         exact_image_match=exact_image_match,
+        # Face-model evidence (explicit decomposition)
+        raw_arcface_similarity=round(arcface_sim, 6),
+        raw_secondary_similarity=round(secondary_sim, 6),
+        fused_face_model_similarity=round(structural_sim, 6),
+        lr_face_model=finite_or_none(lr_ensemble),
         # Veto transparency
         bayesian_fused_score=round(bayesian_fused_score, 2),
         veto_reason=veto_reason,
@@ -3864,6 +3925,30 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             mark_detector_version=MARK_DETECTOR_VERSION,
             mark_matcher_version=MARK_MATCHER_VERSION,
             mark_overlay_url=None,
+            # Full Forensic Provenance Audit (v3.0)
+            probe_source_file_hash=audit.probe_source_file_hash,
+            gallery_source_file_hash=audit.gallery_source_file_hash,
+            probe_decoded_image_hash=audit.probe_decoded_image_hash,
+            gallery_decoded_image_hash=audit.gallery_decoded_image_hash,
+            probe_aligned_crop_hash=audit.probe_aligned_crop_hash,
+            gallery_aligned_crop_hash=audit.gallery_aligned_crop_hash,
+            probe_aligned_crop_hash_pre_clahe=audit.probe_aligned_crop_hash_pre_clahe,
+            gallery_aligned_crop_hash_pre_clahe=audit.gallery_aligned_crop_hash_pre_clahe,
+            probe_aligned_crop_hash_post_clahe=audit.probe_aligned_crop_hash_post_clahe,
+            gallery_aligned_crop_hash_post_clahe=audit.gallery_aligned_crop_hash_post_clahe,
+            probe_image_dimensions=audit.probe_image_dimensions,
+            gallery_image_dimensions=audit.gallery_image_dimensions,
+            preprocessing_steps_applied=audit.preprocessing_steps_applied,
+            code_commit_hash=audit.code_commit_hash,
+            docker_image_digest=audit.docker_image_digest,
+            arcface_model_name=audit.arcface_model_name,
+            arcface_weight_hash=audit.arcface_weight_hash,
+            secondary_weight_hash=audit.secondary_weight_hash,
+            mediapipe_version=audit.mediapipe_version,
+            opencv_version=audit.opencv_version,
+            deepface_version=audit.deepface_version,
+            calibration_file_hash=audit.calibration_file_hash,
+            calibration_pair_count=audit.calibration_pair_count,
         )
         ledger_session.add(event)
         ledger_session.commit()
