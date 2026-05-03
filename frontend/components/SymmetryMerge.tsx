@@ -412,25 +412,57 @@ export default function SymmetryMerge({
   }, [galleryMarksSource, mapPoint]);
 
   // ── Rejected points (DEBUG_FORENSIC only) ──
+  const mapRejectedMark = useCallback((m: any): ForensicPoint | null => {
+    const x = Array.isArray(m.centroid)
+      ? m.centroid[0]
+      : typeof m.x === "number"
+      ? m.x
+      : undefined;
+
+    const y = Array.isArray(m.centroid)
+      ? m.centroid[1]
+      : typeof m.y === "number"
+      ? m.y
+      : undefined;
+
+    if (
+      typeof x !== "number" ||
+      typeof y !== "number" ||
+      !Number.isFinite(x) ||
+      !Number.isFinite(y)
+    ) {
+      return null;
+    }
+
+    return {
+      x,
+      y,
+      area: typeof m.area === "number" ? m.area : 0,
+      isRejected: true,
+    };
+  }, []);
+
   const rejectedProbePoints = useMemo((): ForensicPoint[] => {
     if (!forensicDebugEnabled) return [];
+
     const rejected = results?.mark_debug?.rejected_probe_marks;
     if (!Array.isArray(rejected)) return [];
-    return rejected.map((m: MarkDescriptor) => {
-      const coords = m.centroid ? { x: m.centroid[0], y: m.centroid[1] } : { x: m.x, y: m.y };
-      return { x: coords.x ?? 0, y: coords.y ?? 0, area: m.area, isRejected: true };
-    }).filter((p): p is ForensicPoint => p.x !== undefined && p.y !== undefined);
-  }, [forensicDebugEnabled, results]);
+
+    return rejected
+      .map((m: any) => mapRejectedMark(m))
+      .filter((p): p is ForensicPoint => p !== null);
+  }, [forensicDebugEnabled, results, mapRejectedMark]);
 
   const rejectedGalleryPoints = useMemo((): ForensicPoint[] => {
     if (!forensicDebugEnabled) return [];
+
     const rejected = results?.mark_debug?.rejected_gallery_marks;
     if (!Array.isArray(rejected)) return [];
-    return rejected.map((m: MarkDescriptor) => {
-      const coords = m.centroid ? { x: m.centroid[0], y: m.centroid[1] } : { x: m.x, y: m.y };
-      return { x: coords.x ?? 0, y: coords.y ?? 0, area: m.area, isRejected: true };
-    }).filter((p): p is ForensicPoint => p.x !== undefined && p.y !== undefined);
-  }, [forensicDebugEnabled, results]);
+
+    return rejected
+      .map((m: any) => mapRejectedMark(m))
+      .filter((p): p is ForensicPoint => p !== null);
+  }, [forensicDebugEnabled, results, mapRejectedMark]);
 
   // Draw dual panes — LEFT = PROBE, RIGHT = GALLERY (both get delta overlay in delta mode)
   useEffect(() => {
