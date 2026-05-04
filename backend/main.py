@@ -788,7 +788,15 @@ def evaluate_mark_veto_override(mark_result: dict, lr_marks: float) -> dict:
     """
     Evaluates whether independent forensic mark correspondence provides enough 
     evidence to override an ArcFace veto.
-    Rules:
+    
+    SAFETY OVERRIDE (v1.153.0): Mark override is DISABLED.
+    Testing revealed that mark correspondence produces false positives on 
+    different-source pairs (e.g., Powell vs Djindjic scored 99.98% via override).
+    The mark LR calibration is not validated for production use.
+    The ArcFace veto MUST remain absolute until mark calibration is independently
+    validated against a known impostor population.
+    
+    Original rules (preserved for future re-enablement):
     - at least 3 individual positive mark LRs > 1.0
     - aggregate lr_marks >= 100.0
     - malformed / non-numeric mark LRs are ignored
@@ -804,27 +812,12 @@ def evaluate_mark_veto_override(mark_result: dict, lr_marks: float) -> dict:
     count = len(positive_mark_lrs)
     lr_marks_val = finite_or_none(lr_marks)
     
-    if lr_marks_val is None or lr_marks_val < 100.0:
-        return {
-            "eligible": False,
-            "positive_mark_count": count,
-            "positive_mark_lrs": positive_mark_lrs,
-            "reason": f"Aggregate lr_marks < 100.0 (got {lr_marks_val})"
-        }
-        
-    if count < 3:
-        return {
-            "eligible": False,
-            "positive_mark_count": count,
-            "positive_mark_lrs": positive_mark_lrs,
-            "reason": f"Fewer than 3 positive mark LRs (got {count})"
-        }
-        
+    # SAFETY: Always return ineligible until mark calibration is validated
     return {
-        "eligible": True,
+        "eligible": False,
         "positive_mark_count": count,
         "positive_mark_lrs": positive_mark_lrs,
-        "reason": f"Mark override eligible: {count} positive mark LRs, aggregate lr_marks={lr_marks_val:.2f}"
+        "reason": f"Mark override DISABLED (v1.153.0 safety). count={count}, lr_marks={lr_marks_val}"
     }
 
 
