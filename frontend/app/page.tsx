@@ -423,7 +423,7 @@ export default function Home() {
             <div style="display:flex;justify-content:space-between;align-items:flex-end;">
               <div>
                 <div style="font-size:8px;color:#D4AF37;letter-spacing:5px;margin-bottom:2px;">▓▓ REPORT ▓▓</div>
-                <div style="font-size:16px;font-weight:bold;color:white;letter-spacing:3px;">BIOMETRIC <span style="color:#D4AF37;">SIMILARITY REPORT</span></div>
+                <div style="font-size:16px;font-weight:bold;color:white;letter-spacing:3px;">BIOMETRIC <span style="color:#D4AF37;">EVIDENCE SUPPORT REPORT</span></div>
               </div>
               <div style="text-align:right;">
                 <div style="font-size:7px;color:#555;letter-spacing:2px;">GENERATED ${escapeHtml(ts)} UTC</div>
@@ -449,7 +449,7 @@ export default function Home() {
             <div style="flex:1;padding:8px 10px;border-right:1px solid #222;background:#0a0a0a;">
               <div style="font-size:7px;color:#666;letter-spacing:2px;">TIER 1: STRUCTURAL</div>
               <div style="font-size:22px;color:white;font-weight:bold;margin:2px 0;">${results.structural_score}%</div>
-              <div style="font-size:7px;color:#555;line-height:1.3;">1404-D cranial geometry cosine similarity.</div>
+              <div style="font-size:7px;color:#555;line-height:1.3;">512-D ArcFace neural face embedding evidence.</div>
             </div>
             <div style="flex:1;padding:8px 10px;border-right:1px solid #222;background:#0a0a0a;">
               <div style="font-size:7px;color:#666;letter-spacing:2px;">TIER 2: SOFT BIO</div>
@@ -462,7 +462,7 @@ export default function Home() {
               <div style="font-size:7px;color:#555;line-height:1.3;">Epidermal deviation & scar alignment.</div>
             </div>
             <div style="flex:1;padding:8px 10px;background:#1a170d;">
-              <div style="font-size:7px;color:#D4AF37;letter-spacing:2px;">POSTERIOR PROB</div>
+              <div style="font-size:7px;color:#D4AF37;letter-spacing:2px;">EVIDENCE SCORE</div>
               <div style="font-size:22px;color:#D4AF37;font-weight:bold;margin:2px 0;">${results.fused_identity_score}%</div>
               <div style="font-size:7px;color:#997a1d;line-height:1.3;">LR<sub>total</sub>: ${audit?.lr_total != null ? formatLRSci(audit.lr_total) : 'N/A'}</div>
             </div>
@@ -1182,39 +1182,73 @@ export default function Home() {
             {/* ── RIGHT PANEL (30%): Intelligence Panel — Human-Readable ── */}
             <div className="w-[30%] flex flex-col gap-1.5 min-h-0 overflow-y-auto overflow-x-hidden shrink-0 min-w-0 break-words pr-0.5 scrollbar-thin">
 
-              {/* ═══ OVERALL MATCH — Hero Score ═══ */}
-              <div className={`relative overflow-hidden rounded-lg p-3 border-2 ${(results.fused_identity_score < 40.0) ? 'border-red-700/60 bg-gradient-to-br from-[#1a0505] to-[#0d0d0e]' : 'border-[#D4AF37]/50 bg-gradient-to-br from-[#1a170d] to-[#0d0d0e]'}`}>
+              {/* ═══ VERDICT — Primary User-Facing Result ═══ */}
+              <div className={`relative overflow-hidden rounded-lg border-2 ${(results.fused_identity_score < 40.0) ? 'border-red-700/60 bg-gradient-to-br from-[#1a0505] to-[#0d0d0e]' : results.fused_identity_score >= 75 ? 'border-emerald-700/50 bg-gradient-to-br from-[#051a0d] to-[#0d0d0e]' : 'border-[#D4AF37]/50 bg-gradient-to-br from-[#1a170d] to-[#0d0d0e]'}`}>
                 <div className={`absolute -top-6 -right-6 w-20 h-20 rounded-full ${(results.fused_identity_score < 40.0) ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
-                <div className="relative z-10">
-                  <div className={`text-[7px] tracking-[0.3em] mb-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/70' : 'text-[#D4AF37]/70'}`}>BAYESIAN POSTERIOR PROBABILITY</div>
-                  {/* Horizontal layout: score | LR | interpretation */}
+                {/* Verdict Banner */}
+                <div className={`px-3 py-1.5 text-[10px] font-bold tracking-[0.15em] ${
+                  (results.fused_identity_score < 40.0) ? 'bg-red-900/40 text-red-300' :
+                  (results.veto_triggered && results.fused_identity_score >= 40.0) ? 'bg-amber-900/40 text-amber-300' :
+                  results.fused_identity_score >= 75 ? 'bg-emerald-900/30 text-emerald-300' :
+                  'bg-[#D4AF37]/10 text-[#D4AF37]'
+                }`}>
+                  {(results.fused_identity_score < 40.0) ? '✗ BELOW OPERATING THRESHOLD' :
+                   (results.veto_triggered && results.fused_identity_score >= 40.0) ? '⚠ RESULT LIMITED BY FACE-MODEL THRESHOLD' :
+                   results.fused_identity_score >= 90 ? '✓ SUPPORTS COMMON SOURCE — VERY STRONG' :
+                   results.fused_identity_score >= 75 ? '✓ SUPPORTS COMMON SOURCE — MODERATE' :
+                   '— INCONCLUSIVE'}
+                </div>
+                {/* Score + Evidence Level */}
+                <div className="relative z-10 p-3 pt-2">
                   <div className="flex items-center gap-3 min-w-0">
                     {/* Left: main score */}
                     <div className="flex items-baseline gap-0.5 shrink-0">
-                      <span className={`text-3xl font-bold tabular-nums leading-none ${(results.fused_identity_score < 40.0) ? 'text-red-400' : 'text-[#D4AF37]'}`}>{results.fused_identity_score}</span>
-                      <span className={`text-sm font-bold ${(results.fused_identity_score < 40.0) ? 'text-red-400/60' : 'text-[#D4AF37]/60'}`}>%</span>
+                      <span className={`text-3xl font-bold tabular-nums leading-none ${(results.fused_identity_score < 40.0) ? 'text-red-400' : results.fused_identity_score >= 75 ? 'text-emerald-400' : 'text-[#D4AF37]'}`}>{results.fused_identity_score}</span>
+                      <span className={`text-sm font-bold ${(results.fused_identity_score < 40.0) ? 'text-red-400/60' : results.fused_identity_score >= 75 ? 'text-emerald-400/60' : 'text-[#D4AF37]/60'}`}>%</span>
                     </div>
-                    {/* Right: LR + interpretation */}
+                    {/* Right: plain-language evidence level */}
                     <div className="flex-1 min-w-0">
-                      {results.audit_log?.lr_total != null && (
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[7px] text-gray-500 shrink-0">LR<sub>total</sub></span>
-                          <span className={`text-[10px] font-bold tabular-nums truncate ${(results.fused_identity_score < 40.0) ? 'text-red-400/80' : 'text-[#D4AF37]/90'}`}>{formatLRSci(results.audit_log.lr_total)}</span>
-                        </div>
-                      )}
-                      <div className={`text-[8px] font-medium truncate ${(results.fused_identity_score < 40.0) ? 'text-red-300/80' : results.fused_identity_score > 80 ? 'text-emerald-300/80' : results.fused_identity_score > 60 ? 'text-amber-300/80' : 'text-red-300/80'}`}>
-                        {results.fused_identity_score > 99 ? 'Extremely strong posterior support' : results.fused_identity_score > 85 ? 'Very strong posterior support' : results.fused_identity_score > 70 ? 'Moderate posterior support' : results.fused_identity_score > 50 ? 'Weak posterior support' : 'Very low posterior support'}
+                      <div className="text-[8px] text-gray-500 tracking-wider mb-0.5">EVIDENCE SUPPORT SCORE</div>
+                      <div className={`text-[9px] font-medium ${(results.fused_identity_score < 40.0) ? 'text-red-300/90' : results.fused_identity_score >= 75 ? 'text-emerald-300/90' : results.fused_identity_score > 50 ? 'text-[#D4AF37]/90' : 'text-gray-400'}`}>
+                        {results.fused_identity_score >= 90 ? 'Very strong evidence supporting common source' :
+                         results.fused_identity_score >= 75 ? 'Moderate evidence supporting common source' :
+                         results.fused_identity_score >= 40 ? 'Insufficient evidence — result is inconclusive' :
+                         (results.veto_triggered) ? 'Result limited by face-model threshold' :
+                         'Evidence does not support common source'}
                       </div>
                     </div>
                   </div>
-                  {/* Score bar — compact */}
-                  <div className="mt-1.5 h-1 w-full bg-[#111] rounded-full overflow-hidden">
+                  {/* Score bar */}
+                  <div className="mt-2 h-1.5 w-full bg-[#111] rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full transition-all duration-700 ${results.fused_identity_score > 80 ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' : results.fused_identity_score > 60 ? 'bg-gradient-to-r from-amber-600 to-amber-400' : 'bg-gradient-to-r from-red-700 to-red-500'}`}
+                      className={`h-full rounded-full transition-all duration-700 ${results.fused_identity_score >= 75 ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' : results.fused_identity_score >= 40 ? 'bg-gradient-to-r from-amber-600 to-amber-400' : 'bg-gradient-to-r from-red-700 to-red-500'}`}
                       style={{ width: `${Math.min(100, results.fused_identity_score)}%` }}
                     />
                   </div>
-                  <div className={`text-[7px] mt-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/40' : 'text-[#D4AF37]/40'}`}>Bayesian fusion of {results.marks_matched ? '4' : '3'} evidence channels</div>
+                  {/* Veto explanation (plain language, not technical) */}
+                  {results.veto_triggered && results.fused_identity_score < 40.0 && (
+                    <div className="mt-2 text-[9px] text-red-300/70 leading-relaxed">
+                      The face-model evidence did not meet the operating threshold. Technical details are available in the forensic breakdown.
+                    </div>
+                  )}
+                  {results.veto_triggered && results.fused_identity_score >= 40.0 && (
+                    <div className="mt-2 text-[9px] text-amber-300/70 leading-relaxed">
+                      Face-model threshold was not met, but mark correspondence evidence provided additional support. See technical breakdown for details.
+                    </div>
+                  )}
+                  <div className="mt-1.5 flex items-center justify-between">
+                    <div className="text-[7px] text-gray-600 group relative cursor-help">
+                      Derived from Bayesian likelihood ratios
+                      <div className="pointer-events-none absolute bottom-full left-0 mb-1.5 w-48 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-50">
+                        <div className="bg-[#111] border border-[#333] rounded px-2 py-1.5 text-[8px] text-gray-300 leading-relaxed shadow-lg">
+                          Score is the Bayesian posterior probability derived from face-model and mark likelihood ratios. Technical posterior and LR values available in Technical Breakdown.
+                        </div>
+                      </div>
+                    </div>
+                    {results.marks_matched != null && results.marks_matched > 0 && (
+                      <span className="text-[7px] text-emerald-500/60">{results.marks_matched} shared marks</span>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1339,34 +1373,6 @@ export default function Home() {
                         )}
                       </div>
                     )}
-                    {/* Formula Trace */}
-                    {(() => {
-                      const lrFace = results.lr_face_model ?? results.audit_log?.lr_arcface;
-                      const lrMarks = results.mark_diagnostics.lr_marks;
-                      const lrTotal = (lrFace != null && lrMarks != null) ? lrFace * lrMarks : results.audit_log?.lr_total;
-                      const posterior = lrTotal != null ? lrTotal / (lrTotal + 1) : results.audit_log?.posterior_probability;
-                      if (lrFace == null && lrTotal == null) return null;
-                      return (
-                        <div className="border-t border-[#1a1a1a] pt-2 mt-2">
-                          <div className="text-[7px] text-gray-600 tracking-wider mb-1.5">FORMULA TRACE</div>
-                          <div className="space-y-0.5 text-[8px]">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-gray-500">LR<sub>marks</sub></span>
-                              <span className="text-[#D4AF37]/80 font-bold tabular-nums">{formatLRSci(lrMarks)}</span>
-                              <span className="text-gray-600">×</span>
-                              <span className="text-gray-500">LR<sub>face_model</sub></span>
-                              <span className="text-[#D4AF37]/80 font-bold tabular-nums">{formatLRSci(lrFace)}</span>
-                              <span className="text-gray-600">=</span>
-                              <span className="text-gray-500">LR<sub>total</sub></span>
-                              <span className="text-[#D4AF37] font-bold tabular-nums">{formatLRSci(lrTotal)}</span>
-                            </div>
-                            <div className="text-[7px] text-gray-600 mt-1">
-                              Posterior P(H<sub>p</sub>|E) = LR<sub>total</sub> / (LR<sub>total</sub> + 1) = {posterior != null ? `${(posterior * 100).toFixed(4)}%` : 'N/A'}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })()}
                     {/* Rejection Summary — explains why LR_marks is neutral or absent */}
                     {(results.mark_diagnostics.lr_marks == null || results.mark_diagnostics.lr_marks === 1.0) && results.mark_diagnostics.rejection_summary && (
                       <div className="mt-2 px-2 py-1.5 bg-amber-950/20 rounded border border-amber-900/20">
@@ -1520,39 +1526,7 @@ export default function Home() {
                 )}
               </div>
 
-              {/* ═══ VERDICT — Compact horizontal layout ═══ */}
-              <div className={`rounded-lg overflow-hidden border ${(results.fused_identity_score < 40.0) ? 'border-red-700/60' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? 'border-amber-700/50' : 'border-emerald-700/40'}`}>
-                {/* Verdict header badge */}
-                <div className={`px-2.5 py-1 text-[9px] tracking-[0.12em] font-bold flex items-center justify-between ${(results.fused_identity_score < 40.0) ? 'bg-red-900/40 text-red-300' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? 'bg-amber-900/40 text-amber-400' : 'bg-emerald-900/30 text-emerald-300'}`}>
-                  <span>{(results.fused_identity_score < 40.0) ? '✗ BELOW OPERATING THRESHOLD' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '⚠ FACE MODEL VETO' : '✓ SUPPORTS COMMON SOURCE'}</span>
-                  {results.veto_triggered && (
-                    <span className="text-[8px] font-normal opacity-70">Pre-Veto: {(results.bayesian_fused_score ?? ((results.audit_log?.posterior_probability ?? 0) * 100)).toFixed(1)}% → Displayed: {results.fused_identity_score}%</span>
-                  )}
-                </div>
-                {/* Compact body */}
-                <div className={`px-2.5 py-2 ${(results.fused_identity_score < 40.0) ? 'bg-red-950/20' : 'bg-[#0d0d0e]'}`}>
-                  <p className={`text-[10px] leading-relaxed break-words ${(results.fused_identity_score < 40.0) ? 'text-red-300/90' : 'text-gray-200'}`}>
-                    {results.conclusion}
-                  </p>
-                  {(results.fused_identity_score < 40.0 && results.veto_triggered) && (
-                    <div className="mt-1.5 flex items-center gap-1.5">
-                      <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shrink-0"></div>
-                      <span className="text-[8px] text-red-400/70">Face-model veto — does not constitute validated biometric exclusion</span>
-                    </div>
-                  )}
-                  {(results.fused_identity_score < 40.0 && !results.veto_triggered) && (
-                    <div className="mt-1.5 text-[8px] text-red-400/60">Cosine similarity {results.structural_score}% is below 40% threshold</div>
-                  )}
-                  {(!results.veto_triggered && results.fused_identity_score >= 40.0) && (
-                    <div className="mt-1.5 flex items-center gap-1.5">
-                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0"></div>
-                      <span className="text-[8px] text-emerald-500/70">No discrepancies across structural tests</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Export Dossier and Technical Breakdown Buttons */}
+              {/* ═══ ACTIONS — Report + Technical Details ═══ */}
               <div className="flex gap-2 shrink-0">
                 <button
                   onClick={generateForensicReport}
@@ -1563,7 +1537,7 @@ export default function Home() {
                       : 'border-[#D4AF37]/50 bg-[#0a0a0a] text-[#D4AF37] hover:bg-[#D4AF37]/10 hover:border-[#D4AF37] hover:shadow-[0_0_20px_rgba(212,175,55,0.4)]'
                   }`}
                 >
-                  {isExporting ? 'COMPILING...' : 'DOWNLOAD FULL REPORT'}
+                  {isExporting ? 'COMPILING...' : 'DOWNLOAD REPORT'}
                 </button>
                 <button
                   onClick={() => setAuditExpanded(true)}
@@ -1573,7 +1547,7 @@ export default function Home() {
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#D4AF37] opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-[#D4AF37]"></span>
                   </span>
-                  TECHNICAL BREAKDOWN
+                  TECHNICAL DETAILS
                 </button>
               </div>
             </div>
@@ -1582,18 +1556,66 @@ export default function Home() {
             {/* ── Full-Width Technical Details Overlay ── */}
             {auditExpanded && results.audit_log && (
               <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-md p-6 flex flex-col justify-center items-center">
-                <div className="w-full max-w-4xl max-h-full bg-[#050505] border border-[#D4AF37]/30 rounded-lg shadow-[0_0_50px_rgba(0,0,0,0.8)] flex flex-col overflow-hidden">
-                  <div className="shrink-0 px-5 py-4 border-b border-[#1a1a0a] flex justify-between items-center bg-[#0a0a0a]">
+                <div className="w-full max-w-5xl max-h-full bg-[#050505] border border-[#D4AF37]/30 rounded-lg shadow-[0_0_50px_rgba(0,0,0,0.8)] flex flex-col overflow-hidden">
+                  <div className="shrink-0 px-5 py-3 border-b border-[#1a1a0a] flex justify-between items-center bg-[#0a0a0a]">
                     <span className="flex items-center gap-3 font-bold text-[#D4AF37] tracking-[0.2em] text-[11px]">
                       <span className="relative flex h-3 w-3">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#D4AF37] opacity-75"></span>
                         <span className="relative inline-flex rounded-full h-3 w-3 bg-[#D4AF37]"></span>
                       </span>
-                      DETAILED TECHNICAL BREAKDOWN
+                      FORENSIC TECHNICAL DETAILS
                     </span>
                     <button onClick={() => setAuditExpanded(false)} className="text-gray-500 hover:text-white p-2 text-xl leading-none font-bold">✕</button>
                   </div>
                   <div className="flex-1 overflow-y-auto p-6 font-mono text-[9px] leading-relaxed custom-scrollbar">
+
+                    {/* ── Summary Row: Score + Verdict + Formula Trace ── */}
+                    <div className="mb-6 border border-[#D4AF37]/20 rounded-lg p-4 bg-[#0a0a05]">
+                      <div className="flex items-center gap-6 flex-wrap">
+                        <div className="flex items-baseline gap-1 shrink-0">
+                          <span className={`text-3xl font-bold tabular-nums ${results.fused_identity_score < 40 ? 'text-red-400' : results.fused_identity_score >= 75 ? 'text-emerald-400' : 'text-[#D4AF37]'}`}>{results.fused_identity_score}</span>
+                          <span className="text-sm text-gray-500">%</span>
+                          <span className="text-[10px] text-gray-400 ml-2 tracking-wider">EVIDENCE SUPPORT SCORE</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className={`text-[10px] font-bold mb-1 ${results.fused_identity_score < 40 ? 'text-red-300' : results.fused_identity_score >= 75 ? 'text-emerald-300' : 'text-[#D4AF37]'}`}>
+                            {results.fused_identity_score < 40 ? 'BELOW OPERATING THRESHOLD' : results.veto_triggered ? 'RESULT LIMITED BY FACE-MODEL THRESHOLD' : results.fused_identity_score >= 75 ? 'SUPPORTS COMMON SOURCE' : 'INCONCLUSIVE'}
+                          </div>
+                          <p className="text-[9px] text-gray-400 leading-relaxed break-words">{results.conclusion}</p>
+                        </div>
+                      </div>
+                      {/* Formula Trace — full LR derivation */}
+                      {(() => {
+                        const lrFace = results.lr_face_model ?? results.audit_log?.lr_arcface;
+                        const lrMarks = results.mark_diagnostics?.lr_marks;
+                        const lrTotal = (lrFace != null && lrMarks != null) ? lrFace * lrMarks : results.audit_log?.lr_total;
+                        const posterior = lrTotal != null ? lrTotal / (lrTotal + 1) : results.audit_log?.posterior_probability;
+                        if (lrFace == null && lrTotal == null) return null;
+                        return (
+                          <div className="mt-3 pt-3 border-t border-[#D4AF37]/10">
+                            <div className="text-[8px] text-gray-600 tracking-wider mb-1.5">FORMULA TRACE</div>
+                            <div className="flex items-center gap-2 flex-wrap text-[10px]">
+                              <span className="text-gray-500">LR<sub>face_model</sub></span>
+                              <span className="text-[#D4AF37]/80 font-bold tabular-nums">{formatLRSci(lrFace)}</span>
+                              <span className="text-gray-600">×</span>
+                              <span className="text-gray-500">LR<sub>marks</sub></span>
+                              <span className="text-[#D4AF37]/80 font-bold tabular-nums">{formatLRSci(lrMarks)}</span>
+                              <span className="text-gray-600">=</span>
+                              <span className="text-gray-500">LR<sub>total</sub></span>
+                              <span className="text-[#D4AF37] font-bold tabular-nums">{formatLRSci(lrTotal)}</span>
+                              <span className="text-gray-600 ml-2">→</span>
+                              <span className="text-gray-500">Posterior</span>
+                              <span className="text-[#D4AF37] font-bold tabular-nums">{posterior != null ? `${(posterior * 100).toFixed(4)}%` : 'N/A'}</span>
+                            </div>
+                            <div className="text-[7px] text-gray-600 mt-1">P(H<sub>p</sub>|E) = LR<sub>total</sub> / (LR<sub>total</sub> + 1)</div>
+                            {results.veto_triggered && (
+                              <div className="text-[8px] text-amber-400/70 mt-1">Pre-veto posterior: {(results.bayesian_fused_score ?? ((results.audit_log?.posterior_probability ?? 0) * 100)).toFixed(1)}% → Displayed: {results.fused_identity_score}%</div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full min-w-0">
 
                       {/* Block 1: Confidence & Accuracy */}
