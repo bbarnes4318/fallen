@@ -1777,7 +1777,7 @@ export default function Home() {
                             <div className="mt-2 pt-2 border-t border-purple-900/20">
                               <div className="flex justify-between"><span className="text-gray-500">Threshold Rule Applied</span><span className="text-amber-400 font-bold">Yes</span></div>
                               <div className="flex justify-between"><span className="text-gray-500">Reason</span><span className="text-amber-300/80 text-[9px]">Face embedding below operating threshold</span></div>
-                              {results.mark_veto_override_applied && (
+                              {results.veto_override_applied && (
                                 <div className="flex justify-between"><span className="text-gray-500">Mark Override</span><span className="text-emerald-400 font-bold">Applied</span></div>
                               )}
                             </div>
