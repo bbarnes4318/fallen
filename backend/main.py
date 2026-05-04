@@ -2273,7 +2273,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
                 probe_hash=probe_file_hash,
                 gallery_hash=gallery_file_hash,
                 fused_score_x100=0,
-                conclusion="VETO: Synthetic Media Detected",
+                conclusion="Synthetic Provenance Veto Triggered",
                 pipeline_version=PIPELINE_VERSION,
                 veto_triggered=True,
                 failed_provenance_veto=True,
@@ -2289,7 +2289,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             
         return JSONResponse(status_code=200, content={
             "status": "success", 
-            "conclusion": "VETO: Synthetic Media Detected", 
+            "conclusion": "Synthetic Provenance Veto Triggered", 
             "fused_score": 0,
             "synthetic_anomaly_score": max_anomaly
         })
@@ -2499,24 +2499,21 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             veto_override_applied = True
             veto_override_reason = mark_override_eval["reason"]
             conclusion = (
-                "Mark Override Applied: ArcFace face-model veto overridden by independent "
-                "mark correspondence evidence. ArcFace channel did not pass."
+                "Supports Common Source — Face-Model Veto Overridden by Mark Correspondence"
             )
             # fused_score keeps its Bayesian posterior value
         else:
             fused_score = 0.0
             veto_reason = "ARCFACE_VETO"
             conclusion = (
-                "Face Model Veto: ArcFace embedding similarity below operating threshold. "
-                "This veto applies to the face-model channel only and does not constitute "
-                "a validated full biometric exclusion."
+                "Inconclusive — Limited by Face-Model Threshold"
             )
     elif fused_score > 90.0:
-        conclusion = "Strongest Support for Common Source (Bayesian Posterior ≥ 90%)"
+        conclusion = "Strongly Supports Common Source"
     elif fused_score > 75.0:
-        conclusion = "Moderate Support for Common Source (Bayesian Posterior 75–90%)"
+        conclusion = "Supports Common Source"
     else:
-        conclusion = "Inconclusive: Insufficient Bayesian Evidence for Common Source"
+        conclusion = "Inconclusive — Insufficient Evidence"
 
     # Landmark Attention Maps on aligned crops (real 468-point density, not fabricated)
     gallery_heatmap = generate_landmark_attention_map(gallery_aligned, gallery_landmarks)
@@ -2902,6 +2899,8 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             occluded_regions=json.dumps(pro_vis["occluded_regions"]) if pro_vis["occluded_regions"] else None,
             effective_geometric_ratios_used=effective_ratios,
             receipt_url=receipt_url,
+            synthetic_anomaly_score=max_anomaly,
+            failed_provenance_veto=False,
             lr_arcface=finite_or_none(lr_ensemble),
             lr_marks_product=finite_or_none(lr_marks),
             lr_total=finite_or_none(lr_total),
@@ -3620,23 +3619,16 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             veto_override_applied = True
             veto_override_reason = mark_override_eval["reason"]
             conclusion = (
-                f"Mark Override Applied: ArcFace face-model veto overridden by independent "
-                f"mark correspondence evidence. ArcFace channel did not pass. ({best_user_id})"
+                f"Supports Common Source — Face-Model Veto Overridden by Mark Correspondence ({best_user_id})"
             )
         else:
             fused_score = 0.0
             veto_reason = "ARCFACE_VETO"
             conclusion = (
-                "Face Model Veto: ArcFace embedding similarity below operating threshold. "
-                "This veto applies to the face-model channel only and does not constitute "
-                "a validated full biometric exclusion."
+                "Inconclusive — Limited by Face-Model Threshold"
             )
     elif fused_score > 90.0:
-        conclusion = f"Strongest Support for Common Source — Nearest vault candidate: {best_user_id} (Posterior: {fused_score:.1f}%)"
-    elif fused_score > 75.0:
-        conclusion = f"Moderate Support for Common Source — Nearest vault candidate: {best_user_id} (Posterior: {fused_score:.1f}%)"
-    else:
-        conclusion = f"Inconclusive — Nearest vault candidate: {best_user_id} (Posterior: {fused_score:.1f}%)"
+        conclusion = f"Strongly Supports Common Source — Nearest vault candidate: {best_user_id}"
 
     # 11. Forensic visualizations (real landmark density maps)
     gallery_heatmap = generate_landmark_attention_map(gallery_aligned, gallery_landmarks)
@@ -4019,6 +4011,8 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             occluded_regions=json.dumps(pro_vis["occluded_regions"]) if pro_vis["occluded_regions"] else None,
             effective_geometric_ratios_used=effective_ratios,
             receipt_url=receipt_url,
+            synthetic_anomaly_score=max_anomaly,
+            failed_provenance_veto=False,
             lr_arcface=finite_or_none(lr_ensemble),
             lr_marks_product=finite_or_none(lr_marks),
             lr_total=finite_or_none(lr_total),
