@@ -164,6 +164,48 @@ export default function Home() {
     return lr.toFixed(4);
   }
 
+  /**
+   * Compute the true pre-decision Bayesian posterior percentage.
+   * This is the evidence-derived score BEFORE any veto/threshold decision policy.
+   * Priority: A) bayesian_fused_score  B) posterior_probability * 100
+   *           C) lr_total / (lr_total + 1) * 100  D) null
+   * Consistency guard: if lr_total > 0, result must not be 0.
+   */
+  function getTechnicalPosteriorPercent(r: VerificationResult): number | null {
+    // A: explicit pre-veto score from backend
+    if (r.bayesian_fused_score != null && typeof r.bayesian_fused_score === 'number') {
+      return r.bayesian_fused_score;
+    }
+    // B: posterior_probability (0-1 range) — but guard against post-veto contamination
+    if (r.audit_log?.posterior_probability != null && typeof r.audit_log.posterior_probability === 'number') {
+      const pp = r.audit_log.posterior_probability * 100;
+      // Consistency guard: if lr_total is positive, posterior cannot be 0
+      if (pp === 0 && r.audit_log?.lr_total != null && r.audit_log.lr_total > 0) {
+        // Fall through to compute from lr_total
+      } else {
+        return pp;
+      }
+    }
+    // C: derive from lr_total
+    if (r.audit_log?.lr_total != null && typeof r.audit_log.lr_total === 'number' && r.audit_log.lr_total > 0) {
+      return (r.audit_log.lr_total / (r.audit_log.lr_total + 1)) * 100;
+    }
+    return null;
+  }
+
+  /** Get the result classification label */
+  function getResultLabel(r: VerificationResult): string {
+    if (r.veto_triggered && r.fused_identity_score < 40) {
+      return 'Inconclusive — Limited by Face-Model Threshold';
+    }
+    if (r.veto_triggered && r.fused_identity_score >= 40) {
+      return 'Inconclusive — Limited by Face-Model Threshold';
+    }
+    if (r.fused_identity_score >= 90) return 'Strongly Supports Common Source';
+    if (r.fused_identity_score >= 75) return 'Supports Common Source';
+    return 'Inconclusive — Insufficient Evidence';
+  }
+
   const [results, setResults] = useState<VerificationResult | null>(null);
   const [lockedJob, setLockedJob] = useState<{job_id: string, preview: Record<string, unknown>} | null>(null);
   const [isXrayMode, setIsXrayMode] = useState(false);
@@ -1183,57 +1225,70 @@ export default function Home() {
             <div className="w-[30%] flex flex-col gap-1.5 min-h-0 overflow-y-auto overflow-x-hidden shrink-0 min-w-0 break-words pr-0.5 scrollbar-thin">
 
               {/* ═══ VERDICT — Primary User-Facing Result ═══ */}
-              <div className={`relative overflow-hidden rounded-lg border-2 ${(results.fused_identity_score < 40.0) ? 'border-red-700/60 bg-gradient-to-br from-[#1a0505] to-[#0d0d0e]' : results.fused_identity_score >= 75 ? 'border-emerald-700/50 bg-gradient-to-br from-[#051a0d] to-[#0d0d0e]' : 'border-[#D4AF37]/50 bg-gradient-to-br from-[#1a170d] to-[#0d0d0e]'}`}>
-                <div className={`absolute -top-6 -right-6 w-20 h-20 rounded-full ${(results.fused_identity_score < 40.0) ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
+              {(() => {
+                const preDecision = getTechnicalPosteriorPercent(results);
+                const displayed = results.fused_identity_score;
+                const scoreDiverged = preDecision != null && Math.abs(preDecision - displayed) > 0.5;
+                const resultLabel = getResultLabel(results);
+                return (
+              <div className={`relative overflow-hidden rounded-lg border-2 ${displayed < 40 ? 'border-red-700/60 bg-gradient-to-br from-[#1a0505] to-[#0d0d0e]' : displayed >= 75 ? 'border-emerald-700/50 bg-gradient-to-br from-[#051a0d] to-[#0d0d0e]' : 'border-[#D4AF37]/50 bg-gradient-to-br from-[#1a170d] to-[#0d0d0e]'}`}>
+                <div className={`absolute -top-6 -right-6 w-20 h-20 rounded-full ${displayed < 40 ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
                 {/* Verdict Banner */}
-                <div className={`px-3 py-1.5 text-[10px] font-bold tracking-[0.15em] ${
-                  (results.fused_identity_score < 40.0) ? 'bg-red-900/40 text-red-300' :
-                  (results.veto_triggered && results.fused_identity_score >= 40.0) ? 'bg-amber-900/40 text-amber-300' :
-                  results.fused_identity_score >= 75 ? 'bg-emerald-900/30 text-emerald-300' :
+                <div className={`px-3 py-1.5 text-[10px] font-bold tracking-[0.12em] ${
+                  displayed < 40 ? 'bg-red-900/40 text-red-300' :
+                  results.veto_triggered ? 'bg-amber-900/40 text-amber-300' :
+                  displayed >= 75 ? 'bg-emerald-900/30 text-emerald-300' :
                   'bg-[#D4AF37]/10 text-[#D4AF37]'
                 }`}>
-                  {(results.fused_identity_score < 40.0) ? '✗ BELOW OPERATING THRESHOLD' :
-                   (results.veto_triggered && results.fused_identity_score >= 40.0) ? '⚠ RESULT LIMITED BY FACE-MODEL THRESHOLD' :
-                   results.fused_identity_score >= 90 ? '✓ SUPPORTS COMMON SOURCE — VERY STRONG' :
-                   results.fused_identity_score >= 75 ? '✓ SUPPORTS COMMON SOURCE — MODERATE' :
-                   '— INCONCLUSIVE'}
+                  {resultLabel.toUpperCase()}
                 </div>
                 {/* Score + Evidence Level */}
                 <div className="relative z-10 p-3 pt-2">
                   <div className="flex items-center gap-3 min-w-0">
-                    {/* Left: main score */}
-                    <div className="flex items-baseline gap-0.5 shrink-0">
-                      <span className={`text-3xl font-bold tabular-nums leading-none ${(results.fused_identity_score < 40.0) ? 'text-red-400' : results.fused_identity_score >= 75 ? 'text-emerald-400' : 'text-[#D4AF37]'}`}>{results.fused_identity_score}</span>
-                      <span className={`text-sm font-bold ${(results.fused_identity_score < 40.0) ? 'text-red-400/60' : results.fused_identity_score >= 75 ? 'text-emerald-400/60' : 'text-[#D4AF37]/60'}`}>%</span>
+                    {/* Left: displayed decision score */}
+                    <div className="shrink-0">
+                      {displayed > 0 ? (
+                        <div className="flex items-baseline gap-0.5">
+                          <span className={`text-3xl font-bold tabular-nums leading-none ${displayed < 40 ? 'text-red-400' : displayed >= 75 ? 'text-emerald-400' : 'text-[#D4AF37]'}`}>{displayed}</span>
+                          <span className={`text-sm font-bold ${displayed < 40 ? 'text-red-400/60' : displayed >= 75 ? 'text-emerald-400/60' : 'text-[#D4AF37]/60'}`}>%</span>
+                        </div>
+                      ) : (
+                        <div className="text-lg font-bold text-red-400/80 leading-none">No Positive<br/>Support Result</div>
+                      )}
                     </div>
-                    {/* Right: plain-language evidence level */}
+                    {/* Right: plain-language */}
                     <div className="flex-1 min-w-0">
-                      <div className="text-[8px] text-gray-500 tracking-wider mb-0.5">EVIDENCE SUPPORT SCORE</div>
-                      <div className={`text-[9px] font-medium ${(results.fused_identity_score < 40.0) ? 'text-red-300/90' : results.fused_identity_score >= 75 ? 'text-emerald-300/90' : results.fused_identity_score > 50 ? 'text-[#D4AF37]/90' : 'text-gray-400'}`}>
-                        {results.fused_identity_score >= 90 ? 'Very strong evidence supporting common source' :
-                         results.fused_identity_score >= 75 ? 'Moderate evidence supporting common source' :
-                         results.fused_identity_score >= 40 ? 'Insufficient evidence — result is inconclusive' :
-                         (results.veto_triggered) ? 'Result limited by face-model threshold' :
-                         'Evidence does not support common source'}
+                      <div className="text-[8px] text-gray-500 tracking-wider mb-0.5">DISPLAYED DECISION SCORE</div>
+                      <div className={`text-[9px] font-medium ${displayed < 40 ? 'text-red-300/90' : displayed >= 75 ? 'text-emerald-300/90' : displayed > 50 ? 'text-[#D4AF37]/90' : 'text-gray-400'}`}>
+                        {resultLabel}
                       </div>
                     </div>
                   </div>
                   {/* Score bar */}
                   <div className="mt-2 h-1.5 w-full bg-[#111] rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full transition-all duration-700 ${results.fused_identity_score >= 75 ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' : results.fused_identity_score >= 40 ? 'bg-gradient-to-r from-amber-600 to-amber-400' : 'bg-gradient-to-r from-red-700 to-red-500'}`}
-                      style={{ width: `${Math.min(100, results.fused_identity_score)}%` }}
+                      className={`h-full rounded-full transition-all duration-700 ${displayed >= 75 ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' : displayed >= 40 ? 'bg-gradient-to-r from-amber-600 to-amber-400' : 'bg-gradient-to-r from-red-700 to-red-500'}`}
+                      style={{ width: `${Math.min(100, displayed)}%` }}
                     />
                   </div>
-                  {/* Veto explanation (plain language, not technical) */}
-                  {results.veto_triggered && results.fused_identity_score < 40.0 && (
-                    <div className="mt-2 text-[9px] text-red-300/70 leading-relaxed">
-                      The face-model evidence did not meet the operating threshold. Technical details are available in the forensic breakdown.
+                  {/* Pre-Decision Bayesian divergence callout */}
+                  {scoreDiverged && preDecision != null && (
+                    <div className="mt-2 px-2 py-1.5 bg-amber-950/30 border border-amber-900/30 rounded text-[9px] leading-relaxed">
+                      <div className="flex items-center justify-between gap-2 mb-0.5">
+                        <span className="text-amber-300/80 font-bold tracking-wide text-[8px]">PRE-DECISION BAYESIAN SCORE</span>
+                        <span className="text-amber-300 font-bold tabular-nums">{preDecision.toFixed(2)}%</span>
+                      </div>
+                      <p className="text-amber-200/60 text-[8px]">
+                        {results.veto_triggered
+                          ? 'Face-model threshold rule reduced the displayed score. The pre-decision Bayesian evidence is shown above.'
+                          : 'The displayed score differs from the raw Bayesian posterior due to decision policy.'}
+                      </p>
                     </div>
                   )}
-                  {results.veto_triggered && results.fused_identity_score >= 40.0 && (
-                    <div className="mt-2 text-[9px] text-amber-300/70 leading-relaxed">
-                      Face-model threshold was not met, but mark correspondence evidence provided additional support. See technical breakdown for details.
+                  {/* Veto explanation (plain language) */}
+                  {results.veto_triggered && !scoreDiverged && results.fused_identity_score < 40 && (
+                    <div className="mt-2 text-[9px] text-red-300/70 leading-relaxed">
+                      Result limited by face-model threshold. Technical details available in forensic breakdown.
                     </div>
                   )}
                   <div className="mt-1.5 flex items-center justify-between">
@@ -1241,7 +1296,7 @@ export default function Home() {
                       Derived from Bayesian likelihood ratios
                       <div className="pointer-events-none absolute bottom-full left-0 mb-1.5 w-48 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-50">
                         <div className="bg-[#111] border border-[#333] rounded px-2 py-1.5 text-[8px] text-gray-300 leading-relaxed shadow-lg">
-                          Score is the Bayesian posterior probability derived from face-model and mark likelihood ratios. Technical posterior and LR values available in Technical Breakdown.
+                          Displayed Decision Score may differ from the Pre-Decision Bayesian Score when threshold or veto rules are applied. See Technical Details for full derivation.
                         </div>
                       </div>
                     </div>
@@ -1251,6 +1306,8 @@ export default function Home() {
                   </div>
                 </div>
               </div>
+                );
+              })()}
 
               {/* ═══ SHARED MARK EVIDENCE — First-Class Panel ═══ */}
               <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg overflow-hidden" data-testid="shared-mark-evidence-panel">
@@ -1569,17 +1626,40 @@ export default function Home() {
                   </div>
                   <div className="flex-1 overflow-y-auto p-6 font-mono text-[9px] leading-relaxed custom-scrollbar">
 
-                    {/* ── Summary Row: Score + Verdict + Formula Trace ── */}
+                    {/* ── Summary Row: Displayed vs Pre-Decision Scores ── */}
+                    {(() => {
+                      const modalPreDecision = getTechnicalPosteriorPercent(results);
+                      const modalDisplayed = results.fused_identity_score;
+                      const modalDiverged = modalPreDecision != null && Math.abs(modalPreDecision - modalDisplayed) > 0.5;
+                      return (
                     <div className="mb-6 border border-[#D4AF37]/20 rounded-lg p-4 bg-[#0a0a05]">
-                      <div className="flex items-center gap-6 flex-wrap">
-                        <div className="flex items-baseline gap-1 shrink-0">
-                          <span className={`text-3xl font-bold tabular-nums ${results.fused_identity_score < 40 ? 'text-red-400' : results.fused_identity_score >= 75 ? 'text-emerald-400' : 'text-[#D4AF37]'}`}>{results.fused_identity_score}</span>
-                          <span className="text-sm text-gray-500">%</span>
-                          <span className="text-[10px] text-gray-400 ml-2 tracking-wider">EVIDENCE SUPPORT SCORE</span>
+                      <div className="flex items-start gap-6 flex-wrap">
+                        {/* Displayed Decision Score */}
+                        <div className="shrink-0">
+                          <div className="text-[8px] text-gray-500 tracking-wider mb-1">DISPLAYED DECISION SCORE</div>
+                          <div className="flex items-baseline gap-1">
+                            {modalDisplayed > 0 ? (
+                              <><span className={`text-3xl font-bold tabular-nums ${modalDisplayed < 40 ? 'text-red-400' : modalDisplayed >= 75 ? 'text-emerald-400' : 'text-[#D4AF37]'}`}>{modalDisplayed}</span><span className="text-sm text-gray-500">%</span></>
+                            ) : (
+                              <span className="text-lg font-bold text-red-400/80">No Positive Support</span>
+                            )}
+                          </div>
                         </div>
+                        {/* Pre-Decision Bayesian Score — only if different */}
+                        {modalDiverged && modalPreDecision != null && (
+                          <div className="shrink-0 border-l border-[#D4AF37]/20 pl-6">
+                            <div className="text-[8px] text-amber-400/70 tracking-wider mb-1">PRE-DECISION BAYESIAN SCORE</div>
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-3xl font-bold tabular-nums text-amber-400">{modalPreDecision.toFixed(1)}</span>
+                              <span className="text-sm text-amber-400/60">%</span>
+                            </div>
+                            <div className="text-[8px] text-amber-300/50 mt-0.5">Threshold rule applied</div>
+                          </div>
+                        )}
+                        {/* Result label + conclusion */}
                         <div className="flex-1 min-w-0">
-                          <div className={`text-[10px] font-bold mb-1 ${results.fused_identity_score < 40 ? 'text-red-300' : results.fused_identity_score >= 75 ? 'text-emerald-300' : 'text-[#D4AF37]'}`}>
-                            {results.fused_identity_score < 40 ? 'BELOW OPERATING THRESHOLD' : results.veto_triggered ? 'RESULT LIMITED BY FACE-MODEL THRESHOLD' : results.fused_identity_score >= 75 ? 'SUPPORTS COMMON SOURCE' : 'INCONCLUSIVE'}
+                          <div className={`text-[10px] font-bold mb-1 ${modalDisplayed < 40 ? 'text-red-300' : modalDisplayed >= 75 ? 'text-emerald-300' : 'text-[#D4AF37]'}`}>
+                            {getResultLabel(results).toUpperCase()}
                           </div>
                           <p className="text-[9px] text-gray-400 leading-relaxed break-words">{results.conclusion}</p>
                         </div>
@@ -1608,13 +1688,18 @@ export default function Home() {
                               <span className="text-[#D4AF37] font-bold tabular-nums">{posterior != null ? `${(posterior * 100).toFixed(4)}%` : 'N/A'}</span>
                             </div>
                             <div className="text-[7px] text-gray-600 mt-1">P(H<sub>p</sub>|E) = LR<sub>total</sub> / (LR<sub>total</sub> + 1)</div>
-                            {results.veto_triggered && (
-                              <div className="text-[8px] text-amber-400/70 mt-1">Pre-veto posterior: {(results.bayesian_fused_score ?? ((results.audit_log?.posterior_probability ?? 0) * 100)).toFixed(1)}% → Displayed: {results.fused_identity_score}%</div>
-                            )}
+                            {results.veto_triggered && (() => {
+                              const pdTrace = getTechnicalPosteriorPercent(results);
+                              return pdTrace != null ? (
+                                <div className="text-[8px] text-amber-400/70 mt-1">Pre-Decision Bayesian: {pdTrace.toFixed(1)}% → Displayed Decision: {results.fused_identity_score}%</div>
+                              ) : null;
+                            })()}
                           </div>
                         );
                       })()}
                     </div>
+                      );
+                    })()}
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full min-w-0">
 
@@ -1678,15 +1763,25 @@ export default function Home() {
                         </div>
                       </div>
 
-                      {/* Block 4: Bayesian Evidence — Forensic Trail */}
+                      {/* Block 4: Bayesian Evidence + Decision Policy */}
                       <div className="border border-[#2a1a2a] rounded-lg p-4 bg-[#020102] min-w-0 shadow-[inset_0_0_20px_rgba(20,0,20,0.1)]">
-                        <div className="text-purple-400/80 tracking-[0.2em] mb-2 border-b border-purple-900/30 pb-2 text-[10px] font-bold">▸ BAYESIAN EVIDENCE</div>
+                        <div className="text-purple-400/80 tracking-[0.2em] mb-2 border-b border-purple-900/30 pb-2 text-[10px] font-bold">▸ BAYESIAN EVIDENCE &amp; DECISION POLICY</div>
                         <p className="text-[9px] break-words text-gray-500 mb-3 leading-relaxed">Likelihood Ratios quantifying the strength of evidence. Values {'>'} 1 support the same-source hypothesis; values {'<'} 1 support the different-source hypothesis.</p>
                         <div className="space-y-1.5 pl-1 text-[10px]">
                           <div className="flex justify-between"><span className="text-gray-500">LR<sub>face_model</sub></span><span className="text-purple-300 font-bold break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_arcface)}</span></div>
                           <div className="flex justify-between"><span className="text-gray-500">LR<sub>marks</sub></span><span className="text-purple-300 font-bold break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_marks)}</span></div>
                           <div className="flex justify-between"><span className="text-gray-500">LR<sub>total</sub></span><span className="text-[#D4AF37] font-bold break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_total)}</span></div>
-                          <div className="flex justify-between mt-2 pt-2 border-t border-purple-900/20"><span className="text-gray-500">Posterior P(H<sub>p</sub>|E)</span><span className="text-[#D4AF37] font-bold">{results.audit_log.posterior_probability != null ? `${(results.audit_log.posterior_probability * 100).toFixed(6)}%` : 'N/A'}</span></div>
+                          <div className="flex justify-between mt-2 pt-2 border-t border-purple-900/20"><span className="text-gray-500">Pre-Decision Bayesian Score</span><span className="text-[#D4AF37] font-bold">{(() => { const pd = getTechnicalPosteriorPercent(results); return pd != null ? `${pd.toFixed(4)}%` : 'N/A'; })()}</span></div>
+                          <div className="flex justify-between"><span className="text-gray-500">Displayed Decision Score</span><span className={`font-bold ${results.fused_identity_score < 40 ? 'text-red-400' : 'text-[#D4AF37]'}`}>{results.fused_identity_score}%</span></div>
+                          {results.veto_triggered && (
+                            <div className="mt-2 pt-2 border-t border-purple-900/20">
+                              <div className="flex justify-between"><span className="text-gray-500">Threshold Rule Applied</span><span className="text-amber-400 font-bold">Yes</span></div>
+                              <div className="flex justify-between"><span className="text-gray-500">Reason</span><span className="text-amber-300/80 text-[9px]">Face embedding below operating threshold</span></div>
+                              {results.mark_veto_override_applied && (
+                                <div className="flex justify-between"><span className="text-gray-500">Mark Override</span><span className="text-emerald-400 font-bold">Applied</span></div>
+                              )}
+                            </div>
+                          )}
                           {results.audit_log.mark_lrs && results.audit_log.mark_lrs.length > 0 && (
                             <div className="mt-2 pt-2 border-t border-purple-900/20">
                               <div className="text-gray-500 mb-1.5">Individual Mark LRs ({results.audit_log.mark_lrs.length})</div>
