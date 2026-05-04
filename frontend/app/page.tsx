@@ -1137,11 +1137,11 @@ export default function Home() {
 
             {/* ── LEFT PANEL (70%): Dual-Pane Visualizer ── */}
             <div className="w-[70%] flex flex-col min-h-0 min-w-0">
-              {/* Controls bar */}
-              <div className="flex justify-between items-center mb-1.5 shrink-0">
+              {/* Controls bar — X-Ray / Status / New Run */}
+              <div className="flex justify-between items-center mb-1.5 shrink-0 gap-2">
                 <button
                   onClick={() => setIsXrayMode(!isXrayMode)}
-                  className={`flex items-center gap-2 px-3 py-1 border rounded text-[10px] tracking-widest transition-all ${
+                  className={`flex items-center gap-2 px-3 py-1 border rounded text-[10px] tracking-widest transition-all shrink-0 ${
                     isXrayMode
                       ? 'border-[#D4AF37] bg-[#D4AF37]/10 text-[#D4AF37] shadow-[0_0_10px_rgba(212,175,55,0.2)]'
                       : 'border-[#333] bg-[#111] text-gray-500 hover:text-gray-300'
@@ -1150,9 +1150,23 @@ export default function Home() {
                   <div className={`w-2 h-2 rounded-full ${isXrayMode ? 'bg-[#D4AF37] animate-pulse' : 'bg-gray-600'}`}></div>
                   X-RAY
                 </button>
+                {/* Center: Compact forensic status strip */}
+                <div className="flex-1 flex items-center justify-center gap-3 min-w-0">
+                  <div className="flex items-center gap-1.5 text-[9px] font-mono text-gray-500 truncate">
+                    <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${results.fused_identity_score >= 40 ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
+                    <span className="tabular-nums text-gray-400">{results.fused_identity_score}%</span>
+                    <span className="text-gray-700">·</span>
+                    <span className="text-gray-500">P:{results.mark_diagnostics?.raw_probe_marks_count ?? '—'} G:{results.mark_diagnostics?.raw_gallery_marks_count ?? '—'}</span>
+                    <span className="text-gray-700">·</span>
+                    <span className={`${results.mark_diagnostics?.accepted_correspondences_count ? 'text-emerald-500' : 'text-gray-600'}`}>{results.mark_diagnostics?.accepted_correspondences_count ?? 0} matches</span>
+                    {results.mark_diagnostics?.detector_status && results.mark_diagnostics.detector_status !== 'OK' && (
+                      <span className="text-amber-500/70 text-[8px]">{results.mark_diagnostics.detector_status}</span>
+                    )}
+                  </div>
+                </div>
                 <button
                   onClick={() => { setStep('idle'); setProbeFile(null); if (probePreview) URL.revokeObjectURL(probePreview); setProbePreview(''); setIsXrayMode(false); setResults(null); setAuditExpanded(false); }}
-                  className="text-[10px] text-gray-500 hover:text-white border border-[#333] hover:border-gray-500 px-3 py-1 rounded tracking-widest transition-colors"
+                  className="text-[10px] text-gray-500 hover:text-white border border-[#333] hover:border-gray-500 px-3 py-1 rounded tracking-widest transition-colors shrink-0"
                 >
                   NEW RUN
                 </button>
@@ -1166,37 +1180,41 @@ export default function Home() {
             </div>
 
             {/* ── RIGHT PANEL (30%): Intelligence Panel — Human-Readable ── */}
-            <div className="w-[30%] flex flex-col gap-2 min-h-0 overflow-y-auto overflow-x-hidden shrink-0 min-w-0 break-words pr-0.5">
+            <div className="w-[30%] flex flex-col gap-1.5 min-h-0 overflow-y-auto overflow-x-hidden shrink-0 min-w-0 break-words pr-0.5 scrollbar-thin">
 
               {/* ═══ OVERALL MATCH — Hero Score ═══ */}
-              <div className={`relative overflow-hidden rounded-lg p-4 border-2 ${(results.fused_identity_score < 40.0) ? 'border-red-700/60 bg-gradient-to-br from-[#1a0505] to-[#0d0d0e]' : 'border-[#D4AF37]/50 bg-gradient-to-br from-[#1a170d] to-[#0d0d0e]'}`}>
-                <div className={`absolute -top-6 -right-6 w-24 h-24 rounded-full ${(results.fused_identity_score < 40.0) ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
-                <div className={`absolute -bottom-4 -left-4 w-16 h-16 rounded-full ${(results.fused_identity_score < 40.0) ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
+              <div className={`relative overflow-hidden rounded-lg p-3 border-2 ${(results.fused_identity_score < 40.0) ? 'border-red-700/60 bg-gradient-to-br from-[#1a0505] to-[#0d0d0e]' : 'border-[#D4AF37]/50 bg-gradient-to-br from-[#1a170d] to-[#0d0d0e]'}`}>
+                <div className={`absolute -top-6 -right-6 w-20 h-20 rounded-full ${(results.fused_identity_score < 40.0) ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
                 <div className="relative z-10">
-                  <div className={`text-[8px] tracking-[0.3em] mb-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/70' : 'text-[#D4AF37]/70'}`}>BAYESIAN POSTERIOR PROBABILITY</div>
-                  <div className="flex items-baseline gap-1.5 flex-wrap overflow-hidden min-w-0 w-full">
-                    <span className={`text-4xl font-bold tabular-nums ${(results.fused_identity_score < 40.0) ? 'text-red-400' : 'text-[#D4AF37]'}`}>{results.fused_identity_score}</span>
-                    <span className={`text-lg font-bold ${(results.fused_identity_score < 40.0) ? 'text-red-400/60' : 'text-[#D4AF37]/60'}`}>%</span>
-                  </div>
-                  {/* LR_total context */}
-                  {results.audit_log?.lr_total != null && (
-                    <div className="mt-1.5 flex items-center gap-2 max-w-full">
-                      <span className="text-[8px] text-gray-500 tracking-wider shrink-0">LR<sub>total</sub></span>
-                      <span className={`text-[11px] font-bold tabular-nums truncate ${(results.fused_identity_score < 40.0) ? 'text-red-400/80' : 'text-[#D4AF37]/90'}`}>{formatLRSci(results.audit_log.lr_total)}</span>
+                  <div className={`text-[7px] tracking-[0.3em] mb-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/70' : 'text-[#D4AF37]/70'}`}>BAYESIAN POSTERIOR PROBABILITY</div>
+                  {/* Horizontal layout: score | LR | interpretation */}
+                  <div className="flex items-center gap-3 min-w-0">
+                    {/* Left: main score */}
+                    <div className="flex items-baseline gap-0.5 shrink-0">
+                      <span className={`text-3xl font-bold tabular-nums leading-none ${(results.fused_identity_score < 40.0) ? 'text-red-400' : 'text-[#D4AF37]'}`}>{results.fused_identity_score}</span>
+                      <span className={`text-sm font-bold ${(results.fused_identity_score < 40.0) ? 'text-red-400/60' : 'text-[#D4AF37]/60'}`}>%</span>
                     </div>
-                  )}
-                  {/* Score bar */}
-                  <div className="mt-2 h-1.5 w-full bg-[#111] rounded-full overflow-hidden">
+                    {/* Right: LR + interpretation */}
+                    <div className="flex-1 min-w-0">
+                      {results.audit_log?.lr_total != null && (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[7px] text-gray-500 shrink-0">LR<sub>total</sub></span>
+                          <span className={`text-[10px] font-bold tabular-nums truncate ${(results.fused_identity_score < 40.0) ? 'text-red-400/80' : 'text-[#D4AF37]/90'}`}>{formatLRSci(results.audit_log.lr_total)}</span>
+                        </div>
+                      )}
+                      <div className={`text-[8px] font-medium truncate ${(results.fused_identity_score < 40.0) ? 'text-red-300/80' : results.fused_identity_score > 80 ? 'text-emerald-300/80' : results.fused_identity_score > 60 ? 'text-amber-300/80' : 'text-red-300/80'}`}>
+                        {results.fused_identity_score > 99 ? 'Extremely strong similarity' : results.fused_identity_score > 85 ? 'Very strong similarity' : results.fused_identity_score > 70 ? 'Moderate similarity' : results.fused_identity_score > 50 ? 'Weak similarity' : 'Very low similarity'}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Score bar — compact */}
+                  <div className="mt-1.5 h-1 w-full bg-[#111] rounded-full overflow-hidden">
                     <div
                       className={`h-full rounded-full transition-all duration-700 ${results.fused_identity_score > 80 ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' : results.fused_identity_score > 60 ? 'bg-gradient-to-r from-amber-600 to-amber-400' : 'bg-gradient-to-r from-red-700 to-red-500'}`}
                       style={{ width: `${Math.min(100, results.fused_identity_score)}%` }}
                     />
                   </div>
-                  {/* Human-readable interpretation */}
-                  <div className={`text-[10px] mt-2 font-medium ${(results.fused_identity_score < 40.0) ? 'text-red-300/80' : results.fused_identity_score > 80 ? 'text-emerald-300/80' : results.fused_identity_score > 60 ? 'text-amber-300/80' : 'text-red-300/80'}`}>
-                    {results.fused_identity_score > 99 ? 'Extremely strong similarity detected' : results.fused_identity_score > 85 ? 'Very strong facial similarity detected' : results.fused_identity_score > 70 ? 'Moderate facial similarity detected' : results.fused_identity_score > 50 ? 'Weak similarity detected' : 'Very low similarity detected'}
-                  </div>
-                  <div className={`text-[8px] mt-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/40' : 'text-[#D4AF37]/40'}`}>Bayesian fusion of {results.marks_matched ? '4' : '3'} independent evidence channels below</div>
+                  <div className={`text-[7px] mt-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/40' : 'text-[#D4AF37]/40'}`}>Bayesian fusion of {results.marks_matched ? '4' : '3'} independent evidence channels</div>
                 </div>
               </div>
 
@@ -1502,33 +1520,33 @@ export default function Home() {
                 )}
               </div>
 
-              {/* ═══ VERDICT ═══ */}
-              <div className={`rounded-lg overflow-hidden border-2 ${(results.fused_identity_score < 40.0) ? 'border-red-700/60' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? 'border-amber-700/50' : 'border-emerald-700/40'}`}>
-                <div className={`px-3 py-1.5 text-[9px] tracking-[0.15em] font-bold ${(results.fused_identity_score < 40.0) ? 'bg-red-900/40 text-red-300' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? 'bg-amber-900/40 text-amber-400' : 'bg-emerald-900/30 text-emerald-300'}`}>
-                  {(results.fused_identity_score < 40.0) ? '✗ BELOW OPERATING THRESHOLD' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '⚠ FACE MODEL VETO — MARK OVERRIDE ACTIVE' : '✓ EVIDENCE SUPPORTS COMMON SOURCE'}
+              {/* ═══ VERDICT — Compact horizontal layout ═══ */}
+              <div className={`rounded-lg overflow-hidden border ${(results.fused_identity_score < 40.0) ? 'border-red-700/60' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? 'border-amber-700/50' : 'border-emerald-700/40'}`}>
+                {/* Verdict header badge */}
+                <div className={`px-2.5 py-1 text-[9px] tracking-[0.12em] font-bold flex items-center justify-between ${(results.fused_identity_score < 40.0) ? 'bg-red-900/40 text-red-300' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? 'bg-amber-900/40 text-amber-400' : 'bg-emerald-900/30 text-emerald-300'}`}>
+                  <span>{(results.fused_identity_score < 40.0) ? '✗ BELOW OPERATING THRESHOLD' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '⚠ FACE MODEL VETO' : '✓ COMMON SOURCE'}</span>
+                  {results.veto_triggered && (
+                    <span className="text-[8px] font-normal opacity-70">Pre-Veto: {(results.bayesian_fused_score ?? ((results.audit_log?.posterior_probability ?? 0) * 100)).toFixed(1)}% → Displayed: {results.fused_identity_score}%</span>
+                  )}
                 </div>
-                <div className={`px-3 py-3 ${(results.fused_identity_score < 40.0) ? 'bg-red-950/20' : 'bg-[#0d0d0e]'}`}>
-                  <p className={`text-[11px] leading-relaxed break-all whitespace-normal overflow-hidden ${(results.fused_identity_score < 40.0) ? 'text-red-300/90' : 'text-gray-200'}`}>
+                {/* Compact body */}
+                <div className={`px-2.5 py-2 ${(results.fused_identity_score < 40.0) ? 'bg-red-950/20' : 'bg-[#0d0d0e]'}`}>
+                  <p className={`text-[10px] leading-relaxed break-words ${(results.fused_identity_score < 40.0) ? 'text-red-300/90' : 'text-gray-200'}`}>
                     {results.conclusion}
                   </p>
                   {(results.fused_identity_score < 40.0 && results.veto_triggered) && (
-                    <div className="mt-2 px-2 py-1.5 bg-red-950/30 rounded border border-red-900/30">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></div>
-                        <span className="text-[9px] text-red-500/80 tracking-wider font-bold">FACE MODEL VETO TRIGGERED</span>
-                      </div>
-                      <p className="text-[8px] text-red-400/70 leading-relaxed break-words">The face-model embedding channel fell below operating threshold. This is a face-model-only veto; it does not constitute a validated full biometric exclusion.</p>
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shrink-0"></div>
+                      <span className="text-[8px] text-red-400/70">Face-model veto — does not constitute validated biometric exclusion</span>
                     </div>
                   )}
                   {(results.fused_identity_score < 40.0 && !results.veto_triggered) && (
-                    <div className="mt-2 px-2 py-1.5 bg-red-950/30 rounded border border-red-900/30">
-                      <p className="text-[8px] text-red-400/70 leading-relaxed break-words">The face embedding analysis returned a cosine similarity of {results.structural_score}%, which is below the 40% operating threshold. This does not constitute a validated full biometric exclusion.</p>
-                    </div>
+                    <div className="mt-1.5 text-[8px] text-red-400/60">Cosine similarity {results.structural_score}% is below 40% threshold</div>
                   )}
                   {(!results.veto_triggered && results.fused_identity_score >= 40.0) && (
-                    <div className="mt-2 flex items-center gap-1.5">
-                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></div>
-                      <span className="text-[9px] text-emerald-500/70 tracking-wider">No discrepancies found across structural tests</span>
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0"></div>
+                      <span className="text-[8px] text-emerald-500/70">No discrepancies across structural tests</span>
                     </div>
                   )}
                 </div>

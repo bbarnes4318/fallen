@@ -657,32 +657,38 @@ export default function SymmetryMerge({
             );
           })()}
 
-          {/* Telemetry Data Grid */}
-          <div className="grid grid-cols-2 gap-[2px]">
-            {/* Provenance Module */}
-            <div className={`px-2 py-1 border flex justify-between items-center ${results.failed_provenance_veto ? 'bg-[#1a0005] border-[#5a0015] text-[#ff2040]' : 'bg-[#050505] border-[#222] text-gray-500'}`}>
-               <span className="tracking-widest text-[9px]">PROVENANCE CHECK:</span>
-               <span className="font-bold text-gray-300">
-                 {results.failed_provenance_veto === true
-                   ? "FAILED — synthetic anomaly detected"
-                   : typeof results.synthetic_anomaly_score === "number"
-                   ? `PASSED · score ${results.synthetic_anomaly_score.toFixed(4)}`
-                   : "Not evaluated"}
-               </span>
-            </div>
-
-            {/* Occlusion Module */}
-            <div className="px-2 py-1 border bg-[#050505] border-[#222] text-gray-500 flex justify-between items-center">
-              <span className="tracking-widest text-[9px]">GEOMETRY COVERAGE:</span>
-              <span className="font-bold text-gray-300">
-                {typeof results.effective_geometric_ratios_used === "number"
-                  ? `${results.effective_geometric_ratios_used} ratios active${typeof results.occlusion_percentage === "number" ? ` · ${results.occlusion_percentage.toFixed(1)}% occluded` : ''}`
-                  : typeof results.occlusion_percentage === "number"
-                  ? `${results.occlusion_percentage.toFixed(1)}% occluded`
-                  : "Not evaluated"}
-              </span>
-            </div>
-          </div>
+          {/* Telemetry Data Grid — only show when modules have meaningful data */}
+          {(() => {
+            const hasProvenance = results.failed_provenance_veto === true || typeof results.synthetic_anomaly_score === 'number';
+            const hasGeometry = typeof results.effective_geometric_ratios_used === 'number' || typeof results.occlusion_percentage === 'number';
+            if (!hasProvenance && !hasGeometry) return null;
+            return (
+              <div className="grid grid-cols-2 gap-[2px]">
+                {/* Provenance Module — only if evaluated */}
+                {hasProvenance && (
+                  <div className={`px-2 py-1 border flex justify-between items-center ${results.failed_provenance_veto ? 'bg-[#1a0005] border-[#5a0015] text-[#ff2040]' : 'bg-[#050505] border-[#222] text-gray-500'}`}>
+                     <span className="tracking-widest text-[9px]">PROVENANCE:</span>
+                     <span className="font-bold text-gray-300">
+                       {results.failed_provenance_veto === true
+                         ? "FAILED"
+                         : `PASSED · ${(results.synthetic_anomaly_score ?? 0).toFixed(4)}`}
+                     </span>
+                  </div>
+                )}
+                {/* Geometry Module — only if evaluated */}
+                {hasGeometry && (
+                  <div className="px-2 py-1 border bg-[#050505] border-[#222] text-gray-500 flex justify-between items-center">
+                    <span className="tracking-widest text-[9px]">GEOMETRY:</span>
+                    <span className="font-bold text-gray-300">
+                      {typeof results.effective_geometric_ratios_used === "number"
+                        ? `${results.effective_geometric_ratios_used} ratios${typeof results.occlusion_percentage === "number" ? ` · ${results.occlusion_percentage.toFixed(1)}% occ` : ''}`
+                        : `${(results.occlusion_percentage ?? 0).toFixed(1)}% occluded`}
+                    </span>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Dynamic Lists (Occlusions & Marks) */}
           {(() => {
@@ -811,7 +817,7 @@ export default function SymmetryMerge({
 
           {mode === 'marks' && (
             /* ── MARKS MODE: Professional Correspondence Evidence Card ── */
-            <div className="h-48 flex-shrink-0 flex flex-col overflow-y-auto bg-[#050505] border border-emerald-900/40 rounded p-3 gap-3">
+            <div className="shrink-0 flex flex-col bg-[#050505] border border-emerald-900/40 rounded p-2 gap-2">
               {/* Status Banner */}
               {(() => {
                 const diag = results?.mark_diagnostics;
@@ -862,22 +868,24 @@ export default function SymmetryMerge({
 
                 return (
                   <>
-                    <div className={`px-3 py-2 border rounded font-mono text-xs tracking-wider ${statusColor}`}>
-                      <div className="flex justify-between items-center mb-1.5">
-                        <span className="font-bold">{statusLabel}</span>
-                        <div className="flex items-center gap-2 text-[8px] opacity-70">
-                          <span>DETECTOR: {diag.detector_status || 'UNKNOWN'}</span>
+                    <div className={`px-2 py-1.5 border rounded font-mono text-[9px] tracking-wider ${statusColor}`}>
+                      {/* Header row: status + detector/matcher */}
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[10px]">{statusLabel}</span>
+                        <div className="flex items-center gap-1.5 text-[7px] opacity-60">
+                          <span>{diag.detector_status || '?'}</span>
                           <span>·</span>
-                          <span>MATCHER: {diag.matcher_status || 'UNKNOWN'}</span>
+                          <span>{diag.matcher_status || '?'}</span>
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[9px] opacity-80 mb-1.5">
-                        <div className="flex justify-between"><span>Probe Marks Detected</span><span className="font-bold">{probeCount}</span></div>
-                        <div className="flex justify-between"><span>Gallery Marks Detected</span><span className="font-bold">{galCount}</span></div>
-                        <div className="flex justify-between"><span>Accepted Correspondences</span><span className="font-bold text-emerald-400">{matchCount}</span></div>
-                        <div className="flex justify-between"><span>Rejected Candidates</span><span className="font-bold text-amber-400">{diag.rejected_candidates_count ?? 0}</span></div>
+                      {/* Counts row: single horizontal line */}
+                      <div className="flex items-center gap-3 text-[8px] opacity-80 mb-1">
+                        <span>P:<b>{probeCount}</b></span>
+                        <span>G:<b>{galCount}</b></span>
+                        <span>Matched:<b className="text-emerald-400">{matchCount}</b></span>
+                        <span>Rejected:<b className="text-amber-400">{diag.rejected_candidates_count ?? 0}</b></span>
                       </div>
-                      {/* v2.1 Per-Channel Counts */}
+                      {/* v2.1 Per-Channel Counts — inline */}
                       {(() => {
                         const mdt = diag as MarkDiagnostics;
                         const pt = mdt?.mark_detector_trace?.probe;
@@ -892,82 +900,63 @@ export default function SymmetryMerge({
                         const fallback = pt?.fallback_used || gt?.fallback_used;
                         const dedupTotal = (pt?.dedup_removed ?? 0) + (gt?.dedup_removed ?? 0);
                         return (
-                          <div className="mb-1.5">
-                            {channels.length > 0 && (
-                              <div className="flex gap-1.5 flex-wrap mb-1">
-                                {channels.map(c => (
-                                  <span key={c.key} className={`text-[7px] px-1 py-0.5 rounded bg-white/5 border border-white/10 ${c.color} font-mono`}>{c.label}: {c.count}</span>
-                                ))}
-                                {dedupTotal > 0 && <span className="text-[7px] px-1 py-0.5 rounded bg-white/5 border border-white/10 text-gray-400 font-mono">DEDUP: -{dedupTotal}</span>}
-                              </div>
-                            )}
-                            {fallback && (
-                              <div className="text-[7px] text-amber-400/80 mb-1">
-                                ⚠ Fallback mode active — low-confidence candidates included (LR capped)
-                              </div>
-                            )}
+                          <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                            {channels.map(c => (
+                              <span key={c.key} className={`text-[7px] px-1 py-0.5 rounded bg-white/5 border border-white/10 ${c.color} font-mono`}>{c.label}: {c.count}</span>
+                            ))}
+                            {dedupTotal > 0 && <span className="text-[7px] px-1 py-0.5 rounded bg-white/5 border border-white/10 text-gray-400 font-mono">DEDUP: -{dedupTotal}</span>}
+                            {fallback && <span className="text-[7px] text-amber-400/80">⚠ Fallback</span>}
                           </div>
                         );
                       })()}
-                      <div className="flex justify-between items-center pt-1 border-t border-white/10 text-[10px]">
-                        <span className="opacity-60">{matchCount} of {Math.max(probeCount, galCount)} marks matched</span>
+                      {/* Summary footer */}
+                      <div className="flex justify-between items-center pt-1 border-t border-white/10 text-[9px]">
+                        <span className="opacity-60">{matchCount}/{Math.max(probeCount, galCount)} matched</span>
                         {lrMarks != null && <span className="font-bold">LR_MARKS: {lrMarks.toFixed(4)}</span>}
                       </div>
                     </div>
 
-                    {/* Diagnostic messaging for empty states */}
+                    {/* Diagnostic messaging for empty states — single consolidated block */}
                     {rejectionSummary ? (
-                      <div className="px-3 py-1.5 border border-amber-900/30 rounded bg-amber-950/20 font-mono text-[9px] text-amber-400/80 leading-relaxed">
+                      <div className="px-2 py-1 border border-amber-900/30 rounded bg-amber-950/20 font-mono text-[8px] text-amber-400/80 leading-relaxed">
                         {rejectionSummary}
                       </div>
                     ) : (
                       <>
                         {probeCount === 0 && galCount === 0 && (
-                          <div className="px-3 py-1.5 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[9px] text-yellow-400/70 leading-relaxed">
-                            No raw marks detected on either probe or gallery. The detector found no reliable candidates — likely due to lighting conditions, image crop, occlusion, or threshold filters.
+                          <div className="px-2 py-1 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[8px] text-yellow-400/70">
+                            No marks detected on either image — lighting, crop, occlusion, or threshold filters.
                           </div>
                         )}
                         {(probeCount === 0 && galCount > 0) && (
-                          <div className="px-3 py-1.5 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[9px] text-yellow-400/70 leading-relaxed">
-                            No raw marks detected on probe. The detector rejected all candidates on the probe side due to lighting, crop, occlusion, or threshold filters.
+                          <div className="px-2 py-1 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[8px] text-yellow-400/70">
+                            No marks on probe — candidates rejected by detector filters.
                           </div>
                         )}
                         {(probeCount > 0 && galCount === 0) && (
-                          <div className="px-3 py-1.5 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[9px] text-yellow-400/70 leading-relaxed">
-                            No raw marks detected on gallery. The detector rejected all candidates on the gallery side due to lighting, crop, occlusion, or threshold filters.
+                          <div className="px-2 py-1 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[8px] text-yellow-400/70">
+                            No marks on gallery — candidates rejected by detector filters.
                           </div>
                         )}
                         {probeCount > 0 && galCount > 0 && matchCount === 0 && status !== 'EXACT_SELF_MATCH' && (
-                          <div className="px-3 py-1.5 border border-orange-900/30 rounded bg-orange-950/20 font-mono text-[9px] text-orange-400/70 leading-relaxed">
-                            Marks were detected, but no accepted correspondences passed the matcher. The detected marks did not meet the spatial or morphological thresholds required for forensic correspondence.
+                          <div className="px-2 py-1 border border-orange-900/30 rounded bg-orange-950/20 font-mono text-[8px] text-orange-400/70">
+                            {diag.rejected_candidates_count > 0
+                              ? `${diag.rejected_candidates_count} candidate pair(s) rejected — none met spatial/morphological thresholds.`
+                              : 'Marks detected but no correspondences passed the matcher.'}
                           </div>
                         )}
                       </>
                     )}
 
-                    {/* Detector/matcher unavailable diagnostics */}
+                    {/* Detector/matcher error diagnostics */}
                     {detectorFailed && (
-                      <div className="px-3 py-1.5 border border-red-900/40 rounded bg-red-950/20 font-mono text-[9px] text-red-400/80 leading-relaxed">
-                        Detector status: {detectorStatus}. Mark evidence cannot be evaluated.
+                      <div className="px-2 py-1 border border-red-900/40 rounded bg-red-950/20 font-mono text-[8px] text-red-400/80">
+                        Detector: {detectorStatus} — mark evidence unavailable.
                       </div>
                     )}
                     {(diag.matcher_status === 'UNKNOWN') && (
-                      <div className="px-3 py-1.5 border border-red-900/40 rounded bg-red-950/20 font-mono text-[9px] text-red-400/80 leading-relaxed">
-                        Mark matcher returned status: {diag.matcher_status}. Correspondence evaluation was not performed.
-                      </div>
-                    )}
-
-                    {/* All candidates rejected diagnostic */}
-                    {(diag.rejected_candidates_count > 0 && matchCount === 0 && probeCount > 0 && galCount > 0 && !rejectionSummary) && (
-                      <div className="px-3 py-1.5 border border-amber-900/30 rounded bg-amber-950/20 font-mono text-[9px] text-amber-400/70 leading-relaxed">
-                        All {diag.rejected_candidates_count} candidate mark pair(s) were rejected by the matcher. None met the required spatial and morphological thresholds.
-                      </div>
-                    )}
-
-                    {/* LR = 1.0 or null — always show rejection_summary if available */}
-                    {(lrMarks == null || lrMarks === 1.0) && rejectionSummary && (
-                      <div className="px-3 py-1.5 border border-amber-900/30 rounded bg-amber-950/20 font-mono text-[9px] text-amber-400/80 leading-relaxed">
-                        {rejectionSummary}
+                      <div className="px-2 py-1 border border-red-900/40 rounded bg-red-950/20 font-mono text-[8px] text-red-400/80">
+                        Matcher: {diag.matcher_status} — correspondences not evaluated.
                       </div>
                     )}
 
