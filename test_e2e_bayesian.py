@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Fallen — E2E BAYESIAN VALIDATION TEST
+Fallen — LOCAL MATHEMATICAL AND SCHEMA VALIDATION TEST
 Uses subprocess isolation for MediaPipe face detection to avoid
 XNNPACK delegate conflicts on Windows.
 """
@@ -251,7 +251,7 @@ def compute_mark_correspondence_bayesian(marks_gallery, marks_probe, calibration
 
 def main():
     print("\n" + "=" * 70)
-    print("  Fallen -- BAYESIAN VALIDATION TEST (E2E Bayesian Pipeline)")
+    print("  Fallen -- BAYESIAN VALIDATION TEST (Local Mathematical and Schema Validation)")
     print("=" * 70 + "\n")
 
     # 1. Select & process test pair
@@ -907,5 +907,5 @@ if __name__ == "__main__":
     print("\nALL TESTS PASSED.")
     print("\n  *** ALL UNIT TESTS PASSED ***\n")
 
-    # Run the original E2E pipeline test
+    # Run the local mathematical and schema validation test
     main()
