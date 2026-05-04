@@ -2726,6 +2726,8 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         "accepted_correspondences_count": mark_result.get("matched", 0),
         "rejected_candidates_count": len(rejected_cands) if rejected_cands else 0,
         "detector_status": _fuse_detector_status,
+        "probe_detector_status": _probe_det_status,
+        "gallery_detector_status": _gallery_det_status,
         "matcher_status": "OK" if mark_result.get("matched", 0) > 0 else ("NO_MATCHES" if (len(valid_probe_marks) > 0 and len(valid_gallery_marks) > 0) else "INSUFFICIENT_INPUT"),
         "lr_marks": finite_or_none(lr_marks),
         "mark_match_status": mark_match_status,
@@ -2733,6 +2735,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             valid_probe_marks, valid_gallery_marks,
             mark_result, rejected_cands, mark_match_status,
             exact_image_match, TIER4_CALIBRATION,
+            trace_probe=trace_probe, trace_gallery=trace_gallery,
         ),
         "mark_detector_trace": {
             "probe": trace_probe,
@@ -3832,6 +3835,8 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
         "accepted_correspondences_count": mark_result.get("matched", 0),
         "rejected_candidates_count": len(rejected_cands) if rejected_cands else 0,
         "detector_status": _vault_detector_status,
+        "probe_detector_status": _probe_det_status_v,
+        "gallery_detector_status": _gallery_det_status_v,
         "matcher_status": "OK" if mark_result.get("matched", 0) > 0 else ("NO_MATCHES" if (len(valid_probe_marks) > 0 and len(valid_gallery_marks) > 0) else "INSUFFICIENT_INPUT"),
         "lr_marks": finite_or_none(lr_marks),
         "mark_match_status": mark_match_status,
@@ -3839,6 +3844,7 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             valid_probe_marks, valid_gallery_marks,
             mark_result, rejected_cands, mark_match_status,
             exact_image_match, TIER4_CALIBRATION,
+            trace_probe=trace_probe, trace_gallery=trace_gallery,
         ),
         "mark_detector_trace": {
             "probe": trace_probe,

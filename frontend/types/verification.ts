@@ -231,6 +231,8 @@ export interface MarkDiagnostics {
   accepted_correspondences_count: number;
   rejected_candidates_count: number;
   detector_status: DetectorStatus | string;
+  probe_detector_status?: DetectorStatus | string;
+  gallery_detector_status?: DetectorStatus | string;
   matcher_status: string;   // "OK" | "NO_MATCHES" | "INSUFFICIENT_INPUT"
   lr_marks: number | null;
   mark_match_status: string | null;

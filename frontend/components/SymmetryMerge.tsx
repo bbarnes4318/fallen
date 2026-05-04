@@ -816,11 +816,10 @@ export default function SymmetryMerge({
           </div>
 
           {mode === 'marks' && (
-            /* ── MARKS MODE: Professional Correspondence Evidence Card ── */
-            <div className="shrink-0 flex flex-col bg-[#050505] border border-emerald-900/40 rounded p-2 gap-2">
-              {/* Status Banner */}
+            /* ── MARKS MODE: Sectioned Mark Evidence Panel ── */
+            <div className="shrink-0 flex flex-col bg-[#050505] border border-emerald-900/40 rounded p-2 gap-1.5">
               {(() => {
-                const diag = results?.mark_diagnostics;
+                const diag = results?.mark_diagnostics as MarkDiagnostics | undefined;
                 if (!diag) {
                   return (
                     <div className="px-3 py-2 border border-red-900/50 rounded bg-red-950/30 font-mono text-xs text-red-400">
@@ -835,184 +834,194 @@ export default function SymmetryMerge({
                 const galCount = diag.raw_gallery_marks_count;
                 const matchCount = diag.accepted_correspondences_count;
                 const lrMarks = diag.lr_marks ?? results?.lr_marks;
-                const rejectionSummary = diag.rejection_summary;
+                const mdt = diag as MarkDiagnostics;
+                const pt = mdt?.mark_detector_trace?.probe;
+                const gt = mdt?.mark_detector_trace?.gallery;
+                const probeFallback = pt?.fallback_used === true;
+                const galleryFallback = gt?.fallback_used === true;
+                const probeDetStatus = diag.probe_detector_status ?? (pt?.detector_status || '?');
+                const galDetStatus = diag.gallery_detector_status ?? (gt?.detector_status || '?');
 
-                let statusLabel = 'UNKNOWN';
-                let statusColor = 'text-gray-400 border-gray-700 bg-[#0a0a0a]';
+                // ── Section A: Primary Status ──
+                let primaryLabel = 'Mark Evidence Status Unknown';
+                let primaryColor = 'text-gray-400 border-gray-700 bg-[#0a0a0a]';
                 if (status === 'EXACT_SELF_MATCH') {
-                  statusLabel = 'Exact image self-match. Mark evidence is self-corresponding by identity.';
-                  statusColor = 'text-emerald-300 border-emerald-700 bg-emerald-950/40';
+                  primaryLabel = 'Mark Evidence Self-Corresponding by Identity';
+                  primaryColor = 'text-emerald-300 border-emerald-700 bg-emerald-950/40';
                 } else if (status === 'MATCHED') {
-                  statusLabel = 'Shared facial marks detected';
-                  statusColor = 'text-emerald-300 border-emerald-700 bg-emerald-950/40';
-                } else if (status === 'INSUFFICIENT_MARKS') {
-                  statusLabel = 'Insufficient marks for correspondence';
-                  statusColor = 'text-yellow-400 border-yellow-800 bg-yellow-950/30';
+                  primaryLabel = 'Shared Mark Evidence Detected';
+                  primaryColor = 'text-emerald-300 border-emerald-700 bg-emerald-950/40';
+                } else if (matchCount > 0) {
+                  primaryLabel = 'Mark Correspondences Found';
+                  primaryColor = 'text-emerald-300 border-emerald-700 bg-emerald-950/40';
+                } else if (probeCount === 0 && galCount === 0) {
+                  primaryLabel = 'Mark Evidence Not Evaluated — no usable marks on either image';
+                  primaryColor = 'text-yellow-400 border-yellow-800 bg-yellow-950/30';
+                } else if (galCount === 0) {
+                  primaryLabel = 'Mark Evidence Not Evaluated — gallery has no usable marks';
+                  primaryColor = 'text-yellow-400 border-yellow-800 bg-yellow-950/30';
+                } else if (probeCount === 0) {
+                  primaryLabel = 'Mark Evidence Not Evaluated — probe has no usable marks';
+                  primaryColor = 'text-yellow-400 border-yellow-800 bg-yellow-950/30';
                 } else if (status === 'NO_MATCHES') {
-                  statusLabel = 'No matching marks found';
-                  statusColor = 'text-orange-400 border-orange-800 bg-orange-950/30';
+                  primaryLabel = 'No Matching Marks Found';
+                  primaryColor = 'text-orange-400 border-orange-800 bg-orange-950/30';
                 } else if (status === 'FACE_NOT_DETECTED') {
-                  statusLabel = 'Face not detected — mark analysis could not proceed';
-                  statusColor = 'text-red-400 border-red-800 bg-red-950/30';
+                  primaryLabel = 'Face Not Detected — mark analysis could not proceed';
+                  primaryColor = 'text-red-400 border-red-800 bg-red-950/30';
                 } else if (status === 'DETECTOR_UNAVAILABLE') {
-                  statusLabel = 'Mark detector unavailable';
-                  statusColor = 'text-red-400 border-red-800 bg-red-950/30';
+                  primaryLabel = 'Mark Detector Unavailable';
+                  primaryColor = 'text-red-400 border-red-800 bg-red-950/30';
+                } else if (status === 'INSUFFICIENT_MARKS') {
+                  primaryLabel = 'Mark Evidence Not Evaluated — insufficient usable marks on both images';
+                  primaryColor = 'text-yellow-400 border-yellow-800 bg-yellow-950/30';
                 }
 
-                const detectorStatus = diag?.detector_status;
-                const detectorFailed =
-                  detectorStatus !== undefined &&
-                  detectorStatus !== null &&
-                  detectorStatus !== "OK" &&
-                  detectorStatus !== "NO_CANDIDATES";
+                // ── Helper: per-side detector label ──
+                const sideDetectorLabel = (count: number, fallback: boolean, detStatus: string) => {
+                  if (count === 0 && !fallback) return 'NO_CANDIDATES';
+                  if (fallback && count > 0) return 'LOW_CONFIDENCE_CANDIDATES / FALLBACK_USED';
+                  if (detStatus === 'OK') return 'OK';
+                  return detStatus || 'UNKNOWN';
+                };
+
+                // ── Helper: per-side human description ──
+                const sideDescription = (count: number, fallback: boolean) => {
+                  if (count === 0) return '0 usable marks detected';
+                  if (fallback) return `${count} low-confidence fallback candidate${count > 1 ? 's' : ''} found`;
+                  return `${count} usable mark${count > 1 ? 's' : ''} detected`;
+                };
+
+                // ── Helper: matcher description ──
+                const matcherDescription = () => {
+                  if (probeCount === 0 && galCount === 0) return 'Cannot compare marks — no usable marks on either image';
+                  if (galCount === 0) return 'Cannot compare marks because gallery has no usable marks';
+                  if (probeCount === 0) return 'Cannot compare marks because probe has no usable marks';
+                  if (matchCount === 0) return `0 accepted correspondences from ${probeCount} probe candidate${probeCount > 1 ? 's' : ''} and ${galCount} gallery candidate${galCount > 1 ? 's' : ''}`;
+                  return `${matchCount} accepted correspondence${matchCount > 1 ? 's' : ''} from ${probeCount} probe and ${galCount} gallery candidates`;
+                };
+
+                // ── Helper: LR explanation ──
+                const lrExplanation = () => {
+                  if (lrMarks == null || lrMarks === 1.0) {
+                    if (matchCount === 0) return 'Neutral mark evidence: no accepted mark correspondences';
+                    return 'Neutral — marks did not affect the result';
+                  }
+                  if (lrMarks > 1.0) return 'Mark evidence supports common source';
+                  return 'Mark evidence weakly supports different source';
+                };
+
+                // ── Per-channel badge data ──
+                const channels = [
+                  { key: 'dark_lesion', label: 'DARK', color: 'text-purple-300', pCount: pt?.dark_lesion_initial_candidates ?? 0, gCount: gt?.dark_lesion_initial_candidates ?? 0 },
+                  { key: 'bright_scar', label: 'BRIGHT', color: 'text-sky-300', pCount: pt?.bright_scar_initial_candidates ?? 0, gCount: gt?.bright_scar_initial_candidates ?? 0 },
+                  { key: 'linear_scar', label: 'LINEAR', color: 'text-rose-300', pCount: pt?.linear_scar_initial_candidates ?? 0, gCount: gt?.linear_scar_initial_candidates ?? 0 },
+                  { key: 'texture', label: 'TEXTURE', color: 'text-teal-300', pCount: pt?.texture_anomaly_initial_candidates ?? 0, gCount: gt?.texture_anomaly_initial_candidates ?? 0 },
+                ].filter(c => c.pCount > 0 || c.gCount > 0);
+
+                const safeCorrespondences = Array.isArray(results?.correspondences) ? results.correspondences : [];
 
                 return (
                   <>
-                    <div className={`px-2 py-1.5 border rounded font-mono text-[9px] tracking-wider ${statusColor}`}>
-                      {/* Header row: status + detector/matcher */}
-                      <div className="flex justify-between items-center mb-1">
-                        <span className="font-bold text-[10px]">{statusLabel}</span>
-                        <div className="flex items-center gap-1.5 text-[7px] opacity-60">
-                          <span>{diag.detector_status || '?'}</span>
-                          <span>·</span>
-                          <span>{diag.matcher_status || '?'}</span>
-                        </div>
+                    {/* ── A. Primary Status Banner ── */}
+                    <div className={`px-2 py-1.5 border rounded font-mono text-[10px] font-bold tracking-wider ${primaryColor}`}>
+                      {primaryLabel}
+                    </div>
+
+                    {/* ── B+C. Probe & Gallery Detector Results (side by side) ── */}
+                    <div className="grid grid-cols-2 gap-1">
+                      <div className="px-2 py-1.5 border border-[#222] rounded bg-[#080808] font-mono text-[9px]">
+                        <div className="text-gray-500 tracking-widest mb-0.5 text-[8px]">PROBE DETECTOR</div>
+                        <div className="text-gray-300 mb-0.5">{sideDescription(probeCount, probeFallback)}</div>
+                        <div className="text-[7px] text-gray-600">{sideDetectorLabel(probeCount, probeFallback, String(probeDetStatus))}</div>
+                        {probeFallback && <div className="text-[7px] text-amber-400/70 mt-0.5">⚠ Fallback candidates used</div>}
                       </div>
-                      {/* Counts row: single horizontal line */}
-                      <div className="flex items-center gap-3 text-[8px] opacity-80 mb-1">
-                        <span>P:<b>{probeCount}</b></span>
-                        <span>G:<b>{galCount}</b></span>
-                        <span>Matched:<b className="text-emerald-400">{matchCount}</b></span>
-                        <span>Rejected:<b className="text-amber-400">{diag.rejected_candidates_count ?? 0}</b></span>
-                      </div>
-                      {/* v2.1 Per-Channel Counts — inline */}
-                      {(() => {
-                        const mdt = diag as MarkDiagnostics;
-                        const pt = mdt?.mark_detector_trace?.probe;
-                        const gt = mdt?.mark_detector_trace?.gallery;
-                        if (!pt && !gt) return null;
-                        const channels = [
-                          { key: 'dark_lesion', label: 'DARK', color: 'text-purple-300', count: (pt?.dark_lesion_initial_candidates ?? 0) + (gt?.dark_lesion_initial_candidates ?? 0) },
-                          { key: 'bright_scar', label: 'BRIGHT', color: 'text-sky-300', count: (pt?.bright_scar_initial_candidates ?? 0) + (gt?.bright_scar_initial_candidates ?? 0) },
-                          { key: 'linear_scar', label: 'LINEAR', color: 'text-rose-300', count: (pt?.linear_scar_initial_candidates ?? 0) + (gt?.linear_scar_initial_candidates ?? 0) },
-                          { key: 'texture', label: 'TEXTURE', color: 'text-teal-300', count: (pt?.texture_anomaly_initial_candidates ?? 0) + (gt?.texture_anomaly_initial_candidates ?? 0) },
-                        ].filter(c => c.count > 0);
-                        const fallback = pt?.fallback_used || gt?.fallback_used;
-                        const dedupTotal = (pt?.dedup_removed ?? 0) + (gt?.dedup_removed ?? 0);
-                        return (
-                          <div className="flex items-center gap-1.5 flex-wrap mb-1">
-                            {channels.map(c => (
-                              <span key={c.key} className={`text-[7px] px-1 py-0.5 rounded bg-white/5 border border-white/10 ${c.color} font-mono`}>{c.label}: {c.count}</span>
-                            ))}
-                            {dedupTotal > 0 && <span className="text-[7px] px-1 py-0.5 rounded bg-white/5 border border-white/10 text-gray-400 font-mono">DEDUP: -{dedupTotal}</span>}
-                            {fallback && <span className="text-[7px] text-amber-400/80">⚠ Fallback</span>}
-                          </div>
-                        );
-                      })()}
-                      {/* Summary footer */}
-                      <div className="flex justify-between items-center pt-1 border-t border-white/10 text-[9px]">
-                        <span className="opacity-60">{matchCount}/{Math.max(probeCount, galCount)} matched</span>
-                        {lrMarks != null && <span className="font-bold">LR_MARKS: {lrMarks.toFixed(4)}</span>}
+                      <div className="px-2 py-1.5 border border-[#222] rounded bg-[#080808] font-mono text-[9px]">
+                        <div className="text-gray-500 tracking-widest mb-0.5 text-[8px]">GALLERY DETECTOR</div>
+                        <div className="text-gray-300 mb-0.5">{sideDescription(galCount, galleryFallback)}</div>
+                        <div className="text-[7px] text-gray-600">{sideDetectorLabel(galCount, galleryFallback, String(galDetStatus))}</div>
+                        {galleryFallback && <div className="text-[7px] text-amber-400/70 mt-0.5">⚠ Fallback candidates used</div>}
                       </div>
                     </div>
 
-                    {/* Diagnostic messaging for empty states — single consolidated block */}
-                    {rejectionSummary ? (
-                      <div className="px-2 py-1 border border-amber-900/30 rounded bg-amber-950/20 font-mono text-[8px] text-amber-400/80 leading-relaxed">
-                        {rejectionSummary}
+                    {/* ── D. Matcher Result ── */}
+                    <div className="px-2 py-1 border border-[#222] rounded bg-[#080808] font-mono text-[9px]">
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-500 tracking-widest text-[8px]">MATCHER</span>
+                        <span className="text-[7px] text-gray-600">{diag.matcher_status || '?'}</span>
                       </div>
-                    ) : (
-                      <>
-                        {probeCount === 0 && galCount === 0 && (
-                          <div className="px-2 py-1 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[8px] text-yellow-400/70">
-                            No marks detected on either image — lighting, crop, occlusion, or threshold filters.
-                          </div>
-                        )}
-                        {(probeCount === 0 && galCount > 0) && (
-                          <div className="px-2 py-1 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[8px] text-yellow-400/70">
-                            No marks on probe — candidates rejected by detector filters.
-                          </div>
-                        )}
-                        {(probeCount > 0 && galCount === 0) && (
-                          <div className="px-2 py-1 border border-yellow-900/30 rounded bg-yellow-950/20 font-mono text-[8px] text-yellow-400/70">
-                            No marks on gallery — candidates rejected by detector filters.
-                          </div>
-                        )}
-                        {probeCount > 0 && galCount > 0 && matchCount === 0 && status !== 'EXACT_SELF_MATCH' && (
-                          <div className="px-2 py-1 border border-orange-900/30 rounded bg-orange-950/20 font-mono text-[8px] text-orange-400/70">
-                            {diag.rejected_candidates_count > 0
-                              ? `${diag.rejected_candidates_count} candidate pair(s) rejected — none met spatial/morphological thresholds.`
-                              : 'Marks detected but no correspondences passed the matcher.'}
-                          </div>
-                        )}
-                      </>
-                    )}
+                      <div className="text-gray-300 mt-0.5">{matcherDescription()}</div>
+                    </div>
 
-                    {/* Detector/matcher error diagnostics */}
-                    {detectorFailed && (
-                      <div className="px-2 py-1 border border-red-900/40 rounded bg-red-950/20 font-mono text-[8px] text-red-400/80">
-                        Detector: {detectorStatus} — mark evidence unavailable.
+                    {/* ── E. LR Marks Contribution ── */}
+                    <div className="px-2 py-1 border border-[#222] rounded bg-[#080808] font-mono text-[9px] flex justify-between items-center">
+                      <div>
+                        <span className="text-gray-500 tracking-widest text-[8px]">LR</span>
+                        <span className="text-gray-400 ml-2">MARKS</span>
+                        <span className="text-white font-bold ml-2">{lrMarks != null ? lrMarks.toFixed(4) : '—'}</span>
+                        <span className={`ml-2 text-[8px] ${lrMarks != null && lrMarks > 1.0 ? 'text-emerald-400' : 'text-gray-500'}`}>
+                          {lrMarks != null && lrMarks === 1.0 ? 'neutral' : (lrMarks != null && lrMarks > 1.0 ? 'supportive' : '')}
+                        </span>
                       </div>
-                    )}
-                    {(diag.matcher_status === 'UNKNOWN') && (
-                      <div className="px-2 py-1 border border-red-900/40 rounded bg-red-950/20 font-mono text-[8px] text-red-400/80">
-                        Matcher: {diag.matcher_status} — correspondences not evaluated.
+                    </div>
+                    <div className="px-2 text-[8px] font-mono text-gray-600 -mt-1">{lrExplanation()}</div>
+
+                    {/* ── F. Raw Detector Channel Details ── */}
+                    {channels.length > 0 && (
+                      <div className="px-2 py-1 border border-[#1a1a1a] rounded bg-[#060606] font-mono text-[8px]">
+                        <div className="text-gray-600 tracking-widest mb-1 text-[7px]">RAW DETECTOR CHANNELS</div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {channels.map(c => (
+                            <span key={c.key} className={`px-1 py-0.5 rounded bg-white/5 border border-white/10 ${c.color}`}>
+                              {c.label}: P{c.pCount} G{c.gCount}
+                            </span>
+                          ))}
+                        </div>
                       </div>
                     )}
 
-                    {/* Self-match LR transparency note */}
+                    {/* ── Self-match transparency note ── */}
                     {status === 'EXACT_SELF_MATCH' && (
                       <div className="px-3 py-1.5 border border-emerald-900/30 rounded bg-emerald-950/20 font-mono text-[9px] text-emerald-400/70 leading-relaxed">
                         Mark LR is neutral (1.0) for exact byte-identical image comparisons. The probe and gallery are the same source image, so mark evidence is self-corresponding by identity rather than independent forensic evidence.
                       </div>
                     )}
 
-                    {/* Correspondence Evidence Cards */}
-                    {(() => {
-                      const safeCorrespondences = Array.isArray(results?.correspondences) ? results.correspondences : [];
-                      if (safeCorrespondences.length === 0) {
-                        return (
-                          <div className="flex-1 flex items-center justify-center text-gray-500 font-mono text-xs tracking-widest">
-                            NO ACCEPTED CORRESPONDENCES
-                          </div>
-                        );
-                      }
-                      return (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                          {safeCorrespondences.map((c: Correspondence, i: number) => {
-                            const lr = typeof c.lr === 'number' ? c.lr : 0;
-                            const lrColor = lr >= 10 ? 'text-emerald-300' : lr >= 1 ? 'text-yellow-300' : 'text-red-300';
-                            // Extract v2.1 channel/confidence from raw marks
-                            const probeMarkDesc = (c.probe_idx != null && Array.isArray(results?.raw_probe_marks) && results.raw_probe_marks[c.probe_idx] && typeof results.raw_probe_marks[c.probe_idx] === 'object' && !Array.isArray(results.raw_probe_marks[c.probe_idx])) ? results.raw_probe_marks[c.probe_idx] as Record<string, unknown> : null;
-                            const channelLabel = typeof probeMarkDesc?.channel === 'string' ? probeMarkDesc.channel : undefined;
-                            const confVal = typeof probeMarkDesc?.confidence === 'number' ? (probeMarkDesc.confidence as number) : undefined;
-                            const isLowConf = probeMarkDesc?.low_confidence === true;
-                            return (
-                              <div key={`mark-card-${i}`} className={`border rounded p-2 font-mono text-[10px] ${isLowConf ? 'border-amber-900/40 bg-[#0f0d0a]' : 'border-emerald-900/40 bg-[#0a0f0a]'}`}>
-                                <div className="flex justify-between items-center mb-1">
-                                  <span className="text-emerald-400 font-bold tracking-wider">
-                                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-800/60 text-emerald-200 text-[9px] mr-1.5">{i + 1}</span>
-                                    MARK {i + 1}
-                                  </span>
-                                  <span className={`font-bold ${lrColor}`}>LR: {lr.toFixed(2)}</span>
-                                </div>
-                                <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-gray-400">
-                                  <div>TYPE: <span className="text-gray-200">{c.mark_type ?? '—'}</span></div>
-                                  <div>REGION: <span className="text-gray-200">{c.face_region ?? '—'}</span></div>
-                                  {channelLabel && <div>CHANNEL: <span className="text-purple-300">{channelLabel}</span></div>}
-                                  {confVal != null && <div>CONF: <span className="text-gray-200">{confVal.toFixed(2)}</span></div>}
-                                  <div>P [{c.probe_idx ?? '?'}]: <span className="text-gray-300">{c.probe_centroid ? `(${c.probe_centroid[0]?.toFixed(3)}, ${c.probe_centroid[1]?.toFixed(3)})` : '—'}</span></div>
-                                  <div>G [{c.gallery_idx ?? '?'}]: <span className="text-gray-300">{c.gallery_centroid ? `(${c.gallery_centroid[0]?.toFixed(3)}, ${c.gallery_centroid[1]?.toFixed(3)})` : '—'}</span></div>
-                                </div>
-                                {isLowConf && <div className="text-[7px] text-amber-400/70 mt-1">⚠ LOW CONFIDENCE / FALLBACK</div>}
+                    {/* ── Correspondence Evidence Cards ── */}
+                    {safeCorrespondences.length > 0 ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {safeCorrespondences.map((c: Correspondence, i: number) => {
+                          const lr = typeof c.lr === 'number' ? c.lr : 0;
+                          const lrColor = lr >= 10 ? 'text-emerald-300' : lr >= 1 ? 'text-yellow-300' : 'text-red-300';
+                          const probeMarkDesc = (c.probe_idx != null && Array.isArray(results?.raw_probe_marks) && results.raw_probe_marks[c.probe_idx] && typeof results.raw_probe_marks[c.probe_idx] === 'object' && !Array.isArray(results.raw_probe_marks[c.probe_idx])) ? results.raw_probe_marks[c.probe_idx] as Record<string, unknown> : null;
+                          const channelLabel = typeof probeMarkDesc?.channel === 'string' ? probeMarkDesc.channel : undefined;
+                          const confVal = typeof probeMarkDesc?.confidence === 'number' ? (probeMarkDesc.confidence as number) : undefined;
+                          const isLowConf = probeMarkDesc?.low_confidence === true;
+                          return (
+                            <div key={`mark-card-${i}`} className={`border rounded p-2 font-mono text-[10px] ${isLowConf ? 'border-amber-900/40 bg-[#0f0d0a]' : 'border-emerald-900/40 bg-[#0a0f0a]'}`}>
+                              <div className="flex justify-between items-center mb-1">
+                                <span className="text-emerald-400 font-bold tracking-wider">
+                                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-800/60 text-emerald-200 text-[9px] mr-1.5">{i + 1}</span>
+                                  MARK {i + 1}
+                                </span>
+                                <span className={`font-bold ${lrColor}`}>LR: {lr.toFixed(2)}</span>
                               </div>
-                            );
-                          })}
-                        </div>
-                      );
-                    })()}
+                              <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-gray-400">
+                                <div>TYPE: <span className="text-gray-200">{c.mark_type ?? '—'}</span></div>
+                                <div>REGION: <span className="text-gray-200">{c.face_region ?? '—'}</span></div>
+                                {channelLabel && <div>CHANNEL: <span className="text-purple-300">{channelLabel}</span></div>}
+                                {confVal != null && <div>CONF: <span className="text-gray-200">{confVal.toFixed(2)}</span></div>}
+                                <div>P [{c.probe_idx ?? '?'}]: <span className="text-gray-300">{c.probe_centroid ? `(${c.probe_centroid[0]?.toFixed(3)}, ${c.probe_centroid[1]?.toFixed(3)})` : '—'}</span></div>
+                                <div>G [{c.gallery_idx ?? '?'}]: <span className="text-gray-300">{c.gallery_centroid ? `(${c.gallery_centroid[0]?.toFixed(3)}, ${c.gallery_centroid[1]?.toFixed(3)})` : '—'}</span></div>
+                              </div>
+                              {isLowConf && <div className="text-[7px] text-amber-400/70 mt-1">⚠ LOW CONFIDENCE / FALLBACK</div>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
 
-                    {/* Version Footer */}
+                    {/* ── Version Footer ── */}
                     <div className="text-[8px] font-mono text-gray-600 tracking-wider flex justify-between">
                       <span>DETECTOR: v{results?.mark_detector_version ?? '?'} · MATCHER: v{results?.mark_matcher_version ?? '?'}</span>
                       <span>MARK LRs: [{(results?.mark_lrs ?? []).map((lr: number) => lr?.toFixed(2) ?? '?').join(', ')}]</span>
