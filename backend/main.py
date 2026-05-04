@@ -2706,12 +2706,21 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     mark_debug_payload = None
 
     # ── Lightweight always-on mark diagnostics (production-safe) ──
+    # Use trace-based detector_status for richer reporting (v2.1)
+    _probe_det_status = trace_probe.get("detector_status", "UNKNOWN") if trace_probe else "UNKNOWN"
+    _gallery_det_status = trace_gallery.get("detector_status", "UNKNOWN") if trace_gallery else "UNKNOWN"
+    _fuse_detector_status = (
+        _probe_det_status if _probe_det_status != "OK"
+        else _gallery_det_status if _gallery_det_status != "OK"
+        else "OK" if (len(marks_gallery) > 0 or len(marks_probe) > 0)
+        else "NO_CANDIDATES"
+    )
     mark_diagnostics_payload = {
         "raw_probe_marks_count": len(valid_probe_marks),
         "raw_gallery_marks_count": len(valid_gallery_marks),
         "accepted_correspondences_count": mark_result.get("matched", 0),
         "rejected_candidates_count": len(rejected_cands) if rejected_cands else 0,
-        "detector_status": "OK" if (len(marks_gallery) > 0 or len(marks_probe) > 0) else "NO_CANDIDATES",
+        "detector_status": _fuse_detector_status,
         "matcher_status": "OK" if mark_result.get("matched", 0) > 0 else ("NO_MATCHES" if (len(valid_probe_marks) > 0 and len(valid_gallery_marks) > 0) else "INSUFFICIENT_INPUT"),
         "lr_marks": finite_or_none(lr_marks),
         "mark_match_status": mark_match_status,
@@ -2720,6 +2729,10 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             mark_result, rejected_cands, mark_match_status,
             exact_image_match, TIER4_CALIBRATION,
         ),
+        "mark_detector_trace": {
+            "probe": trace_probe,
+            "gallery": trace_gallery,
+        },
     }
 
     if os.getenv("DEBUG_FORENSIC") == "true":
@@ -3810,12 +3823,21 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
     mark_debug_payload = None
 
     # ── Lightweight always-on mark diagnostics (production-safe) ──
+    # Use trace-based detector_status for richer reporting (v2.1)
+    _probe_det_status_v = trace_probe.get("detector_status", "UNKNOWN") if trace_probe else "UNKNOWN"
+    _gallery_det_status_v = trace_gallery.get("detector_status", "UNKNOWN") if trace_gallery else "UNKNOWN"
+    _vault_detector_status = (
+        _probe_det_status_v if _probe_det_status_v != "OK"
+        else _gallery_det_status_v if _gallery_det_status_v != "OK"
+        else "OK" if (len(marks_gallery) > 0 or len(marks_probe) > 0)
+        else "NO_CANDIDATES"
+    )
     mark_diagnostics_payload = {
         "raw_probe_marks_count": len(valid_probe_marks),
         "raw_gallery_marks_count": len(valid_gallery_marks),
         "accepted_correspondences_count": mark_result.get("matched", 0),
         "rejected_candidates_count": len(rejected_cands) if rejected_cands else 0,
-        "detector_status": "OK" if (len(marks_gallery) > 0 or len(marks_probe) > 0) else "NO_CANDIDATES",
+        "detector_status": _vault_detector_status,
         "matcher_status": "OK" if mark_result.get("matched", 0) > 0 else ("NO_MATCHES" if (len(valid_probe_marks) > 0 and len(valid_gallery_marks) > 0) else "INSUFFICIENT_INPUT"),
         "lr_marks": finite_or_none(lr_marks),
         "mark_match_status": mark_match_status,
@@ -3824,6 +3846,10 @@ def vault_search(request: Request, payload: VaultSearchRequest, _: dict = Depend
             mark_result, rejected_cands, mark_match_status,
             exact_image_match, TIER4_CALIBRATION,
         ),
+        "mark_detector_trace": {
+            "probe": trace_probe,
+            "gallery": trace_gallery,
+        },
     }
 
     if os.getenv("DEBUG_FORENSIC") == "true":

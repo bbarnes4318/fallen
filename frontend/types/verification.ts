@@ -91,6 +91,27 @@ export type MarkType =
   | "unknown_mark"
   | "unknown";
 
+/** v2.1 detector status codes */
+export type DetectorStatus =
+  | "OK"
+  | "LOW_CONFIDENCE_CANDIDATES"
+  | "NO_CANDIDATES"
+  | "FACE_NOT_DETECTED"
+  | "LANDMARK_FALLBACK_ROI"
+  | "DETECTOR_ERROR"
+  | "UNKNOWN";
+
+/** v2.1 detection channel identifiers */
+export type MarkChannel =
+  | "dark_lesion"
+  | "bright_scar"
+  | "linear_scar_v2"
+  | "texture_anomaly"
+  | "dark"
+  | "light"
+  | "linear_scar"
+  | "texture_cluster";
+
 export interface MarkDescriptor {
   index?: number;
   centroid?: [number, number];
@@ -109,6 +130,17 @@ export interface MarkDescriptor {
   face_region?: string;
   lr?: number;
   rejection_reason?: string;
+  // v2.1 fields
+  channel?: MarkChannel;
+  salience_score?: number;
+  confidence?: number;
+  contrast_score?: number;
+  region_label?: string;
+  low_confidence?: boolean;
+  fallback_generated?: boolean;
+  centroid_px?: [number, number];
+  equivalent_radius?: number;
+  eccentricity?: number;
   [key: string]: unknown;
 }
 
@@ -156,17 +188,55 @@ export interface FaceDataPayload {
   [key: string]: unknown;
 }
 
+/** v2.1 per-face detector trace telemetry */
+export interface MarkDetectorTrace {
+  initial_candidates?: number;
+  after_skin_mask?: number;
+  after_area_filter?: number;
+  after_shape_filter?: number;
+  after_region_exclusion?: number;
+  after_contrast_filter?: number;
+  dark_lesion_initial_candidates?: number;
+  bright_scar_initial_candidates?: number;
+  linear_scar_initial_candidates?: number;
+  texture_anomaly_initial_candidates?: number;
+  strict_final_valid_marks?: number;
+  fallback_used?: boolean;
+  fallback_candidates?: number;
+  dedup_removed?: number;
+  final_valid_marks?: number;
+  detector_status?: DetectorStatus;
+  fallback_lr_cap?: number;
+  fallback_penalty_applied?: boolean;
+}
+
+/** v2.1 debug overlay images (DEBUG_FORENSIC only) */
+export interface MarkDebugOverlays {
+  face_roi_mask_b64?: string;
+  dark_candidate_mask_b64?: string;
+  bright_candidate_mask_b64?: string;
+  linear_candidate_mask_b64?: string;
+  texture_candidate_mask_b64?: string;
+  rejected_overlay_b64?: string;
+  final_marks_overlay_b64?: string;
+}
+
 /** Lightweight always-on mark diagnostics (production-safe) */
 export interface MarkDiagnostics {
   raw_probe_marks_count: number;
   raw_gallery_marks_count: number;
   accepted_correspondences_count: number;
   rejected_candidates_count: number;
-  detector_status: string;  // "OK" | "NO_CANDIDATES"
+  detector_status: DetectorStatus | string;
   matcher_status: string;   // "OK" | "NO_MATCHES" | "INSUFFICIENT_INPUT"
   lr_marks: number | null;
   mark_match_status: string | null;
   rejection_summary: string | null;
+  // v2.1 trace
+  mark_detector_trace?: {
+    probe?: MarkDetectorTrace;
+    gallery?: MarkDetectorTrace;
+  };
 }
 
 /** Bayesian scoring trace — returned only when DEBUG_FORENSIC=true */
@@ -257,6 +327,8 @@ export interface VerificationResult {
   raw_secondary_similarity?: number | null;
   fused_face_model_similarity?: number | null;
   lr_face_model?: number | null;
+  // v2.1 debug overlays (DEBUG_FORENSIC only)
+  mark_debug_overlays?: MarkDebugOverlays | null;
 }
 
 export interface ForensicPoint {

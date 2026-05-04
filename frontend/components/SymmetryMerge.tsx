@@ -7,6 +7,8 @@ import {
   Correspondence,
   MarkDebugCorrespondence,
   MarkDescriptor,
+  MarkDetectorTrace,
+  MarkDiagnostics,
   ScoringTrace
 } from '@/types/verification';
 
@@ -18,6 +20,13 @@ type ForensicPoint = {
   isMatched?: boolean;
   matchIndex?: number;
   isRejected?: boolean;
+  // v2.1 fields
+  channel?: string;
+  confidence?: number;
+  lowConfidence?: boolean;
+  fallbackGenerated?: boolean;
+  salienceScore?: number;
+  regionLabel?: string;
 };
 
 interface SymmetryMergeProps {
@@ -155,6 +164,13 @@ function drawPane(
           ctx.font = `bold ${11 / scale}px monospace`;
           ctx.fillText((p.matchIndex + 1).toString(), px + r + (4 / scale), py + (4 / scale));
         }
+      } else if (p.lowConfidence || p.fallbackGenerated) {
+        // Amber dashed — low-confidence / fallback candidate (v2.1)
+        ctx.setLineDash([4 / scale, 3 / scale]);
+        ctx.strokeStyle = 'rgba(245, 180, 50, 0.8)';
+        ctx.lineWidth = 1.5 / scale;
+        ctx.stroke();
+        ctx.setLineDash([]);
       } else if (p.isMatched === false) {
         // Cyan — detected but not matched by index
         ctx.strokeStyle = 'rgba(0, 200, 220, 0.9)';
@@ -384,6 +400,11 @@ export default function SymmetryMerge({
         ? markMatchData.probeIndexToPairId
         : markMatchData.galleryIndexToPairId;
 
+      // Extract v2.1 extended fields from raw mark source
+      const rawMarks = isProbe ? results?.raw_probe_marks : results?.raw_gallery_marks;
+      const rawMark = rawMarks && Array.isArray(rawMarks) ? rawMarks[index] : undefined;
+      const desc = rawMark && typeof rawMark === 'object' && !Array.isArray(rawMark) ? rawMark as Record<string, unknown> : undefined;
+
       return {
         x,
         y,
@@ -393,9 +414,16 @@ export default function SymmetryMerge({
           ? matchedSet.has(index)
           : undefined,
         matchIndex: matchIndexMap.get(index),
+        // v2.1 extended metadata
+        channel: typeof desc?.channel === 'string' ? desc.channel : undefined,
+        confidence: typeof desc?.confidence === 'number' ? desc.confidence as number : undefined,
+        lowConfidence: desc?.low_confidence === true,
+        fallbackGenerated: desc?.fallback_generated === true,
+        salienceScore: typeof desc?.salience_score === 'number' ? desc.salience_score as number : undefined,
+        regionLabel: typeof desc?.region_label === 'string' ? desc.region_label : undefined,
       };
     },
-    [getPointCoords, markMatchData]
+    [getPointCoords, markMatchData, results]
   );
 
   const probePoints = useMemo((): ForensicPoint[] => {
@@ -849,6 +877,38 @@ export default function SymmetryMerge({
                         <div className="flex justify-between"><span>Accepted Correspondences</span><span className="font-bold text-emerald-400">{matchCount}</span></div>
                         <div className="flex justify-between"><span>Rejected Candidates</span><span className="font-bold text-amber-400">{diag.rejected_candidates_count ?? 0}</span></div>
                       </div>
+                      {/* v2.1 Per-Channel Counts */}
+                      {(() => {
+                        const mdt = diag as MarkDiagnostics;
+                        const pt = mdt?.mark_detector_trace?.probe;
+                        const gt = mdt?.mark_detector_trace?.gallery;
+                        if (!pt && !gt) return null;
+                        const channels = [
+                          { key: 'dark_lesion', label: 'DARK', color: 'text-purple-300', count: (pt?.dark_lesion_initial_candidates ?? 0) + (gt?.dark_lesion_initial_candidates ?? 0) },
+                          { key: 'bright_scar', label: 'BRIGHT', color: 'text-sky-300', count: (pt?.bright_scar_initial_candidates ?? 0) + (gt?.bright_scar_initial_candidates ?? 0) },
+                          { key: 'linear_scar', label: 'LINEAR', color: 'text-rose-300', count: (pt?.linear_scar_initial_candidates ?? 0) + (gt?.linear_scar_initial_candidates ?? 0) },
+                          { key: 'texture', label: 'TEXTURE', color: 'text-teal-300', count: (pt?.texture_anomaly_initial_candidates ?? 0) + (gt?.texture_anomaly_initial_candidates ?? 0) },
+                        ].filter(c => c.count > 0);
+                        const fallback = pt?.fallback_used || gt?.fallback_used;
+                        const dedupTotal = (pt?.dedup_removed ?? 0) + (gt?.dedup_removed ?? 0);
+                        return (
+                          <div className="mb-1.5">
+                            {channels.length > 0 && (
+                              <div className="flex gap-1.5 flex-wrap mb-1">
+                                {channels.map(c => (
+                                  <span key={c.key} className={`text-[7px] px-1 py-0.5 rounded bg-white/5 border border-white/10 ${c.color} font-mono`}>{c.label}: {c.count}</span>
+                                ))}
+                                {dedupTotal > 0 && <span className="text-[7px] px-1 py-0.5 rounded bg-white/5 border border-white/10 text-gray-400 font-mono">DEDUP: -{dedupTotal}</span>}
+                              </div>
+                            )}
+                            {fallback && (
+                              <div className="text-[7px] text-amber-400/80 mb-1">
+                                ⚠ Fallback mode active — low-confidence candidates included (LR capped)
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                       <div className="flex justify-between items-center pt-1 border-t border-white/10 text-[10px]">
                         <span className="opacity-60">{matchCount} of {Math.max(probeCount, galCount)} marks matched</span>
                         {lrMarks != null && <span className="font-bold">LR_MARKS: {lrMarks.toFixed(4)}</span>}
@@ -933,8 +993,13 @@ export default function SymmetryMerge({
                           {safeCorrespondences.map((c: Correspondence, i: number) => {
                             const lr = typeof c.lr === 'number' ? c.lr : 0;
                             const lrColor = lr >= 10 ? 'text-emerald-300' : lr >= 1 ? 'text-yellow-300' : 'text-red-300';
+                            // Extract v2.1 channel/confidence from raw marks
+                            const probeMarkDesc = (c.probe_idx != null && Array.isArray(results?.raw_probe_marks) && results.raw_probe_marks[c.probe_idx] && typeof results.raw_probe_marks[c.probe_idx] === 'object' && !Array.isArray(results.raw_probe_marks[c.probe_idx])) ? results.raw_probe_marks[c.probe_idx] as Record<string, unknown> : null;
+                            const channelLabel = typeof probeMarkDesc?.channel === 'string' ? probeMarkDesc.channel : undefined;
+                            const confVal = typeof probeMarkDesc?.confidence === 'number' ? (probeMarkDesc.confidence as number) : undefined;
+                            const isLowConf = probeMarkDesc?.low_confidence === true;
                             return (
-                              <div key={`mark-card-${i}`} className="border border-emerald-900/40 bg-[#0a0f0a] rounded p-2 font-mono text-[10px]">
+                              <div key={`mark-card-${i}`} className={`border rounded p-2 font-mono text-[10px] ${isLowConf ? 'border-amber-900/40 bg-[#0f0d0a]' : 'border-emerald-900/40 bg-[#0a0f0a]'}`}>
                                 <div className="flex justify-between items-center mb-1">
                                   <span className="text-emerald-400 font-bold tracking-wider">
                                     <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-800/60 text-emerald-200 text-[9px] mr-1.5">{i + 1}</span>
@@ -945,9 +1010,12 @@ export default function SymmetryMerge({
                                 <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-gray-400">
                                   <div>TYPE: <span className="text-gray-200">{c.mark_type ?? '—'}</span></div>
                                   <div>REGION: <span className="text-gray-200">{c.face_region ?? '—'}</span></div>
+                                  {channelLabel && <div>CHANNEL: <span className="text-purple-300">{channelLabel}</span></div>}
+                                  {confVal != null && <div>CONF: <span className="text-gray-200">{confVal.toFixed(2)}</span></div>}
                                   <div>P [{c.probe_idx ?? '?'}]: <span className="text-gray-300">{c.probe_centroid ? `(${c.probe_centroid[0]?.toFixed(3)}, ${c.probe_centroid[1]?.toFixed(3)})` : '—'}</span></div>
                                   <div>G [{c.gallery_idx ?? '?'}]: <span className="text-gray-300">{c.gallery_centroid ? `(${c.gallery_centroid[0]?.toFixed(3)}, ${c.gallery_centroid[1]?.toFixed(3)})` : '—'}</span></div>
                                 </div>
+                                {isLowConf && <div className="text-[7px] text-amber-400/70 mt-1">⚠ LOW CONFIDENCE / FALLBACK</div>}
                               </div>
                             );
                           })}

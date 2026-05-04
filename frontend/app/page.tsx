@@ -1232,6 +1232,56 @@ export default function Home() {
                       <div className="flex justify-between"><span className="text-gray-500">Accepted Shared Mark Correspondences</span><span className="text-emerald-400 font-bold tabular-nums">{results.mark_diagnostics.accepted_correspondences_count}</span></div>
                       <div className="flex justify-between"><span className="text-gray-500">Rejected Candidates</span><span className="text-amber-400/70 font-bold tabular-nums">{results.mark_diagnostics.rejected_candidates_count}</span></div>
                     </div>
+                    {/* v2.1 Detector Trace Telemetry */}
+                    {(() => {
+                      const trace = results.mark_diagnostics?.mark_detector_trace;
+                      const probeTrace = trace?.probe;
+                      const galleryTrace = trace?.gallery;
+                      if (!probeTrace && !galleryTrace) return null;
+                      const fallbackUsed = probeTrace?.fallback_used || galleryTrace?.fallback_used;
+                      const fallbackCap = probeTrace?.fallback_lr_cap ?? galleryTrace?.fallback_lr_cap;
+                      return (
+                        <>
+                          {/* Fallback Warning */}
+                          {fallbackUsed && (
+                            <div className="px-2 py-1.5 mb-2 bg-amber-950/30 rounded border border-amber-900/30 flex items-center gap-2">
+                              <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0"></div>
+                              <span className="text-[8px] text-amber-400/90">FALLBACK MODE — low-confidence candidates included{fallbackCap ? ` (LR capped at ${fallbackCap})` : ''}</span>
+                            </div>
+                          )}
+                          {/* Per-Channel Counts */}
+                          <div className="flex flex-wrap gap-1.5 mb-2">
+                            {probeTrace?.dark_lesion_initial_candidates != null && probeTrace.dark_lesion_initial_candidates > 0 && (
+                              <span className="text-[7px] px-1.5 py-0.5 rounded bg-purple-900/30 text-purple-300 border border-purple-800/30 font-mono">DARK_LESION: {probeTrace.dark_lesion_initial_candidates}</span>
+                            )}
+                            {probeTrace?.bright_scar_initial_candidates != null && probeTrace.bright_scar_initial_candidates > 0 && (
+                              <span className="text-[7px] px-1.5 py-0.5 rounded bg-sky-900/30 text-sky-300 border border-sky-800/30 font-mono">BRIGHT_SCAR: {probeTrace.bright_scar_initial_candidates}</span>
+                            )}
+                            {probeTrace?.linear_scar_initial_candidates != null && probeTrace.linear_scar_initial_candidates > 0 && (
+                              <span className="text-[7px] px-1.5 py-0.5 rounded bg-rose-900/30 text-rose-300 border border-rose-800/30 font-mono">LINEAR_SCAR: {probeTrace.linear_scar_initial_candidates}</span>
+                            )}
+                            {probeTrace?.texture_anomaly_initial_candidates != null && probeTrace.texture_anomaly_initial_candidates > 0 && (
+                              <span className="text-[7px] px-1.5 py-0.5 rounded bg-teal-900/30 text-teal-300 border border-teal-800/30 font-mono">TEXTURE: {probeTrace.texture_anomaly_initial_candidates}</span>
+                            )}
+                          </div>
+                          {/* Dedup & Final Stats */}
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[8px] mb-2">
+                            {probeTrace?.dedup_removed != null && (
+                              <div className="flex justify-between"><span className="text-gray-600">Dedup Removed (Probe)</span><span className="text-gray-400 tabular-nums">{probeTrace.dedup_removed}</span></div>
+                            )}
+                            {galleryTrace?.dedup_removed != null && (
+                              <div className="flex justify-between"><span className="text-gray-600">Dedup Removed (Gallery)</span><span className="text-gray-400 tabular-nums">{galleryTrace.dedup_removed}</span></div>
+                            )}
+                            {probeTrace?.final_valid_marks != null && (
+                              <div className="flex justify-between"><span className="text-gray-600">Final Marks (Probe)</span><span className="text-white tabular-nums font-bold">{probeTrace.final_valid_marks}</span></div>
+                            )}
+                            {galleryTrace?.final_valid_marks != null && (
+                              <div className="flex justify-between"><span className="text-gray-600">Final Marks (Gallery)</span><span className="text-white tabular-nums font-bold">{galleryTrace.final_valid_marks}</span></div>
+                            )}
+                          </div>
+                        </>
+                      );
+                    })()}
                     {/* Mark Evidence Likelihood Ratio */}
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-[8px] text-gray-500">Mark Evidence Likelihood Ratio (LR<sub>marks</sub>)</span>
