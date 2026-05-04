@@ -16,14 +16,17 @@ except ImportError:
 # Try to load env
 load_dotenv(dotenv_path='../.env.gcp')
 
-# Setup connection identical to models.py
-DB_USER = os.getenv("DB_USER", "facial_app")
-DB_PASS = os.getenv("DB_PASSWORD", "Fv966468!Sec5677")
-DB_NAME = os.getenv("DB_NAME", "facial_db")
-CLOUD_SQL_CONNECTION_NAME = os.getenv("SQL_CONNECTION_NAME", "hoppwhistle:us-central1:facial-pg-instance")
+DB_USER = os.getenv("DB_USER")
+DB_PASS = os.getenv("DB_PASS") or os.getenv("DB_PASSWORD")
+DB_NAME = os.getenv("DB_NAME")
+DATABASE_URL = os.getenv("DATABASE_URL")
+CLOUD_SQL_CONNECTION_NAME = os.getenv("CLOUD_SQL_CONNECTION_NAME") or os.getenv("SQL_CONNECTION_NAME")
 
-# For local we will use the proxy port
-DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@127.0.0.1:5433/{DB_NAME}"
+if not DATABASE_URL:
+    if not all([DB_USER, DB_PASS, DB_NAME]):
+        print("CRITICAL: Missing required database credentials. Must supply DATABASE_URL or DB_USER, DB_PASS, DB_NAME.")
+        sys.exit(1)
+    DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@127.0.0.1:5433/{DB_NAME}"
 
 engine = create_engine(DATABASE_URL)
 
@@ -62,16 +65,6 @@ CANONICAL_COLUMNS = {
 }
 
 def migrate(dry_run=False, output_json=False):
-    # Enforce safety guard
-    try:
-        check_destructive_operation_allowed(DATABASE_URL, sql=None)
-    except ValueError as e:
-        if output_json:
-            print(json.dumps({"error": str(e)}))
-        else:
-            print(str(e))
-        sys.exit(1)
-
     inspector = inspect(engine)
     if "verification_events" not in inspector.get_table_names():
         if output_json:
@@ -93,6 +86,16 @@ def migrate(dry_run=False, output_json=False):
             else:
                 results["added"].append(col_name)
                 stmt = f"ALTER TABLE verification_events ADD COLUMN {col_name} {col_type};"
+                
+                # Check guard per statement
+                try:
+                    check_destructive_operation_allowed(DATABASE_URL, sql=stmt)
+                except ValueError as e:
+                    results["errors"].append({col_name: str(e)})
+                    if not output_json:
+                        print(f"ERROR: Safety guard blocked adding {col_name} - {str(e)}")
+                    continue
+                
                 if not dry_run:
                     try:
                         conn.execute(text(stmt))
