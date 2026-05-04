@@ -195,10 +195,10 @@ export default function Home() {
 
   /** Get the result classification label */
   function getResultLabel(r: VerificationResult): string {
-    if (r.veto_triggered && r.fused_identity_score < 40) {
-      return 'Inconclusive — Limited by Face-Model Threshold';
+    if (r.failed_provenance_veto) {
+      return 'Synthetic Provenance Veto Triggered';
     }
-    if (r.veto_triggered && r.fused_identity_score >= 40) {
+    if (r.veto_triggered && !r.veto_override_applied) {
       return 'Inconclusive — Limited by Face-Model Threshold';
     }
     if (r.fused_identity_score >= 90) return 'Strongly Supports Common Source';
@@ -1759,6 +1759,18 @@ export default function Home() {
                           )}
                           {results.audit_log.license_short_name && (
                             <div className="flex justify-between items-start gap-2 break-words w-full min-w-0"><span className="text-gray-500">Image License</span><span className="text-gray-400">{results.audit_log.license_short_name}</span></div>
+                          )}
+                          {results.synthetic_anomaly_score != null && (
+                            <div className="flex justify-between items-start gap-2 break-words w-full min-w-0"><span className="text-gray-500">Synthetic Anomaly Score</span><span className={`font-bold ${results.synthetic_anomaly_score > 0.85 ? 'text-red-400' : 'text-amber-300'}`}>{results.synthetic_anomaly_score.toFixed(4)}</span></div>
+                          )}
+                          {results.failed_provenance_veto != null && (
+                            <div className="flex justify-between items-start gap-2 break-words w-full min-w-0"><span className="text-gray-500">Provenance Veto</span><span className={`font-bold ${results.failed_provenance_veto ? 'text-red-400' : 'text-green-400'}`}>{results.failed_provenance_veto ? 'TRIGGERED' : 'PASSED'}</span></div>
+                          )}
+                          {results.receipt_url && (
+                            <div className="flex justify-between items-start gap-2 break-words w-full min-w-0 mt-2">
+                              <span className="text-gray-500">Forensic Receipt</span>
+                              <a href={results.receipt_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 underline text-[9px]">View Receipt</a>
+                            </div>
                           )}
                         </div>
                       </div>

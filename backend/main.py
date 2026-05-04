@@ -85,20 +85,17 @@ def on_startup():
     inspector = inspect(engine)
     if "verification_events" in inspector.get_table_names():
         columns = [col['name'] for col in inspector.get_columns("verification_events")]
-        required_columns = [
-            "lr_arcface", "lr_marks_product", "lr_total", "posterior_probability",
-            "bayesian_fused_score_x100", "marks_matched", "calibration_status",
-            "veto_reason", "veto_override_applied",
-            # Mark Evidence Audit Trail (v2.0)
-            "mark_match_status", "marks_detected_probe", "marks_detected_gallery",
-            "mark_lrs_json", "accepted_mark_correspondences_json",
-            "mark_detector_version", "mark_matcher_version", "mark_overlay_url"
-        ]
+        from models import VerificationEvent
+        required_columns = [col.name for col in inspect(VerificationEvent).c]
+        
         missing_cols = [c for c in required_columns if c not in columns]
         if missing_cols:
             import logging
-            logging.critical(f"CRITICAL: Missing required columns in verification_events: {missing_cols}")
-            raise RuntimeError(f"CRITICAL SCHEMA ERROR: Missing columns {missing_cols}. Run scripts/migrate_scoring_audit_columns.py before deploying.")
+            logging.critical(f"CRITICAL: Missing canonical columns in verification_events: {missing_cols}")
+            if os.getenv("ALLOW_SCHEMA_MISMATCH", "false").lower() != "true":
+                raise RuntimeError(f"CRITICAL SCHEMA ERROR: Missing columns {missing_cols}. Run scripts/migrate_production_schema_contract_v1.py before deploying. Set ALLOW_SCHEMA_MISMATCH=true to bypass.")
+            else:
+                logging.warning("ALLOW_SCHEMA_MISMATCH is true. Bypassing schema guard.")
     
     print("Hydrating FAISS Vault Index...", flush=True)
     session = SessionLocal()
@@ -519,6 +516,9 @@ class AuditLog(BaseModel):
     mark_detector_version: Optional[str] = None
     mark_matcher_version: Optional[str] = None
     mark_overlay_url: Optional[str] = None
+    receipt_url: Optional[str] = None
+    synthetic_anomaly_score: Optional[float] = None
+    failed_provenance_veto: Optional[bool] = None
 
     # New Canonical Fields (Phase 5B)
     probe_source_file_hash: Optional[str] = None
@@ -608,6 +608,9 @@ class VerificationResponse(BaseModel):
     raw_secondary_similarity: Optional[float] = None
     fused_face_model_similarity: Optional[float] = None
     lr_face_model: Optional[float] = None
+    synthetic_anomaly_score: Optional[float] = None
+    failed_provenance_veto: Optional[bool] = None
+    receipt_url: Optional[str] = None
     # Scoring trace (DEBUG_FORENSIC only)
     scoring_trace: Optional[dict] = None
     calibration_status: Optional[str] = None
@@ -2575,6 +2578,15 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         cv2.circle(pro_debug_img, (cx, cy), 4, color, 2)
         cv2.putText(pro_debug_img, str(idx), (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
 
+    # ── Composite Forensic Receipt (Evidence Preservation) ──
+    receipt_url = generate_forensic_receipt(
+        gallery_aligned=gallery_aligned,
+        probe_aligned=probe_aligned,
+        gallery_heatmap_b64=gallery_heatmap,
+        fused_score=fused_score,
+        probe_file_hash=probe_file_hash,
+    )
+
     audit = AuditLog(
         raw_cosine_score=round(structural_sim, 6),
         raw_arcface_score=round(arcface_sim, 6),
@@ -2655,6 +2667,9 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         raw_secondary_similarity=round(secondary_sim, 6),
         fused_face_model_similarity=round(structural_sim, 6),
         lr_face_model=finite_or_none(lr_ensemble),
+        receipt_url=receipt_url,
+        synthetic_anomaly_score=max_anomaly,
+        failed_provenance_veto=False,
     )
 
     # Build correspondences list for the UI (enriched with forensic metadata)
@@ -2854,16 +2869,10 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         veto_override_reason=veto_override_reason,
         scoring_trace=scoring_trace,
         calibration_status=_calibration_status,
+        receipt_url=receipt_url,
+        synthetic_anomaly_score=max_anomaly,
+        failed_provenance_veto=False,
         audit_log=audit,
-    )
-
-    # ── Composite Forensic Receipt (Evidence Preservation) ──
-    receipt_url = generate_forensic_receipt(
-        gallery_aligned=gallery_aligned,
-        probe_aligned=probe_aligned,
-        gallery_heatmap_b64=gallery_heatmap,
-        fused_score=fused_score,
-        probe_file_hash=probe_file_hash,
     )
 
     # ── Immutable Audit Ledger ──

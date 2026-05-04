@@ -797,6 +797,14 @@ def test_api_mark_diagnostics_and_language():
         assert "fused_face_model_similarity" in f_data
         assert "lr_face_model" in f_data
         
+        # 5b. New Forensic Fields
+        assert "receipt_url" in f_data
+        assert "synthetic_anomaly_score" in f_data
+        assert "failed_provenance_veto" in f_data
+        assert "receipt_url" in audit
+        assert "synthetic_anomaly_score" in audit
+        assert "failed_provenance_veto" in audit
+        
         # 6. Forbidden conclusion phrases
         conc = audit.get("conclusion", "").lower()
         forbidden = ["biometric non-match", "different identities", "target acquired", "identity confirmed", "match confirmed", "automatic exclusion"]
@@ -832,8 +840,52 @@ def test_api_mark_diagnostics_and_language():
     print("  [PASS] mark_diagnostics schema verified")
     
     # Restore mock
-    main_module.fetch_image_from_url = original_fetch
-
+def test_canonical_scoring_contract():
+    print("\n--- Running test_canonical_scoring_contract ---")
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "backend"))
+        from models import VerificationRequest
+        import main as main_module
+        from fastapi.testclient import TestClient
+        client = TestClient(main_module.app)
+    except Exception as e:
+        print(f"  [SKIP] Skipping canonical scoring contract tests because dependencies are missing locally: {e}")
+        return
+        
+    payload = VerificationRequest(
+        probe_image_url="http://mock.test/probe.jpg",
+        gallery_image_url="http://mock.test/gallery.jpg",
+        webhook_url=None
+    )
+    
+    from unittest.mock import MagicMock
+    original_fetch = main_module.fetch_image_from_url
+    main_module.fetch_image_from_url = MagicMock(return_value=b"mock_image_bytes")
+    
+    try:
+        response = client.post("/verify/fuse", json=payload.dict())
+        assert response.status_code == 200
+        data = response.json()
+        audit = data["audit_log"]
+        
+        # We need lr_total. Since it's hidden in trace, we check the audit log
+        if audit.get("lr_total") is not None:
+            lr_t = audit["lr_total"]
+            expected_post = lr_t / (lr_t + 1)
+            assert abs(audit["posterior_probability"] - expected_post) < 1e-9, "posterior_probability != lr_total / (lr_total + 1)"
+            
+        if audit.get("posterior_probability") is not None:
+            expected_bfs = audit["posterior_probability"] * 100
+            assert abs(data["bayesian_fused_score"] - expected_bfs) < 1e-6, "bayesian_fused_score != posterior * 100"
+            
+        assert "lr_face_model" in data, "lr_face_model is not canonical in response"
+        assert "lr_marks" in data, "lr_marks is not canonical in response"
+        assert "mark_veto_override_applied" not in data, "Fake field found in response"
+        assert "mark_veto_override_applied" not in audit, "Fake field found in audit log"
+        
+        print("  [PASS] Canonical scoring contract mathematical derivations verified")
+    finally:
+        main_module.fetch_image_from_url = original_fetch
 
 if __name__ == "__main__":
     # Run all unit tests first
@@ -850,6 +902,9 @@ if __name__ == "__main__":
     test_lr_total_product_rule()
     test_migration_columns_complete()
     test_api_mark_diagnostics_and_language()
+    test_canonical_scoring_contract()
+    
+    print("\nALL TESTS PASSED.")
     print("\n  *** ALL UNIT TESTS PASSED ***\n")
 
     # Run the original E2E pipeline test

@@ -54,6 +54,9 @@ export interface AuditLog {
   deepface_version?: string;
   calibration_file_hash?: string;
   calibration_pair_count?: number;
+  receipt_url?: string | null;
+  synthetic_anomaly_score?: number | null;
+  failed_provenance_veto?: boolean | null;
 }
 
 export type RawPoint = 
@@ -297,6 +300,7 @@ export interface VerificationResult {
   probe_heatmap_b64: string;
   gallery_aligned_b64: string;
   probe_aligned_b64: string;
+  receipt_url?: string | null;
   scar_delta_b64: string;  // Backwards compat — prefer edge_delta_b64
   edge_delta_b64?: string | null;  // Forward-compatible field name
   gallery_wireframe_b64: string;
