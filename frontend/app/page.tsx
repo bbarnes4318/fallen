@@ -1203,7 +1203,7 @@ export default function Home() {
                         </div>
                       )}
                       <div className={`text-[8px] font-medium truncate ${(results.fused_identity_score < 40.0) ? 'text-red-300/80' : results.fused_identity_score > 80 ? 'text-emerald-300/80' : results.fused_identity_score > 60 ? 'text-amber-300/80' : 'text-red-300/80'}`}>
-                        {results.fused_identity_score > 99 ? 'Extremely strong similarity' : results.fused_identity_score > 85 ? 'Very strong similarity' : results.fused_identity_score > 70 ? 'Moderate similarity' : results.fused_identity_score > 50 ? 'Weak similarity' : 'Very low similarity'}
+                        {results.fused_identity_score > 99 ? 'Extremely strong posterior support' : results.fused_identity_score > 85 ? 'Very strong posterior support' : results.fused_identity_score > 70 ? 'Moderate posterior support' : results.fused_identity_score > 50 ? 'Weak posterior support' : 'Very low posterior support'}
                       </div>
                     </div>
                   </div>
@@ -1214,7 +1214,7 @@ export default function Home() {
                       style={{ width: `${Math.min(100, results.fused_identity_score)}%` }}
                     />
                   </div>
-                  <div className={`text-[7px] mt-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/40' : 'text-[#D4AF37]/40'}`}>Bayesian fusion of {results.marks_matched ? '4' : '3'} independent evidence channels</div>
+                  <div className={`text-[7px] mt-1 ${(results.fused_identity_score < 40.0) ? 'text-red-400/40' : 'text-[#D4AF37]/40'}`}>Bayesian fusion of {results.marks_matched ? '4' : '3'} evidence channels</div>
                 </div>
               </div>
 
@@ -1489,7 +1489,7 @@ export default function Home() {
                         style={{ width: `${Math.min(100, results.audit_log?.lr_marks != null ? Math.min(100, Math.log10(Math.max(1, results.audit_log.lr_marks)) * 10) : 0)}%` }}
                       />
                     </div>
-                    <p className="text-[8px] break-words text-[#D4AF37]/70 mt-1.5 leading-relaxed">Bayesian Likelihood Ratio from {results.marks_matched} matching scars, moles, and birthmarks. Values {'>'} 1 support visual similarity hypothesis; values {'>'} 10,000 constitute extremely strong similarity.</p>
+                    <p className="text-[8px] break-words text-[#D4AF37]/70 mt-1.5 leading-relaxed">Bayesian Likelihood Ratio from {results.marks_matched} matching scars, moles, and birthmarks. Values {'>'} 1 support the same-source hypothesis; values {'>'} 10,000 constitute extremely strong evidential support.</p>
                     {/* Individual mark LR breakdown */}
                     {results.audit_log?.lr_arcface != null && (
                       <div className="mt-1.5 flex items-center gap-3 flex-wrap">
@@ -1524,7 +1524,7 @@ export default function Home() {
               <div className={`rounded-lg overflow-hidden border ${(results.fused_identity_score < 40.0) ? 'border-red-700/60' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? 'border-amber-700/50' : 'border-emerald-700/40'}`}>
                 {/* Verdict header badge */}
                 <div className={`px-2.5 py-1 text-[9px] tracking-[0.12em] font-bold flex items-center justify-between ${(results.fused_identity_score < 40.0) ? 'bg-red-900/40 text-red-300' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? 'bg-amber-900/40 text-amber-400' : 'bg-emerald-900/30 text-emerald-300'}`}>
-                  <span>{(results.fused_identity_score < 40.0) ? '✗ BELOW OPERATING THRESHOLD' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '⚠ FACE MODEL VETO' : '✓ COMMON SOURCE'}</span>
+                  <span>{(results.fused_identity_score < 40.0) ? '✗ BELOW OPERATING THRESHOLD' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '⚠ FACE MODEL VETO' : '✓ SUPPORTS COMMON SOURCE'}</span>
                   {results.veto_triggered && (
                     <span className="text-[8px] font-normal opacity-70">Pre-Veto: {(results.bayesian_fused_score ?? ((results.audit_log?.posterior_probability ?? 0) * 100)).toFixed(1)}% → Displayed: {results.fused_identity_score}%</span>
                   )}
