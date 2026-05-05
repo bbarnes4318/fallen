@@ -2404,6 +2404,8 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     veto_triggered = structural_sim < 0.40
 
     # 7.5 TIER 4: Mark Correspondence (Bayesian LR Engine)
+    v2_mark_detector_version = MARK_DETECTOR_VERSION
+    v2_mark_matcher_version = MARK_MATCHER_VERSION
     if USE_MARK_PIPELINE_V2:
         mark_payload = _run_mark_evidence_pipeline(
             probe_img=probe_img,
@@ -2420,17 +2422,30 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         marks_gallery = valid_gallery_marks
         marks_probe = valid_probe_marks
         
-        mark_result = {}
+        _v2_matched = len(mark_payload.get("accepted_correspondences", []))
+        _v2_total = max(len(valid_gallery_marks), len(valid_probe_marks))
+        _v2_score = (_v2_matched / _v2_total) * 100.0 if _v2_total > 0 else 0.0
+
+        mark_result = {
+            "score": _v2_score,
+            "matched": _v2_matched,
+            "total_gallery": len(valid_gallery_marks),
+            "total_probe": len(valid_probe_marks),
+            "matches": mark_payload.get("accepted_correspondences", []),
+            "lr_marks": mark_payload.get("lr_marks") if mark_payload.get("lr_marks") is not None else 1.0,
+            "mark_lrs": mark_payload.get("individual_mark_lrs", []),
+        }
+        
         mark_match_status = mark_payload.get("mark_match_status", "UNKNOWN")
         exact_image_match = mark_match_status == "EXACT_SELF_MATCH"
-        tier4_score = 100.0 if exact_image_match else 0.0
+        tier4_score = mark_result["score"] if not exact_image_match else 100.0
         
-        assigned_pairs = mark_payload.get("accepted_correspondences", [])
+        assigned_pairs = mark_result["matches"]
         unmatched_gal = []
         unmatched_pro = []
         rejected_cands = mark_payload.get("rejected_correspondences", [])
         
-        lr_marks = mark_payload.get("lr_marks") if mark_payload.get("lr_marks") is not None else 1.0
+        lr_marks = mark_result["lr_marks"]
         
         _v2_mark_diagnostics_payload = mark_payload.get("mark_diagnostics", {})
         trace_probe = _v2_mark_diagnostics_payload.get("mark_detector_trace", {}).get("probe")
@@ -2664,8 +2679,8 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         marks_detected_gallery=mark_result.get("total_gallery", 0),
         mark_lrs_json=json.dumps([finite_or_none(lr) for lr in mark_result.get("mark_lrs", [])]),
         accepted_mark_correspondences_json=json.dumps(assigned_pairs),
-        mark_detector_version=v2_mark_detector_version if USE_MARK_PIPELINE_V2 else MARK_DETECTOR_VERSION,
-        mark_matcher_version=v2_mark_matcher_version if USE_MARK_PIPELINE_V2 else MARK_MATCHER_VERSION,
+        mark_detector_version=v2_mark_detector_version,
+        mark_matcher_version=v2_mark_matcher_version,
         mark_overlay_url=generate_mark_overlay_receipt(gal_debug_img, pro_debug_img, probe_file_hash),
         # Full Forensic Provenance Audit (v3.0 + Phase 5B)
         probe_source_file_hash=probe_file_hash,
@@ -2808,9 +2823,9 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             "gallery_marks_first_20": valid_gallery_marks[:20],
             "correspondences_first_20": [
                 {
-                    "gallery_idx": m[0],
-                    "probe_idx": m[1],
-                    "lr": m[2]
+                    "gallery_idx": m.get("gallery_idx") if isinstance(m, dict) else m[0],
+                    "probe_idx": m.get("probe_idx") if isinstance(m, dict) else m[1],
+                    "lr": m.get("lr", m.get("match_quality", 0.0)) if isinstance(m, dict) else m[2]
                 } for m in mark_result.get("matches", [])
             ][:20],
             "unmatched_probe_indices": list(unmatched_pro),
@@ -2898,8 +2913,8 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         mark_match_status=mark_match_status,
         lr_marks=finite_or_none(lr_marks),
         mark_lrs=mark_result.get("mark_lrs", []),
-        mark_detector_version=MARK_DETECTOR_VERSION,
-        mark_matcher_version=MARK_MATCHER_VERSION,
+        mark_detector_version=v2_mark_detector_version,
+        mark_matcher_version=v2_mark_matcher_version,
         exact_image_match=exact_image_match,
         # Face-model evidence (explicit decomposition)
         raw_arcface_similarity=round(arcface_sim, 6),

@@ -229,32 +229,21 @@ def test_verify_fuse_v2_feature_flag_on(mock_verify_fuse_dependencies):
         with patch("backend.main._run_mark_evidence_pipeline") as mock_v2:
             mock_v2.return_value = {
                 "mark_match_status": "MATCHED",
-                "mark_provenance": {
-                    "probe_valid_marks": [{"centroid": (0.5, 0.5), "mark_type": "mole", "face_region": "cheek", "area": 10, "box": (0,0,10,10), "score": 0.9}],
-                    "gallery_valid_marks": [{"centroid": (0.5, 0.5), "mark_type": "mole", "face_region": "cheek", "area": 10, "box": (0,0,10,10), "score": 0.9}],
-                    "probe_pre_clahe_hash": "pre_hash",
-                    "probe_post_clahe_hash": "post_hash",
-                    "gallery_pre_clahe_hash": "g_pre_hash",
-                    "gallery_post_clahe_hash": "g_post_hash",
-                },
-                "mark_result_payload": {
-                    "score": 85.0,
-                    "matched": 1,
-                    "total_gallery": 1,
-                    "total_probe": 1,
-                    "lr_marks": 50.0,
-                    "mark_lrs": [50.0],
-                    "matches": [{"gallery_idx": 0, "probe_idx": 0, "lr": 50.0}]
-                },
+                "mode": "paired",
+                "raw_probe_marks": [{"centroid": (0.5, 0.5), "mark_type": "mole", "face_region": "cheek", "area": 10, "box": (0,0,10,10), "score": 0.9}],
+                "raw_gallery_marks": [{"centroid": (0.5, 0.5), "mark_type": "mole", "face_region": "cheek", "area": 10, "box": (0,0,10,10), "score": 0.9}],
+                "accepted_correspondences": [{"gallery_idx": 0, "probe_idx": 0, "match_quality": 0.1, "position_distance": 0.1, "area_ratio": 1.0, "type_match": True, "region_match": True, "lr": 50.0}],
+                "rejected_correspondences": [],
                 "lr_marks": 50.0,
-                "correspondences_raw": [{"gallery_idx": 0, "probe_idx": 0, "cost": 0.1, "position_distance": 0.1, "area_ratio": 1.0, "type_match": True, "region_match": True}],
+                "individual_mark_lrs": [50.0],
                 "mark_diagnostics": {
-                    "mark_detector_trace": {"probe": {"detector_status": "OK"}, "gallery": {"detector_status": "OK"}},
+                    "mark_detector_trace": {"probe": {"detector_status": "OK", "input_is_preprocessed": True, "internal_clahe_applied": False}, "gallery": {"detector_status": "OK", "input_is_preprocessed": True, "internal_clahe_applied": False}},
                     "detector_status": "OK",
                     "matcher_status": "OK"
                 },
                 "mark_detector_version": "v2",
-                "mark_matcher_version": "v2"
+                "mark_matcher_version": "v2",
+                "preprocessor_version": "v1.1"
             }
             response = client.post("/verify/fuse", json=payload)
             assert response.status_code == 200
@@ -266,6 +255,21 @@ def test_verify_fuse_v2_feature_flag_on(mock_verify_fuse_dependencies):
             assert data["mark_match_status"] == "MATCHED"
             assert data["lr_marks"] == 50.0
             
+            # Assert raw marks are present
+            assert "raw_probe_marks" in data
+            assert len(data["raw_probe_marks"]) == 1
+            assert "raw_gallery_marks" in data
+            
+            # Assert mark_diagnostics traces
+            assert "mark_diagnostics" in data
+            diag = data["mark_diagnostics"]
+            assert diag["mark_detector_trace"]["probe"]["input_is_preprocessed"] is True
+            assert diag["mark_detector_trace"]["probe"]["internal_clahe_applied"] is False
+            
+            # Assert versions
+            assert data["mark_detector_version"] == "v2"
+            assert data["mark_matcher_version"] == "v2"
+            
             audit = data.get("audit_log", {})
-            assert audit.get("probe_aligned_crop_hash_pre_clahe") == "pre_hash"
-            assert audit.get("gallery_aligned_crop_hash_pre_clahe") == "g_pre_hash"
+            assert audit.get("mark_detector_version") == "v2"
+            assert audit.get("mark_matcher_version") == "v2"
