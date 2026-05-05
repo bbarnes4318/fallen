@@ -2,6 +2,8 @@
 
 > Forensic audit of the facial mark detection pipeline.
 > Produced: 2026-05-04
+> Pipeline: **Fallen Pipeline v4.0** (Ensemble + 3D Procrustes + Bayesian LR)
+> Mark Detector: **v2.1.0**
 > Auditor: Antigravity (automated code audit)
 > Scope: `backend/mark_detector.py`, `backend/main.py`, `frontend/components/SymmetryMerge.tsx`, `frontend/app/page.tsx`
 
