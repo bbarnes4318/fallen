@@ -522,3 +522,32 @@ def serialize_mark_descriptor(mark: dict) -> dict:
         else:
             out[k] = v
     return out
+
+
+def get_thresholds() -> dict:
+    """Return all detector thresholds as a JSON-safe dict.
+
+    This is the canonical source of truth for threshold reporting.
+    Any diagnostic endpoint should call this instead of hardcoding values.
+    """
+    return {
+        # Strict pass
+        "min_contour_area": _MIN_AREA,
+        "max_contour_area": _MAX_AREA,
+        "min_overlap_ratio": _MIN_OVERLAP_RATIO,
+        "min_contrast": _MIN_CONTRAST,
+        # Fallback pass
+        "fallback_min_area": _FB_MIN_AREA,
+        "fallback_min_overlap": _FB_MIN_OVERLAP,
+        "fallback_min_contrast": _FB_MIN_CONTRAST,
+        "fallback_max_candidates": _FB_MAX_CANDIDATES,
+        "fallback_lr_cap": _FB_LR_CAP,
+        # Post-processing
+        "max_final_marks": _MAX_FINAL_MARKS,
+        "dedup_distance_px": _DEDUP_DIST_PX,
+        "dedup_iou": _DEDUP_IOU,
+        "border_margin": _BORDER_MARGIN,
+        # Version
+        "detector_version": MARK_DETECTOR_VERSION,
+    }
+
