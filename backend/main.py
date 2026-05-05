@@ -2995,6 +2995,290 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     }
 
 # ---------------------------------------------------------
+# MARK EVIDENCE SHARED HELPER (V2 Pipeline)
+# ---------------------------------------------------------
+
+def _run_mark_evidence_pipeline(
+    probe_img: np.ndarray,
+    gallery_img: Optional[np.ndarray] = None,
+    probe_file_hash: Optional[str] = None,
+    gallery_file_hash: Optional[str] = None,
+    mode: str = "diagnostic",
+    target_size: int = 1024,
+) -> dict:
+    """
+    Shared helper for deterministic forensic facial mark detection and matching.
+    Operates on raw input images, aligns, preprocesses deterministically, detects marks,
+    and runs the v2 matcher if paired. 
+    """
+    from image_preprocessor import preprocess_for_mark_detection, IMAGE_PREPROCESSOR_VERSION
+    from mark_detector import MARK_DETECTOR_VERSION
+
+    has_gallery = gallery_img is not None
+    
+    # ── 1. Alignment on RAW image ──
+    probe_aligned_raw, probe_landmarks = align_face_crop(probe_img)
+    gallery_aligned_raw = None
+    gallery_landmarks = None
+    if has_gallery:
+        gallery_aligned_raw, gallery_landmarks = align_face_crop(gallery_img)
+
+    detector_thresholds = get_detector_thresholds()
+    
+    probe_face_ok = probe_landmarks is not None
+    gallery_face_ok = gallery_landmarks is not None if has_gallery else None
+
+    # ── Face Detection Failure Early Exit ──
+    if not probe_face_ok or (has_gallery and not gallery_face_ok):
+        failed_side = []
+        if not probe_face_ok: failed_side.append("probe")
+        if has_gallery and not gallery_face_ok: failed_side.append("gallery")
+        
+        return {
+            "mode": "probe_only" if not has_gallery else "paired",
+            "aligned_probe_b64": None,
+            "aligned_gallery_b64": None,
+            "raw_probe_marks": [],
+            "raw_gallery_marks": [],
+            "rejected_probe_marks": [],
+            "rejected_gallery_marks": [],
+            "accepted_correspondences": [],
+            "rejected_correspondences": [],
+            "mark_match_status": "FACE_NOT_DETECTED",
+            "matcher_status": "NOT_RUN_FACE_DETECTION_FAILED",
+            "mark_diagnostics": {
+                "raw_probe_marks_count": 0,
+                "raw_gallery_marks_count": 0,
+                "accepted_correspondences_count": 0,
+                "rejected_candidates_count": 0,
+                "detector_status": "FACE_NOT_DETECTED",
+                "probe_detector_status": "FACE_NOT_DETECTED" if not probe_face_ok else "NOT_RUN",
+                "gallery_detector_status": "FACE_NOT_DETECTED" if (has_gallery and not gallery_face_ok) else ("NOT_PROVIDED" if not has_gallery else "NOT_RUN"),
+                "detector_status_probe": "FACE_NOT_DETECTED" if not probe_face_ok else "NOT_RUN",
+                "detector_status_gallery": "FACE_NOT_DETECTED" if (has_gallery and not gallery_face_ok) else ("NOT_PROVIDED" if not has_gallery else "NOT_RUN"),
+                "matcher_status": "NOT_RUN_FACE_DETECTION_FAILED",
+                "calibration_status": "NOT_RUN_FACE_DETECTION_FAILED",
+                "lr_marks": None,
+                "mark_match_status": "FACE_NOT_DETECTED",
+                "rejection_summary": f"Face detection failed for side(s): {', '.join(failed_side)}. Cannot perform mark analysis.",
+                "mark_detector_trace": {"probe": None, "gallery": None},
+                "matcher_thresholds": get_matcher_thresholds(),
+                "technical_debt": "mark_matcher.py v2 integrated. Face detection failed."
+            },
+            "lr_marks": None,
+            "individual_mark_lrs": [],
+            "lr_calculation_trace": {
+                "individual_lrs": [], "product": None, "calibration_status": "NOT_RUN_FACE_DETECTION_FAILED",
+                "thresholds_used": detector_thresholds, "matcher_thresholds": get_matcher_thresholds()
+            },
+            "detector_thresholds": detector_thresholds,
+            "matcher_thresholds": get_matcher_thresholds(),
+            "mark_detector_version": MARK_DETECTOR_VERSION,
+            "mark_matcher_version": MARK_MATCHER_V2_VERSION,
+            "preprocessor_version": IMAGE_PREPROCESSOR_VERSION,
+            "probe_preprocessing": None,
+            "gallery_preprocessing": None
+        }
+
+    # ── 2. Preprocessing & Detection (Probe) ──
+    probe_pp = preprocess_for_mark_detection(probe_aligned_raw, landmarks=probe_landmarks, target_size=target_size)
+    probe_detector_input = probe_pp["images"]["mark_detector_input_bgr"]
+    det_h, det_w = probe_detector_input.shape[:2]
+    
+    marks_probe, rejected_probe_raw, occ_probe, trace_probe, overlays_probe = detect_facial_marks(
+        probe_detector_input, probe_landmarks, input_is_preprocessed=True
+    )
+    
+    valid_probe_marks = []
+    for m in marks_probe:
+        cx, cy = int(m["centroid"][0] * det_w), int(m["centroid"][1] * det_h)
+        if 0 <= cy < det_h and 0 <= cx < det_w and occ_probe[cy, cx] == 0:
+            clean_m = {k: v for k, v in m.items() if k != "contour"}
+            clean_m["source_side"] = "probe"
+            valid_probe_marks.append(clean_m)
+            
+    rejected_probe_serialized = [serialize_mark_descriptor(r) for r in rejected_probe_raw]
+
+    # ── 3. Preprocessing & Detection (Gallery) ──
+    valid_gallery_marks = []
+    rejected_gallery_serialized = []
+    trace_gallery = None
+    overlays_gallery = {}
+    marks_gallery = []
+    rejected_gallery_raw = []
+    gallery_pp = None
+
+    if has_gallery and gallery_face_ok:
+        gallery_pp = preprocess_for_mark_detection(gallery_aligned_raw, landmarks=gallery_landmarks, target_size=target_size)
+        gallery_detector_input = gallery_pp["images"]["mark_detector_input_bgr"]
+        gal_h, gal_w = gallery_detector_input.shape[:2]
+        
+        marks_gallery, rejected_gallery_raw, occ_gallery, trace_gallery, overlays_gallery = detect_facial_marks(
+            gallery_detector_input, gallery_landmarks, input_is_preprocessed=True
+        )
+        for m in marks_gallery:
+            cx, cy = int(m["centroid"][0] * gal_w), int(m["centroid"][1] * gal_h)
+            if 0 <= cy < gal_h and 0 <= cx < gal_w and occ_gallery[cy, cx] == 0:
+                clean_m = {k: v for k, v in m.items() if k != "contour"}
+                clean_m["source_side"] = "gallery"
+                valid_gallery_marks.append(clean_m)
+        rejected_gallery_serialized = [serialize_mark_descriptor(r) for r in rejected_gallery_raw]
+
+    # ── 4. Matching & LR ──
+    correspondences = []
+    rejected_cands = []
+    matcher_result = None
+    lr_marks = None
+    individual_mark_lrs = []
+    calibration_status = "NOT_APPLICABLE"
+
+    if not has_gallery:
+        mark_match_status = "NOT_RUN_SINGLE_IMAGE"
+        matcher_status = "NOT_RUN_SINGLE_IMAGE"
+        lr_marks = None
+    else:
+        exact_image_match = (probe_file_hash == gallery_file_hash) if (probe_file_hash and gallery_file_hash) else False
+
+        if exact_image_match:
+            mark_match_status = "EXACT_SELF_MATCH"
+            matcher_status = "EXACT_SELF_MATCH"
+            n_self = min(len(valid_probe_marks), len(valid_gallery_marks))
+            lr_marks = 1.0
+            individual_mark_lrs = [1.0] * n_self
+            calibration_status = "NOT_APPLICABLE_SELF_MATCH"
+            for si in range(n_self):
+                correspondences.append({
+                    "gallery_idx": si, "probe_idx": si,
+                    "gallery_centroid": list(valid_gallery_marks[si]["centroid"]),
+                    "probe_centroid": list(valid_probe_marks[si]["centroid"]),
+                    "position_distance": 0.0, "area_ratio": 1.0,
+                    "type_match": True, "region_match": True,
+                    "match_quality": 1.0,
+                    "mark_type": valid_gallery_marks[si].get("mark_type", "unknown"),
+                    "face_region": valid_gallery_marks[si].get("face_region", "unknown"),
+                    "match_cost": 0.0,
+                    "lr": 1.0,
+                })
+            matcher_result = {
+                "matched": n_self, "score": 100.0 if n_self > 0 else None,
+                "lr_marks": 1.0, "mark_lrs": individual_mark_lrs,
+                "matches": correspondences, "rejected_candidates": [],
+                "matcher_status": "EXACT_SELF_MATCH",
+                "calibration_status": calibration_status,
+                "matcher_version": MARK_MATCHER_V2_VERSION,
+            }
+        else:
+            matcher_result = match_marks_v2(
+                valid_gallery_marks, valid_probe_marks,
+                calibration=TIER4_CALIBRATION
+            )
+            matcher_status = matcher_result["matcher_status"]
+            calibration_status = matcher_result.get("calibration_status", "UNKNOWN")
+            lr_marks = matcher_result["lr_marks"]
+            individual_mark_lrs = matcher_result["mark_lrs"]
+            correspondences = matcher_result["matches"]
+            rejected_cands = matcher_result["rejected_candidates"]
+
+            if len(valid_probe_marks) < 2 or len(valid_gallery_marks) < 2:
+                mark_match_status = "INSUFFICIENT_MARKS"
+            elif matcher_result["matched"] > 0:
+                mark_match_status = "MATCHED"
+            else:
+                mark_match_status = "NO_MATCHES"
+
+    # ── 5. Detector Status ──
+    probe_detector_status = trace_probe.get("detector_status", "UNKNOWN") if trace_probe else "UNKNOWN"
+    gallery_detector_status = trace_gallery.get("detector_status", "UNKNOWN") if trace_gallery else ("NOT_PROVIDED" if not has_gallery else "UNKNOWN")
+
+    if len(marks_probe) > 0 or (has_gallery and len(marks_gallery) > 0):
+        overall_detector_status = "OK"
+    elif len(marks_probe) == 0 and (not has_gallery or len(marks_gallery) == 0):
+        overall_detector_status = "NO_CANDIDATES"
+    else:
+        overall_detector_status = "PARTIAL"
+
+    matched_count = matcher_result["matched"] if matcher_result else 0
+    mark_diagnostics_payload = {
+        "raw_probe_marks_count": len(valid_probe_marks),
+        "raw_gallery_marks_count": len(valid_gallery_marks),
+        "accepted_correspondences_count": matched_count,
+        "rejected_candidates_count": len(rejected_cands) if rejected_cands else 0,
+        "detector_status": overall_detector_status,
+        "probe_detector_status": probe_detector_status,
+        "gallery_detector_status": gallery_detector_status,
+        "detector_status_probe": probe_detector_status,
+        "detector_status_gallery": gallery_detector_status,
+        "matcher_status": matcher_status,
+        "calibration_status": calibration_status,
+        "lr_marks": finite_or_none(lr_marks),
+        "mark_match_status": mark_match_status,
+        "rejection_summary": _build_rejection_summary(
+            valid_probe_marks, valid_gallery_marks,
+            matcher_result or {}, rejected_cands, mark_match_status,
+            (probe_file_hash == gallery_file_hash) if (has_gallery and probe_file_hash and gallery_file_hash) else False,
+            TIER4_CALIBRATION,
+            trace_probe=trace_probe, trace_gallery=trace_gallery,
+        ) if has_gallery else (
+            f"Probe-only mode: {len(valid_probe_marks)} mark(s) detected, {len(rejected_probe_raw)} rejected. No gallery provided for matching."
+        ),
+        "mark_detector_trace": {"probe": trace_probe, "gallery": trace_gallery},
+        "matcher_thresholds": get_matcher_thresholds(),
+        "technical_debt": "mark_matcher.py v2 integrated via shared helper.",
+    }
+
+    lr_calculation_trace = {
+        "individual_lrs": [finite_or_none(lr) for lr in individual_mark_lrs],
+        "product": finite_or_none(lr_marks) if has_gallery else None,
+        "calibration_status": calibration_status,
+        "thresholds_used": detector_thresholds,
+        "matcher_thresholds": get_matcher_thresholds(),
+    }
+
+    def _pp_summary(pp_dict):
+        if not pp_dict: return None
+        return {
+            "decoded_hash": pp_dict["decoded_hash"],
+            "aligned_pre_clahe_hash": pp_dict["aligned_pre_clahe_hash"],
+            "aligned_post_clahe_hash": pp_dict["aligned_post_clahe_hash"],
+            "original_dimensions": pp_dict["original_dimensions"],
+            "decoded_dimensions": pp_dict["decoded_dimensions"],
+            "aligned_dimensions": pp_dict["aligned_dimensions"],
+            "quality": pp_dict["quality"],
+            "preprocessing_steps": pp_dict["preprocessing_steps"],
+            "preprocessor_version": pp_dict.get("preprocessor_version", IMAGE_PREPROCESSOR_VERSION),
+            "aligned_pre_clahe_b64": pp_dict.get("debug_b64", {}).get("aligned_b64"),
+            "aligned_post_clahe_b64": pp_dict.get("debug_b64", {}).get("lab_clahe_b64"),
+            "illumination_normalized_b64": pp_dict.get("debug_b64", {}).get("illumination_normalized_b64"),
+            "mark_detector_input_b64": pp_dict.get("debug_b64", {}).get("mark_detector_input_b64"),
+            "skin_mask_b64": pp_dict.get("debug_b64", {}).get("skin_mask_b64"),
+        }
+
+    return {
+        "mode": "probe_only" if not has_gallery else "paired",
+        "aligned_probe_b64": probe_pp["debug_b64"]["aligned_b64"] if probe_pp else None,
+        "aligned_gallery_b64": gallery_pp["debug_b64"]["aligned_b64"] if gallery_pp else None,
+        "raw_probe_marks": [serialize_mark_descriptor(m) for m in valid_probe_marks],
+        "raw_gallery_marks": [serialize_mark_descriptor(m) for m in valid_gallery_marks],
+        "rejected_probe_marks": rejected_probe_serialized,
+        "rejected_gallery_marks": rejected_gallery_serialized,
+        "accepted_correspondences": correspondences,
+        "rejected_correspondences": rejected_cands,
+        "mark_match_status": mark_match_status,
+        "matcher_status": matcher_status,
+        "mark_diagnostics": mark_diagnostics_payload,
+        "lr_marks": finite_or_none(lr_marks) if has_gallery else None,
+        "individual_mark_lrs": [finite_or_none(lr) for lr in individual_mark_lrs],
+        "lr_calculation_trace": lr_calculation_trace,
+        "detector_thresholds": detector_thresholds,
+        "matcher_thresholds": get_matcher_thresholds(),
+        "mark_detector_version": MARK_DETECTOR_VERSION,
+        "mark_matcher_version": MARK_MATCHER_V2_VERSION,
+        "preprocessor_version": IMAGE_PREPROCESSOR_VERSION,
+        "probe_preprocessing": _pp_summary(probe_pp),
+        "gallery_preprocessing": _pp_summary(gallery_pp),
+    }
+
+# ---------------------------------------------------------
 # MARK-ONLY ANALYSIS GATEWAY (Court-Survivable v2 — Phase 2)
 # ---------------------------------------------------------
 
