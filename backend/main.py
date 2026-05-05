@@ -2414,30 +2414,25 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             target_size=1024,
         )
         
-        valid_probe_marks = mark_payload["mark_provenance"]["probe_valid_marks"]
-        valid_gallery_marks = mark_payload.get("mark_provenance", {}).get("gallery_valid_marks", [])
+        valid_probe_marks = mark_payload.get("raw_probe_marks", [])
+        valid_gallery_marks = mark_payload.get("raw_gallery_marks", [])
         
         marks_gallery = valid_gallery_marks
         marks_probe = valid_probe_marks
         
-        mark_result = mark_payload.get("mark_result_payload", {})
-        mark_match_status = mark_payload["mark_match_status"]
+        mark_result = {}
+        mark_match_status = mark_payload.get("mark_match_status", "UNKNOWN")
         exact_image_match = mark_match_status == "EXACT_SELF_MATCH"
-        tier4_score = mark_result.get("score", 0.0) if mark_result else 0.0
+        tier4_score = 100.0 if exact_image_match else 0.0
         
-        assigned_pairs = mark_payload.get("correspondences_raw", [])
-        unmatched_gal = mark_result.get("unmatched_gallery", []) if not exact_image_match else []
-        unmatched_pro = mark_result.get("unmatched_probe", []) if not exact_image_match else []
-        rejected_cands = []
+        assigned_pairs = mark_payload.get("accepted_correspondences", [])
+        unmatched_gal = []
+        unmatched_pro = []
+        rejected_cands = mark_payload.get("rejected_correspondences", [])
         
         lr_marks = mark_payload.get("lr_marks") if mark_payload.get("lr_marks") is not None else 1.0
         
-        probe_aligned_crop_hash_pre_clahe = mark_payload["mark_provenance"].get("probe_pre_clahe_hash", probe_aligned_crop_hash_pre_clahe)
-        probe_aligned_crop_hash_post_clahe = mark_payload["mark_provenance"].get("probe_post_clahe_hash", probe_aligned_crop_hash_post_clahe)
-        gallery_aligned_crop_hash_pre_clahe = mark_payload["mark_provenance"].get("gallery_pre_clahe_hash", gallery_aligned_crop_hash_pre_clahe)
-        gallery_aligned_crop_hash_post_clahe = mark_payload["mark_provenance"].get("gallery_post_clahe_hash", gallery_aligned_crop_hash_post_clahe)
-
-        _v2_mark_diagnostics_payload = mark_payload["mark_diagnostics"]
+        _v2_mark_diagnostics_payload = mark_payload.get("mark_diagnostics", {})
         trace_probe = _v2_mark_diagnostics_payload.get("mark_detector_trace", {}).get("probe")
         trace_gallery = _v2_mark_diagnostics_payload.get("mark_detector_trace", {}).get("gallery")
         
