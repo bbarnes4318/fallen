@@ -3041,19 +3041,26 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
     """
     Standalone mark-only diagnostic endpoint.
 
-    Runs ONLY: image decode -> CLAHE -> alignment -> mark detection -> matching -> LR.
-    Does NOT run: ArcFace, Facenet512, LBP, vault search, or full Bayesian fusion.
+    Pipeline (v1.158+):
+      raw image -> align_face_crop(raw) -> preprocess_for_mark_detection(aligned, 1024)
+      -> detect_facial_marks(mark_detector_input_bgr, landmarks)
 
+    Does NOT run: ArcFace, Facenet512, LBP, vault search, or full Bayesian fusion.
     Supports probe-only mode (no gallery required) and probe+gallery mode.
     Protected by JWT authentication and rate limiting.
+
+    NOTE: mark_detector.py still applies internal CLAHE in some channels
+    (dark_lesion, bright_scar, linear_scar_v2). This is documented technical
+    debt — the preprocessor provides single-CLAHE input, but the detector
+    adds a second pass internally. This will be addressed in a future step.
     """
+    from image_preprocessor import preprocess_for_mark_detection, IMAGE_PREPROCESSOR_VERSION
+
     # ── 1. Image Acquisition ──
-    # Probe is always required
     probe_img, probe_file_hash = _resolve_mark_image(
         payload.probe_b64, payload.probe_url, "probe"
     )
 
-    # Gallery is optional — determines probe-only vs. paired mode
     has_gallery = bool(payload.gallery_b64 or payload.gallery_url)
     gallery_img = None
     gallery_file_hash = None
@@ -3062,25 +3069,16 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
             payload.gallery_b64, payload.gallery_url, "gallery"
         )
 
-    # ── 2. CLAHE + Alignment ──
-    probe_clahe = apply_clahe(probe_img)
-    probe_aligned, probe_landmarks = align_face_crop(probe_clahe)
+    # ── 2. Alignment on RAW image (no pre-CLAHE) ──
+    # align_face_crop returns (aligned_crop, landmarks) at 256×256 by default.
+    # We align at 256 first (MediaPipe expects reasonable size), then the
+    # preprocessor resizes to 1024 for mark detection.
+    probe_aligned_raw, probe_landmarks = align_face_crop(probe_img)
 
-    gallery_aligned = None
+    gallery_aligned_raw = None
     gallery_landmarks = None
     if has_gallery:
-        gallery_clahe = apply_clahe(gallery_img)
-        gallery_aligned, gallery_landmarks = align_face_crop(gallery_clahe)
-
-    # Encode aligned crops for response
-    aligned_probe_b64 = None
-    aligned_gallery_b64 = None
-    if probe_aligned is not None:
-        _, pro_buf = cv2.imencode('.png', probe_aligned)
-        aligned_probe_b64 = f"data:image/png;base64,{base64.b64encode(pro_buf).decode('utf-8')}"
-    if gallery_aligned is not None:
-        _, gal_buf = cv2.imencode('.png', gallery_aligned)
-        aligned_gallery_b64 = f"data:image/png;base64,{base64.b64encode(gal_buf).decode('utf-8')}"
+        gallery_aligned_raw, gallery_landmarks = align_face_crop(gallery_img)
 
     # Canonical thresholds from mark_detector.py (single source of truth)
     detector_thresholds = get_detector_thresholds()
@@ -3095,6 +3093,15 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
             failed_side.append("probe")
         if has_gallery and not gallery_face_ok:
             failed_side.append("gallery")
+        # Encode whatever aligned crops we got for diagnostics
+        aligned_probe_b64 = None
+        aligned_gallery_b64 = None
+        if probe_aligned_raw is not None:
+            _, pro_buf = cv2.imencode('.png', probe_aligned_raw)
+            aligned_probe_b64 = f"data:image/png;base64,{base64.b64encode(pro_buf).decode('utf-8')}"
+        if gallery_aligned_raw is not None:
+            _, gal_buf = cv2.imencode('.png', gallery_aligned_raw)
+            aligned_gallery_b64 = f"data:image/png;base64,{base64.b64encode(gal_buf).decode('utf-8')}"
         return {
             "aligned_probe_b64": aligned_probe_b64,
             "aligned_gallery_b64": aligned_gallery_b64,
@@ -3132,41 +3139,52 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
             "detector_thresholds": detector_thresholds,
             "mark_detector_version": _MDV,
             "mark_matcher_version": MARK_MATCHER_VERSION,
+            "preprocessor_version": IMAGE_PREPROCESSOR_VERSION,
             "mode": "probe_only" if not has_gallery else "paired",
         }
 
-    # ── 4. Mark Detection — Probe (always) ──
-    marks_probe, rejected_probe_raw, occ_probe, trace_probe, overlays_probe = detect_facial_marks(probe_aligned, probe_landmarks)
+    # ── 4. Deterministic Preprocessing (probe) ──
+    probe_pp = preprocess_for_mark_detection(probe_aligned_raw, landmarks=probe_landmarks, target_size=1024)
+    probe_detector_input = probe_pp["images"]["mark_detector_input_bgr"]
+    det_h, det_w = probe_detector_input.shape[:2]
+
+    # ── 5. Mark Detection — Probe ──
+    marks_probe, rejected_probe_raw, occ_probe, trace_probe, overlays_probe = detect_facial_marks(probe_detector_input, probe_landmarks)
 
     valid_probe_marks = []
     for m in marks_probe:
-        cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
-        if cy < 256 and cx < 256 and occ_probe[cy, cx] == 0:
+        cx, cy = int(m["centroid"][0] * det_w), int(m["centroid"][1] * det_h)
+        if 0 <= cy < det_h and 0 <= cx < det_w and occ_probe[cy, cx] == 0:
             clean_m = {k: v for k, v in m.items() if k != "contour"}
             clean_m["source_side"] = "probe"
             valid_probe_marks.append(clean_m)
 
     rejected_probe_serialized = [serialize_mark_descriptor(r) for r in rejected_probe_raw]
 
-    # ── 5. Mark Detection — Gallery (if provided) ──
+    # ── 6. Deterministic Preprocessing + Detection — Gallery ──
     valid_gallery_marks = []
     rejected_gallery_serialized = []
     trace_gallery = None
     overlays_gallery = {}
     marks_gallery = []
     rejected_gallery_raw = []
+    gallery_pp = None
 
     if has_gallery and gallery_face_ok:
-        marks_gallery, rejected_gallery_raw, occ_gallery, trace_gallery, overlays_gallery = detect_facial_marks(gallery_aligned, gallery_landmarks)
+        gallery_pp = preprocess_for_mark_detection(gallery_aligned_raw, landmarks=gallery_landmarks, target_size=1024)
+        gallery_detector_input = gallery_pp["images"]["mark_detector_input_bgr"]
+        gal_h, gal_w = gallery_detector_input.shape[:2]
+
+        marks_gallery, rejected_gallery_raw, occ_gallery, trace_gallery, overlays_gallery = detect_facial_marks(gallery_detector_input, gallery_landmarks)
         for m in marks_gallery:
-            cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
-            if cy < 256 and cx < 256 and occ_gallery[cy, cx] == 0:
+            cx, cy = int(m["centroid"][0] * gal_w), int(m["centroid"][1] * gal_h)
+            if 0 <= cy < gal_h and 0 <= cx < gal_w and occ_gallery[cy, cx] == 0:
                 clean_m = {k: v for k, v in m.items() if k != "contour"}
                 clean_m["source_side"] = "gallery"
                 valid_gallery_marks.append(clean_m)
         rejected_gallery_serialized = [serialize_mark_descriptor(r) for r in rejected_gallery_raw]
 
-    # ── 6. Matching & LR (only if both sides present) ──
+    # ── 7. Matching & LR (only if both sides present) ──
     correspondences = []
     rejected_cands = []
     mark_result = {"score": None, "matched": 0, "total_gallery": 0, "total_probe": len(valid_probe_marks), "matches": [], "lr_marks": 1.0, "mark_lrs": []}
@@ -3251,7 +3269,7 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
 
         matcher_status = "OK" if mark_result.get("matched", 0) > 0 else ("NO_MATCHES" if (len(valid_probe_marks) > 0 and len(valid_gallery_marks) > 0) else "INSUFFICIENT_INPUT")
 
-    # ── 7. Detector status per side ──
+    # ── 8. Detector status per side ──
     probe_detector_status = trace_probe.get("detector_status", "UNKNOWN") if trace_probe else "UNKNOWN"
     gallery_detector_status = trace_gallery.get("detector_status", "UNKNOWN") if trace_gallery else ("NOT_PROVIDED" if not has_gallery else "UNKNOWN")
 
@@ -3262,7 +3280,7 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
     else:
         overall_detector_status = "PARTIAL"
 
-    # ── 8. Mark Diagnostics (always present, always truthful) ──
+    # ── 9. Mark Diagnostics (always present, always truthful) ──
     mark_diagnostics_payload = {
         "raw_probe_marks_count": len(valid_probe_marks),
         "raw_gallery_marks_count": len(valid_gallery_marks),
@@ -3289,9 +3307,10 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
             "probe": trace_probe,
             "gallery": trace_gallery,
         },
+        "technical_debt": "mark_detector.py still applies internal CLAHE in dark_lesion/bright_scar/linear_scar_v2 channels (double-CLAHE on those channels)",
     }
 
-    # ── 9. LR Calculation Trace ──
+    # ── 10. LR Calculation Trace ──
     lr_calculation_trace = {
         "individual_lrs": [finite_or_none(lr) for lr in individual_mark_lrs],
         "product": finite_or_none(lr_marks) if has_gallery else None,
@@ -3299,11 +3318,31 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
         "thresholds_used": detector_thresholds,
     }
 
-    # ── 10. Build Response ──
+    # ── 11. Build Preprocessing Summary (strip numpy arrays) ──
+    def _pp_summary(pp_dict):
+        """Extract JSON-safe preprocessing summary (no numpy arrays)."""
+        return {
+            "decoded_hash": pp_dict["decoded_hash"],
+            "aligned_pre_clahe_hash": pp_dict["aligned_pre_clahe_hash"],
+            "aligned_post_clahe_hash": pp_dict["aligned_post_clahe_hash"],
+            "original_dimensions": pp_dict["original_dimensions"],
+            "decoded_dimensions": pp_dict["decoded_dimensions"],
+            "aligned_dimensions": pp_dict["aligned_dimensions"],
+            "quality": pp_dict["quality"],
+            "preprocessing_steps": pp_dict["preprocessing_steps"],
+            "preprocessor_version": pp_dict.get("preprocessor_version", IMAGE_PREPROCESSOR_VERSION),
+            "aligned_pre_clahe_b64": pp_dict["debug_b64"]["aligned_b64"],
+            "aligned_post_clahe_b64": pp_dict["debug_b64"]["lab_clahe_b64"],
+            "illumination_normalized_b64": pp_dict["debug_b64"]["illumination_normalized_b64"],
+            "mark_detector_input_b64": pp_dict["debug_b64"]["mark_detector_input_b64"],
+            "skin_mask_b64": pp_dict["debug_b64"]["skin_mask_b64"],
+        }
+
+    # ── 12. Build Response ──
     result = {
         "mode": "probe_only" if not has_gallery else "paired",
-        "aligned_probe_b64": aligned_probe_b64,
-        "aligned_gallery_b64": aligned_gallery_b64,
+        "aligned_probe_b64": probe_pp["debug_b64"]["aligned_b64"],
+        "aligned_gallery_b64": gallery_pp["debug_b64"]["aligned_b64"] if gallery_pp else None,
         "raw_probe_marks": [serialize_mark_descriptor(m) for m in valid_probe_marks],
         "raw_gallery_marks": [serialize_mark_descriptor(m) for m in valid_gallery_marks],
         "rejected_probe_marks": rejected_probe_serialized,
@@ -3318,11 +3357,14 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
         "detector_thresholds": detector_thresholds,
         "mark_detector_version": _MDV,
         "mark_matcher_version": MARK_MATCHER_VERSION,
+        "preprocessor_version": IMAGE_PREPROCESSOR_VERSION,
+        "probe_preprocessing": _pp_summary(probe_pp),
+        "gallery_preprocessing": _pp_summary(gallery_pp) if gallery_pp else None,
     }
 
-    # ── 11. Debug Overlays (gated behind DEBUG_FORENSIC) ──
+    # ── 13. Debug Overlays (gated behind DEBUG_FORENSIC) ──
     if os.getenv("DEBUG_FORENSIC") == "true":
-        pro_debug_img = probe_aligned.copy()
+        pro_debug_img = probe_detector_input.copy()
         pro_matched_idx = set()
         if has_gallery:
             for match_entry in mark_result.get("matches", []):
@@ -3331,15 +3373,17 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
                 elif isinstance(match_entry, (tuple, list)) and len(match_entry) >= 2:
                     pro_matched_idx.add(match_entry[1])
         for idx, m in enumerate(valid_probe_marks):
-            cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
+            cx, cy = int(m["centroid"][0] * det_w), int(m["centroid"][1] * det_h)
             color = (0, 255, 0) if idx in pro_matched_idx else (128, 128, 128)
-            cv2.circle(pro_debug_img, (cx, cy), 4, color, 2)
-            cv2.putText(pro_debug_img, str(idx), (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
+            cv2.circle(pro_debug_img, (cx, cy), 6, color, 2)
+            cv2.putText(pro_debug_img, str(idx), (cx + 7, cy - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
         _, pro_dbuf = cv2.imencode('.png', pro_debug_img)
         result["probe_marks_overlay_b64"] = f"data:image/png;base64,{base64.b64encode(pro_dbuf).decode('utf-8')}"
 
-        if has_gallery and gallery_aligned is not None:
-            gal_debug_img = gallery_aligned.copy()
+        if has_gallery and gallery_pp is not None:
+            gal_det_input = gallery_pp["images"]["mark_detector_input_bgr"]
+            gal_dh, gal_dw = gal_det_input.shape[:2]
+            gal_debug_img = gal_det_input.copy()
             gal_matched_idx = set()
             for match_entry in mark_result.get("matches", []):
                 if isinstance(match_entry, dict):
@@ -3347,10 +3391,10 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
                 elif isinstance(match_entry, (tuple, list)) and len(match_entry) >= 2:
                     gal_matched_idx.add(match_entry[0])
             for idx, m in enumerate(valid_gallery_marks):
-                cx, cy = int(m["centroid"][0] * 256), int(m["centroid"][1] * 256)
+                cx, cy = int(m["centroid"][0] * gal_dw), int(m["centroid"][1] * gal_dh)
                 color = (0, 255, 0) if idx in gal_matched_idx else (128, 128, 128)
-                cv2.circle(gal_debug_img, (cx, cy), 4, color, 2)
-                cv2.putText(gal_debug_img, str(idx), (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
+                cv2.circle(gal_debug_img, (cx, cy), 6, color, 2)
+                cv2.putText(gal_debug_img, str(idx), (cx + 7, cy - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
             _, gal_dbuf = cv2.imencode('.png', gal_debug_img)
             result["gallery_marks_overlay_b64"] = f"data:image/png;base64,{base64.b64encode(gal_dbuf).decode('utf-8')}"
 
@@ -3365,6 +3409,7 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
         }
 
     return result
+
 
 
 # ---------------------------------------------------------
