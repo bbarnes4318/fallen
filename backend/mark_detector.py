@@ -246,8 +246,14 @@ def _generate_contours(binary_mask, valid_mask, kernel):
     return cnts
 
 
-def _run_channels(aligned_crop, gray, valid_mask, kernel, h, w):
-    """Run all detection channels. Returns dict of channel_name -> contour_list."""
+def _run_channels(aligned_crop, gray, valid_mask, kernel, h, w, input_is_preprocessed=False):
+    """Run all detection channels. Returns dict of channel_name -> contour_list.
+
+    Args:
+        input_is_preprocessed: If True, the input has already been CLAHE-enhanced
+            by image_preprocessor.py. Internal CLAHE is skipped to avoid double-CLAHE.
+            If False (default), internal CLAHE is applied for backward compatibility.
+    """
     channels = {}
 
     # Legacy dark
@@ -278,24 +284,36 @@ def _run_channels(aligned_crop, gray, valid_mask, kernel, h, w):
     # LAB dark lesion
     lab = cv2.cvtColor(aligned_crop, cv2.COLOR_BGR2LAB)
     L = lab[:, :, 0]
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    L_clahe = clahe.apply(L)
-    bg = cv2.medianBlur(L_clahe, 31)
-    dark_delta = cv2.subtract(bg, L_clahe)
+    if input_is_preprocessed:
+        # Input already CLAHE-enhanced by image_preprocessor — use L directly
+        L_enhanced = L
+    else:
+        # Legacy path: apply internal CLAHE (production routes)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        L_enhanced = clahe.apply(L)
+    bg = cv2.medianBlur(L_enhanced, 31)
+    dark_delta = cv2.subtract(bg, L_enhanced)
     _, dd_thresh = cv2.threshold(dark_delta, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     channels["dark_lesion"] = _generate_contours(dd_thresh, valid_mask, kernel)
 
     # LAB bright scar
-    bright_delta = cv2.subtract(L_clahe, bg)
+    bright_delta = cv2.subtract(L_enhanced, bg)
     p95 = np.percentile(bright_delta[valid_mask > 0], 95) if np.any(valid_mask > 0) else 10
     thr = max(int(p95 * 0.7), 5)
     _, bd_thresh = cv2.threshold(bright_delta, thr, 255, cv2.THRESH_BINARY)
     channels["bright_scar"] = _generate_contours(bd_thresh, valid_mask, kernel)
 
     # Gradient linear scar v2
-    gray_clahe = clahe.apply(gray)
-    sx = cv2.Scharr(gray_clahe, cv2.CV_64F, 1, 0)
-    sy = cv2.Scharr(gray_clahe, cv2.CV_64F, 0, 1)
+    if input_is_preprocessed:
+        # Input already CLAHE-enhanced — use gray directly
+        gray_enhanced = gray
+    else:
+        # Legacy path: apply internal CLAHE
+        if 'clahe' not in locals():
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        gray_enhanced = clahe.apply(gray)
+    sx = cv2.Scharr(gray_enhanced, cv2.CV_64F, 1, 0)
+    sy = cv2.Scharr(gray_enhanced, cv2.CV_64F, 0, 1)
     grad = np.sqrt(sx**2 + sy**2).astype(np.uint8)
     _, gm = cv2.threshold(grad, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     combined_lines = np.zeros_like(gm)
@@ -388,8 +406,16 @@ def _filter_contours(channels, gray, skin_mask, valid_mask, h, w, landmarks,
     return marks, rejected, t
 
 
-def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple:
+def detect_facial_marks(aligned_crop: np.ndarray, landmarks,
+                        input_is_preprocessed: bool = False) -> tuple:
     """Multi-channel facial mark detector v2.1.0.
+
+    Args:
+        aligned_crop: BGR uint8 aligned face crop.
+        landmarks: MediaPipe face mesh landmarks or None.
+        input_is_preprocessed: If True, input has already been CLAHE-enhanced
+            by image_preprocessor.py and internal CLAHE will be skipped.
+            Defaults to False for backward compatibility with production routes.
 
     Returns: (marks, rejected_marks, occ_mask, trace, overlays)
     """
@@ -408,9 +434,13 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks) -> tuple:
     valid_mask = cv2.bitwise_and(skin_mask, cv2.bitwise_not(occ_mask))
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
 
-    channels, raw_masks = _run_channels(aligned_crop, gray, valid_mask, kernel, h, w)
+    internal_clahe_applied = not input_is_preprocessed
+    channels, raw_masks = _run_channels(aligned_crop, gray, valid_mask, kernel, h, w,
+                                        input_is_preprocessed=input_is_preprocessed)
 
     trace = {
+        "input_is_preprocessed": input_is_preprocessed,
+        "internal_clahe_applied": internal_clahe_applied,
         "initial_candidates": sum(len(c) for c in channels.values()),
         "after_skin_mask": 0, "after_area_filter": 0, "after_shape_filter": 0,
         "after_region_exclusion": 0, "after_contrast_filter": 0,

@@ -3149,7 +3149,7 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
     det_h, det_w = probe_detector_input.shape[:2]
 
     # ── 5. Mark Detection — Probe ──
-    marks_probe, rejected_probe_raw, occ_probe, trace_probe, overlays_probe = detect_facial_marks(probe_detector_input, probe_landmarks)
+    marks_probe, rejected_probe_raw, occ_probe, trace_probe, overlays_probe = detect_facial_marks(probe_detector_input, probe_landmarks, input_is_preprocessed=True)
 
     valid_probe_marks = []
     for m in marks_probe:
@@ -3175,7 +3175,7 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
         gallery_detector_input = gallery_pp["images"]["mark_detector_input_bgr"]
         gal_h, gal_w = gallery_detector_input.shape[:2]
 
-        marks_gallery, rejected_gallery_raw, occ_gallery, trace_gallery, overlays_gallery = detect_facial_marks(gallery_detector_input, gallery_landmarks)
+        marks_gallery, rejected_gallery_raw, occ_gallery, trace_gallery, overlays_gallery = detect_facial_marks(gallery_detector_input, gallery_landmarks, input_is_preprocessed=True)
         for m in marks_gallery:
             cx, cy = int(m["centroid"][0] * gal_w), int(m["centroid"][1] * gal_h)
             if 0 <= cy < gal_h and 0 <= cx < gal_w and occ_gallery[cy, cx] == 0:
@@ -3307,7 +3307,7 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
             "probe": trace_probe,
             "gallery": trace_gallery,
         },
-        "technical_debt": "mark_detector.py still applies internal CLAHE in dark_lesion/bright_scar/linear_scar_v2 channels (double-CLAHE on those channels)",
+        "technical_debt": "Double-CLAHE eliminated for /marks/analyze (input_is_preprocessed=True). Production routes (/verify/fuse, /vault/search) still use legacy internal CLAHE — integration pending.",
     }
 
     # ── 10. LR Calculation Trace ──
