@@ -1653,6 +1653,11 @@ from mark_detector import (
     _LEFT_EYE_IDX, _RIGHT_EYE_IDX, _LEFT_BROW_IDX, _RIGHT_BROW_IDX,
     _NOSE_IDX, _LIPS_IDX, _FACE_OVAL_IDX, _BORDER_MARGIN,
 )
+from mark_matcher import (
+    match_facial_marks as match_marks_v2,
+    MARK_MATCHER_VERSION as MARK_MATCHER_V2_VERSION,
+    get_matcher_thresholds,
+)
 
 
 def match_facial_marks(marks_gallery: list, marks_probe: list, dist_threshold: float = 0.20):
@@ -3187,87 +3192,67 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
     # ── 7. Matching & LR (only if both sides present) ──
     correspondences = []
     rejected_cands = []
-    mark_result = {"score": None, "matched": 0, "total_gallery": 0, "total_probe": len(valid_probe_marks), "matches": [], "lr_marks": 1.0, "mark_lrs": []}
-    lr_marks = 1.0
+    matcher_result = None
+    lr_marks = None
     individual_mark_lrs = []
+    calibration_status = "NOT_APPLICABLE"
 
     if not has_gallery:
         mark_match_status = "NOT_RUN_SINGLE_IMAGE"
         matcher_status = "NOT_RUN_SINGLE_IMAGE"
+        lr_marks = None
     else:
         exact_image_match = (probe_file_hash == gallery_file_hash) if (probe_file_hash and gallery_file_hash) else False
 
         if exact_image_match:
+            # ── Exact self-match: LR is neutral (same-image mark evidence is circular) ──
             mark_match_status = "EXACT_SELF_MATCH"
+            matcher_status = "EXACT_SELF_MATCH"
             n_self = min(len(valid_probe_marks), len(valid_gallery_marks))
-            assigned_pairs = []
+            lr_marks = 1.0
+            individual_mark_lrs = [1.0] * n_self
+            calibration_status = "NOT_APPLICABLE_SELF_MATCH"
             for si in range(n_self):
-                assigned_pairs.append({
+                correspondences.append({
                     "gallery_idx": si, "probe_idx": si,
-                    "cost": 0.0, "position_distance": 0.0, "area_ratio": 1.0,
-                    "type_match": True, "region_match": True,
-                    "mark_type": valid_gallery_marks[si].get("mark_type", "unknown"),
-                    "face_region": valid_gallery_marks[si].get("face_region", "unknown"),
                     "gallery_centroid": list(valid_gallery_marks[si]["centroid"]),
                     "probe_centroid": list(valid_probe_marks[si]["centroid"]),
+                    "position_distance": 0.0, "area_ratio": 1.0,
+                    "type_match": True, "region_match": True,
+                    "match_quality": 1.0,
+                    "mark_type": valid_gallery_marks[si].get("mark_type", "unknown"),
+                    "face_region": valid_gallery_marks[si].get("face_region", "unknown"),
+                    "match_cost": 0.0,
+                    "lr": 1.0,
                 })
-            rejected_cands = []
-            mark_result = {
-                "score": 100.0, "matched": n_self,
-                "total_gallery": len(valid_gallery_marks), "total_probe": len(valid_probe_marks),
-                "matches": [(si, si, 1.0) for si in range(n_self)],
-                "lr_marks": 1.0, "mark_lrs": [],
+            matcher_result = {
+                "matched": n_self, "score": 100.0 if n_self > 0 else None,
+                "lr_marks": 1.0, "mark_lrs": individual_mark_lrs,
+                "matches": correspondences, "rejected_candidates": [],
+                "matcher_status": "EXACT_SELF_MATCH",
+                "calibration_status": calibration_status,
+                "matcher_version": MARK_MATCHER_V2_VERSION,
             }
         else:
-            assigned_pairs, unmatched_gal, unmatched_pro, rejected_cands = match_facial_marks(
-                valid_gallery_marks, valid_probe_marks
+            # ── Paired non-self-match: use mark_matcher.py v2 ──
+            matcher_result = match_marks_v2(
+                valid_gallery_marks, valid_probe_marks,
+                calibration=TIER4_CALIBRATION
             )
-            mark_result = compute_mark_correspondence(
-                valid_gallery_marks, valid_probe_marks, matched_pairs=assigned_pairs
-            )
+
+            matcher_status = matcher_result["matcher_status"]
+            calibration_status = matcher_result.get("calibration_status", "UNKNOWN")
+            lr_marks = matcher_result["lr_marks"]
+            individual_mark_lrs = matcher_result["mark_lrs"]
+            correspondences = matcher_result["matches"]
+            rejected_cands = matcher_result["rejected_candidates"]
 
             if len(valid_probe_marks) < 2 or len(valid_gallery_marks) < 2:
                 mark_match_status = "INSUFFICIENT_MARKS"
-            elif mark_result.get("matched", 0) > 0:
+            elif matcher_result["matched"] > 0:
                 mark_match_status = "MATCHED"
             else:
                 mark_match_status = "NO_MATCHES"
-
-        lr_marks = mark_result.get("lr_marks", 1.0)
-        individual_mark_lrs = mark_result.get("mark_lrs", [])
-
-        # Build enriched correspondences
-        lr_lookup = {}
-        for match_entry in mark_result.get("matches", []):
-            if isinstance(match_entry, dict):
-                lr_lookup[(match_entry.get("gallery_idx"), match_entry.get("probe_idx"))] = match_entry.get("lr", 0)
-            elif isinstance(match_entry, (tuple, list)) and len(match_entry) >= 3:
-                lr_lookup[(match_entry[0], match_entry[1])] = match_entry[2]
-
-        for pair in assigned_pairs:
-            if isinstance(pair, dict):
-                g_idx = pair.get("gallery_idx")
-                p_idx = pair.get("probe_idx")
-            elif isinstance(pair, (tuple, list)) and len(pair) >= 2:
-                g_idx, p_idx = pair[0], pair[1]
-            else:
-                continue
-            if not isinstance(g_idx, int) or not isinstance(p_idx, int):
-                continue
-            if g_idx < 0 or g_idx >= len(valid_gallery_marks) or p_idx < 0 or p_idx >= len(valid_probe_marks):
-                continue
-            individual_lr = lr_lookup.get((g_idx, p_idx), 0)
-            correspondences.append({
-                "gallery_idx": g_idx,
-                "probe_idx": p_idx,
-                "gallery_pt": valid_gallery_marks[g_idx]["centroid"],
-                "probe_pt": valid_probe_marks[p_idx]["centroid"],
-                "lr": individual_lr,
-                "mark_type": valid_gallery_marks[g_idx].get("mark_type", "unknown"),
-                "face_region": valid_gallery_marks[g_idx].get("face_region", "unknown"),
-            })
-
-        matcher_status = "OK" if mark_result.get("matched", 0) > 0 else ("NO_MATCHES" if (len(valid_probe_marks) > 0 and len(valid_gallery_marks) > 0) else "INSUFFICIENT_INPUT")
 
     # ── 8. Detector status per side ──
     probe_detector_status = trace_probe.get("detector_status", "UNKNOWN") if trace_probe else "UNKNOWN"
@@ -3281,10 +3266,11 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
         overall_detector_status = "PARTIAL"
 
     # ── 9. Mark Diagnostics (always present, always truthful) ──
+    matched_count = matcher_result["matched"] if matcher_result else 0
     mark_diagnostics_payload = {
         "raw_probe_marks_count": len(valid_probe_marks),
         "raw_gallery_marks_count": len(valid_gallery_marks),
-        "accepted_correspondences_count": mark_result.get("matched", 0),
+        "accepted_correspondences_count": matched_count,
         "rejected_candidates_count": len(rejected_cands) if rejected_cands else 0,
         "detector_status": overall_detector_status,
         "probe_detector_status": probe_detector_status,
@@ -3292,11 +3278,12 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
         "detector_status_probe": probe_detector_status,
         "detector_status_gallery": gallery_detector_status,
         "matcher_status": matcher_status,
+        "calibration_status": calibration_status,
         "lr_marks": finite_or_none(lr_marks),
         "mark_match_status": mark_match_status,
         "rejection_summary": _build_rejection_summary(
             valid_probe_marks, valid_gallery_marks,
-            mark_result, rejected_cands, mark_match_status,
+            matcher_result or {}, rejected_cands, mark_match_status,
             (probe_file_hash == gallery_file_hash) if (has_gallery and probe_file_hash and gallery_file_hash) else False,
             TIER4_CALIBRATION,
             trace_probe=trace_probe, trace_gallery=trace_gallery,
@@ -3307,15 +3294,17 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
             "probe": trace_probe,
             "gallery": trace_gallery,
         },
-        "technical_debt": "Double-CLAHE eliminated for /marks/analyze (input_is_preprocessed=True). Production routes (/verify/fuse, /vault/search) still use legacy internal CLAHE — integration pending.",
+        "matcher_thresholds": get_matcher_thresholds(),
+        "technical_debt": "mark_matcher.py v2 integrated for /marks/analyze. Production routes still use legacy in-main matcher.",
     }
 
     # ── 10. LR Calculation Trace ──
     lr_calculation_trace = {
         "individual_lrs": [finite_or_none(lr) for lr in individual_mark_lrs],
         "product": finite_or_none(lr_marks) if has_gallery else None,
-        "calibration_status": "LOADED" if TIER4_CALIBRATION else "MISSING",
+        "calibration_status": calibration_status,
         "thresholds_used": detector_thresholds,
+        "matcher_thresholds": get_matcher_thresholds(),
     }
 
     # ── 11. Build Preprocessing Summary (strip numpy arrays) ──
@@ -3356,7 +3345,7 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
         "lr_calculation_trace": lr_calculation_trace,
         "detector_thresholds": detector_thresholds,
         "mark_detector_version": _MDV,
-        "mark_matcher_version": MARK_MATCHER_VERSION,
+        "mark_matcher_version": MARK_MATCHER_V2_VERSION,
         "preprocessor_version": IMAGE_PREPROCESSOR_VERSION,
         "probe_preprocessing": _pp_summary(probe_pp),
         "gallery_preprocessing": _pp_summary(gallery_pp) if gallery_pp else None,
@@ -3366,8 +3355,8 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
     if os.getenv("DEBUG_FORENSIC") == "true":
         pro_debug_img = probe_detector_input.copy()
         pro_matched_idx = set()
-        if has_gallery:
-            for match_entry in mark_result.get("matches", []):
+        if has_gallery and matcher_result:
+            for match_entry in matcher_result.get("matches", []):
                 if isinstance(match_entry, dict):
                     pro_matched_idx.add(match_entry.get("probe_idx"))
                 elif isinstance(match_entry, (tuple, list)) and len(match_entry) >= 2:
@@ -3385,7 +3374,7 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
             gal_dh, gal_dw = gal_det_input.shape[:2]
             gal_debug_img = gal_det_input.copy()
             gal_matched_idx = set()
-            for match_entry in mark_result.get("matches", []):
+            for match_entry in (matcher_result or {}).get("matches", []):
                 if isinstance(match_entry, dict):
                     gal_matched_idx.add(match_entry.get("gallery_idx"))
                 elif isinstance(match_entry, (tuple, list)) and len(match_entry) >= 2:
@@ -3398,11 +3387,7 @@ def marks_analyze(request: Request, payload: MarkAnalyzeRequest, _: dict = Depen
             _, gal_dbuf = cv2.imencode('.png', gal_debug_img)
             result["gallery_marks_overlay_b64"] = f"data:image/png;base64,{base64.b64encode(gal_dbuf).decode('utf-8')}"
 
-        result["matcher_thresholds"] = {
-            "spatial_distance_threshold": 0.20,
-            "type_mismatch_penalty": 0.5,
-            "region_mismatch_penalty": 0.3,
-        }
+        result["matcher_thresholds"] = get_matcher_thresholds()
         result["debug_overlays"] = {
             "probe": overlays_probe,
             "gallery": overlays_gallery if has_gallery else {},
