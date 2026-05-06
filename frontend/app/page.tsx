@@ -207,7 +207,9 @@ export default function Home() {
   }
 
   const [results, setResults] = useState<VerificationResult | null>(null);
-  const [lockedJob, setLockedJob] = useState<{job_id: string, preview: Record<string, unknown>} | null>(null);
+  const [lockedJob, setLockedJob] = useState<{job_id: string, preview: Record<string, unknown>, resultBaseUrl?: string} | null>(null);
+  const [useV2Marks, setUseV2Marks] = useState(false);
+  const V2_MARKS_BASE_URL = process.env.NEXT_PUBLIC_V2_ISOLATED_URL || "https://facial-backend-v2-marks-196207148120.us-east4.run.app";
   const [isXrayMode, setIsXrayMode] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [auditExpanded, setAuditExpanded] = useState(false);
@@ -234,7 +236,18 @@ export default function Home() {
     const sessionId = params.get('session_id');
 
     if (params.get('success') === 'true' && jobId && sessionId) {
-      fetch(`${getApiUrl()}/verify/result/${jobId}?session_id=${sessionId}`)
+      let resultBaseUrl = getApiUrl();
+      const cached = sessionStorage.getItem('lockedJob');
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (parsed.resultBaseUrl) {
+            resultBaseUrl = parsed.resultBaseUrl;
+          }
+        } catch {}
+      }
+
+      fetch(`${resultBaseUrl}/verify/result/${jobId}?session_id=${sessionId}`)
         .then(res => {
           if (!res.ok) throw new Error('Unlock failed');
           return res.json();
@@ -367,13 +380,17 @@ export default function Home() {
       setStep('calculating');
       
       // 3. API call based on mode
+      let baseUrlUsedForVerify = getApiUrl();
       const apiUrl = mode === 'vault' ? '/vault/search' : '/verify/fuse';
       const apiBody: Record<string, string> = { probe_url: urlData.probe_gs_uri };
       if (mode === 'compare') {
         apiBody.gallery_url = urlData.gallery_gs_uri;
+        if (useV2Marks) {
+          baseUrlUsedForVerify = V2_MARKS_BASE_URL;
+        }
       }
       
-      const verifyRes = await fetch(`${getApiUrl()}${apiUrl}`, {
+      const verifyRes = await fetch(`${baseUrlUsedForVerify}${apiUrl}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(apiBody)
@@ -387,6 +404,7 @@ export default function Home() {
       
       // Cache and go to paywall
       if (data.locked) {
+        data.resultBaseUrl = baseUrlUsedForVerify;
         sessionStorage.setItem('lockedJob', JSON.stringify(data));
         setLockedJob(data);
         setStep('paywall');
@@ -416,7 +434,8 @@ export default function Home() {
       await new Promise(resolve => setTimeout(resolve, 1200));
       setStep('calculating');
 
-      const verifyRes = await fetch(`${getApiUrl()}/verify/fuse`, {
+      const baseUrlUsedForVerify = useV2Marks ? V2_MARKS_BASE_URL : getApiUrl();
+      const verifyRes = await fetch(`${baseUrlUsedForVerify}/verify/fuse`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ gallery_url: galleryUrl, probe_url: probeUrl })
@@ -429,6 +448,7 @@ export default function Home() {
       const data = await verifyRes.json();
 
       if (data.locked) {
+        data.resultBaseUrl = baseUrlUsedForVerify;
         sessionStorage.setItem('lockedJob', JSON.stringify(data));
         setLockedJob(data);
         setStep('paywall');
@@ -509,6 +529,43 @@ export default function Home() {
               <div style="font-size:7px;color:#997a1d;line-height:1.3;">LR<sub>total</sub>: ${audit?.lr_total != null ? formatLRSci(audit.lr_total) : 'N/A'}</div>
             </div>
           </div>
+
+          <!-- SHARED MARK EVIDENCE -->
+          ${results.mark_diagnostics ? `
+          <div style="border:1px solid #1f1f1f;background:#0d0d0e;margin-bottom:10px;flex-shrink:0;">
+            <div style="padding:4px 8px;border-bottom:1px solid #1a1a1a;background:#111;">
+              <span style="font-size:7px;color:#D4AF37;letter-spacing:2px;font-weight:bold;">▸ SHARED MARK EVIDENCE</span>
+            </div>
+            <div style="padding:6px 8px;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                <span style="font-size:8px;font-weight:bold;color:${results.mark_diagnostics.mark_match_status === 'MATCHED' ? '#34d399' : results.mark_diagnostics.mark_match_status === 'EXACT_SELF_MATCH' ? '#22d3ee' : '#fbbf24'};background:${results.mark_diagnostics.mark_match_status === 'MATCHED' ? 'rgba(6,78,59,0.4)' : results.mark_diagnostics.mark_match_status === 'EXACT_SELF_MATCH' ? 'rgba(22,78,99,0.4)' : 'rgba(120,53,15,0.3)'};padding:2px 4px;border-radius:2px;letter-spacing:1px;">${escapeHtml(results.mark_diagnostics.mark_match_status || 'UNKNOWN')}</span>
+                <span style="font-size:6px;color:#666;">DETECTOR: ${escapeHtml(results.mark_diagnostics.detector_status || 'N/A')}</span>
+                <span style="font-size:6px;color:#666;">MATCHER: ${escapeHtml(results.mark_diagnostics.matcher_status || 'N/A')}</span>
+              </div>
+              <div style="display:flex;gap:12px;font-size:7px;margin-bottom:6px;">
+                <div style="flex:1;display:flex;justify-content:space-between;"><span style="color:#555;">PROBE MARKS</span><span style="color:#fff;font-weight:bold;">${results.mark_diagnostics.raw_probe_marks_count}</span></div>
+                <div style="flex:1;display:flex;justify-content:space-between;"><span style="color:#555;">GALLERY MARKS</span><span style="color:#fff;font-weight:bold;">${results.mark_diagnostics.raw_gallery_marks_count}</span></div>
+                <div style="flex:1;display:flex;justify-content:space-between;"><span style="color:#555;">CORRESPONDENCES</span><span style="color:#34d399;font-weight:bold;">${results.mark_diagnostics.accepted_correspondences_count}</span></div>
+                <div style="flex:1;display:flex;justify-content:space-between;"><span style="color:#555;">REJECTED</span><span style="color:#fbbf24;font-weight:bold;">${results.mark_diagnostics.rejected_candidates_count}</span></div>
+              </div>
+              <div style="display:flex;gap:12px;font-size:7px;margin-bottom:6px;">
+                <div style="flex:1;display:flex;justify-content:space-between;"><span style="color:#555;">V2 PREPROCESSED</span><span style="color:#aaa;font-weight:bold;">${results.mark_diagnostics.mark_detector_trace?.probe?.input_is_preprocessed ? 'Yes' : 'No'}</span></div>
+                <div style="flex:1;display:flex;justify-content:space-between;"><span style="color:#555;">V2 CLAHE APPLIED</span><span style="color:#aaa;font-weight:bold;">${results.mark_diagnostics.mark_detector_trace?.probe?.internal_clahe_applied ? 'Yes' : 'No'}</span></div>
+                <div style="flex:2;"></div>
+              </div>
+              <div style="font-size:7px;color:#888;">
+                <span style="color:#555;">LR<sub>marks</sub>:</span> <span style="color:${results.mark_diagnostics.lr_marks != null && results.mark_diagnostics.lr_marks > 1 ? '#D4AF37' : '#999'};font-weight:bold;">${results.mark_diagnostics.lr_marks != null ? formatLRSci(results.mark_diagnostics.lr_marks) : 'N/A'}</span>
+                <span style="margin-left:8px;font-style:italic;color:#666;">
+                  ${results.mark_diagnostics.mark_match_status === 'LEGACY_MARK_PIPELINE_NEUTRALIZED' 
+                    ? 'Legacy mark evidence was neutralized and did not affect the Bayesian score.' 
+                    : results.mark_diagnostics.mark_detector_trace?.probe?.input_is_preprocessed === true && results.mark_diagnostics.mark_detector_trace?.probe?.internal_clahe_applied === false
+                    ? 'V2 mark evidence active.'
+                    : ''}
+                </span>
+              </div>
+            </div>
+          </div>
+          ` : ''}
 
           <!-- CONCLUSION -->
           <div style="border:1px solid ${results.fused_identity_score < 40.0 ? '#7f1d1d' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '#92400e' : '#333'};padding:8px 12px;background:${results.fused_identity_score < 40.0 ? '#1a0505' : (results.veto_triggered && results.fused_identity_score >= 40.0) ? '#291102' : '#0a0a0a'};margin-bottom:10px;flex-shrink:0;display:flex;justify-content:space-between;align-items:center;">
@@ -1042,6 +1099,27 @@ export default function Home() {
               </div>
             )}
 
+            {mode === 'compare' && (
+              <div className="w-full max-w-3xl flex flex-col items-center mt-2 mb-2">
+                <label className="flex items-center gap-2 cursor-pointer mb-2">
+                  <input
+                    type="checkbox"
+                    checked={useV2Marks}
+                    onChange={(e) => setUseV2Marks(e.target.checked)}
+                    className="accent-[#D4AF37]"
+                  />
+                  <span className="text-[10px] text-[#D4AF37] font-bold tracking-widest">
+                    ENABLE V2 FORENSIC MARK EVIDENCE (EXPERIMENTAL)
+                  </span>
+                </label>
+                {useV2Marks && (
+                  <div className="text-[9px] text-amber-400 bg-amber-950/30 border border-amber-900/30 p-2 rounded text-center">
+                    V2 mark evidence runs on a dedicated isolated backend. Expected runtime: 20–70 seconds. Do not use for vault search.
+                  </div>
+                )}
+              </div>
+            )}
+
             <button 
               onClick={startSequence}
               disabled={mode === 'vault' ? !probeFile : (!probeFile || !galleryFile)}
@@ -1340,6 +1418,8 @@ export default function Home() {
                       <div className="flex justify-between"><span className="text-gray-500">Gallery Marks Detected</span><span className="text-white font-bold tabular-nums">{results.mark_diagnostics.raw_gallery_marks_count}</span></div>
                       <div className="flex justify-between"><span className="text-gray-500">Accepted Shared Mark Correspondences</span><span className="text-emerald-400 font-bold tabular-nums">{results.mark_diagnostics.accepted_correspondences_count}</span></div>
                       <div className="flex justify-between"><span className="text-gray-500">Rejected Candidates</span><span className="text-amber-400/70 font-bold tabular-nums">{results.mark_diagnostics.rejected_candidates_count}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-500">Input is Preprocessed</span><span className="text-gray-400 font-bold">{results.mark_diagnostics.mark_detector_trace?.probe?.input_is_preprocessed ? 'Yes' : 'No'}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-500">Internal CLAHE Applied</span><span className="text-gray-400 font-bold">{results.mark_diagnostics.mark_detector_trace?.probe?.internal_clahe_applied ? 'Yes' : 'No'}</span></div>
                     </div>
                     {/* v2.1 Detector Trace Telemetry */}
                     {(() => {
@@ -1400,7 +1480,11 @@ export default function Home() {
                     </div>
                     {/* Evidence Contribution Label */}
                     <div className="mb-2">
-                      {results.mark_diagnostics.lr_marks == null ? (
+                      {results.mark_diagnostics.mark_match_status === 'LEGACY_MARK_PIPELINE_NEUTRALIZED' ? (
+                        <span className="text-[7px] text-amber-400/70 italic">Legacy mark evidence was neutralized and did not affect the Bayesian score.</span>
+                      ) : results.mark_diagnostics.mark_detector_trace?.probe?.input_is_preprocessed === true && results.mark_diagnostics.mark_detector_trace?.probe?.internal_clahe_applied === false ? (
+                        <span className="text-[7px] text-emerald-400/80 font-bold">V2 mark evidence active.</span>
+                      ) : results.mark_diagnostics.lr_marks == null ? (
                         <span className="text-[7px] text-gray-500 italic">Evidence contribution could not be determined</span>
                       ) : results.mark_diagnostics.lr_marks === 1.0 ? (
                         <span className="text-[7px] text-amber-400/70 italic">Neutral Mark Evidence — mark channel neither supports nor refutes the same-source hypothesis</span>
