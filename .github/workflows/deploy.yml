@@ -148,6 +148,29 @@ jobs:
             FRONTEND_URL=https://facial-frontend-vkd6b6ijxa-uk.a.run.app
             ALLOWED_ORIGINS=https://facial-frontend-vkd6b6ijxa-uk.a.run.app,https://scargods.com
 
+      - name: Deploy V2 Marks Backend to Cloud Run
+        id: deploy-backend-v2-marks
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: facial-backend-v2-marks
+          region: us-east4
+          image: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+          flags: '--service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com --memory=16Gi --cpu=8 --timeout=300 --concurrency=1 --min-instances=1 --allow-unauthenticated --add-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance'
+          env_vars: |
+            USE_MARK_PIPELINE_V2=true
+            KMS_KEY_NAME=projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek
+            BUCKET_NAME=hoppwhistle-facial-uploads
+            DB_USER=facial_app
+            DB_PASS=${{ secrets.DB_PASS }}
+            DB_NAME=facial_db
+            CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance
+            STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
+            STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
+            JWT_SECRET=${{ secrets.JWT_SECRET }}
+            OPERATOR_PASSWORD=${{ secrets.OPERATOR_PASSWORD }}
+            FRONTEND_URL=https://facial-frontend-vkd6b6ijxa-uk.a.run.app
+            ALLOWED_ORIGINS=https://facial-frontend-vkd6b6ijxa-uk.a.run.app,https://scargods.com
+
       - name: Deploy Wikimedia Crawler Job
         run: |
           gcloud run jobs deploy wikimedia-crawler-job \
