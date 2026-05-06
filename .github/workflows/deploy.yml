@@ -155,7 +155,7 @@ jobs:
           service: facial-backend-v2-marks
           region: us-east4
           image: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
-          flags: '--service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com --memory=16Gi --cpu=8 --timeout=300 --concurrency=1 --min-instances=1 --allow-unauthenticated --add-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance'
+          flags: '--service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com --memory=16Gi --cpu=8 --timeout=300 --concurrency=1 --min-instances=1 --no-cpu-throttling --allow-unauthenticated --add-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance'
           env_vars: |
             USE_MARK_PIPELINE_V2=true
             KMS_KEY_NAME=projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek
