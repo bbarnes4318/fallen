@@ -175,13 +175,51 @@ def test_verify_fuse_exact_self_match_mark_lr_neutrality(mock_verify_fuse_depend
         "gallery_url": "http://mock/gallery",
         "require_liveness": False
     }
-    response = client.post("/verify/fuse", json=payload)
-    assert response.status_code == 200
-    
-    data = get_job_payload_from_db_mock(mock_verify_fuse_dependencies["db"])
-    
-    assert data.get("mark_match_status") == "EXACT_SELF_MATCH"
-    assert data.get("lr_marks") == 1.0
+    with patch("backend.main.USE_MARK_PIPELINE_V2", True):
+        with patch("backend.main._run_mark_evidence_pipeline") as mock_v2:
+            mock_v2.return_value = {
+                "mark_match_status": "EXACT_SELF_MATCH",
+                "mode": "paired",
+                "raw_probe_marks": [],
+                "raw_gallery_marks": [],
+                "accepted_correspondences": [],
+                "rejected_correspondences": [],
+                "lr_marks": 1.0,
+                "individual_mark_lrs": [],
+                "mark_diagnostics": {
+                    "mark_detector_trace": {"probe": {"detector_status": "OK", "input_is_preprocessed": True, "internal_clahe_applied": False}, "gallery": {"detector_status": "OK", "input_is_preprocessed": True, "internal_clahe_applied": False}},
+                    "detector_status": "OK",
+                    "matcher_status": "EXACT_SELF_MATCH"
+                },
+                "mark_detector_version": "v2",
+                "mark_matcher_version": "v2",
+                "preprocessor_version": "v1.1"
+            }
+            response = client.post("/verify/fuse", json=payload)
+            assert response.status_code == 200
+            
+            data = get_job_payload_from_db_mock(mock_verify_fuse_dependencies["db"])
+            
+            assert data.get("mark_match_status") == "EXACT_SELF_MATCH"
+            assert data.get("lr_marks") == 1.0
+
+def test_verify_fuse_legacy_mark_pipeline_neutralized(mock_verify_fuse_dependencies):
+    payload = {
+        "probe_url": "http://mock/probe",
+        "gallery_url": "http://mock/gallery",
+        "require_liveness": False
+    }
+    with patch("backend.main.USE_MARK_PIPELINE_V2", False):
+        response = client.post("/verify/fuse", json=payload)
+        assert response.status_code == 200
+        
+        data = get_job_payload_from_db_mock(mock_verify_fuse_dependencies["db"])
+        
+        assert data.get("mark_match_status") == "LEGACY_MARK_PIPELINE_NEUTRALIZED"
+        assert data.get("lr_marks") == 1.0
+        assert "Legacy mark pipeline disabled/neutralized" in data.get("mark_diagnostics", {}).get("rejection_summary", "")
+        # Face-model scores should still be computed
+        assert data.get("raw_arcface_similarity") is not None
 
 def test_verify_fuse_calibration_missing_neutral_lr(mock_verify_fuse_dependencies):
     with patch("backend.main.TIER4_CALIBRATION", None):

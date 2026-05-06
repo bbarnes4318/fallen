@@ -2497,46 +2497,42 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         # ── Exact Self-Match Detection ──
         exact_image_match = (probe_file_hash == gallery_file_hash)
 
-        if exact_image_match:
-            # Identical images — all marks self-correspond
-            mark_match_status = "EXACT_SELF_MATCH"
-            tier4_score = 100.0
-            n_self = min(len(valid_probe_marks), len(valid_gallery_marks))
-            assigned_pairs = []
-            for si in range(n_self):
-                assigned_pairs.append({
-                    "gallery_idx": si, "probe_idx": si,
-                    "cost": 0.0, "position_distance": 0.0, "area_ratio": 1.0,
-                    "type_match": True, "region_match": True,
-                    "mark_type": valid_gallery_marks[si].get("mark_type", "unknown"),
-                    "face_region": valid_gallery_marks[si].get("face_region", "unknown"),
-                    "gallery_centroid": list(valid_gallery_marks[si]["centroid"]),
-                    "probe_centroid": list(valid_probe_marks[si]["centroid"]),
-                })
-            unmatched_gal = list(range(n_self, len(valid_gallery_marks)))
-            unmatched_pro = list(range(n_self, len(valid_probe_marks)))
-            rejected_cands = []
-            mark_result = {
-                "score": 100.0, "matched": n_self,
-                "total_gallery": len(valid_gallery_marks), "total_probe": len(valid_probe_marks),
-                "matches": [(si, si, 1.0) for si in range(n_self)],
-                "lr_marks": 1.0, "mark_lrs": [],
-            }
-        else:
-            assigned_pairs, unmatched_gal, unmatched_pro, rejected_cands = match_facial_marks(valid_gallery_marks, valid_probe_marks)
-            mark_result = compute_mark_correspondence(valid_gallery_marks, valid_probe_marks, matched_pairs=assigned_pairs)
-            tier4_score = mark_result["score"]  # None if insufficient marks
+        # NEUTRALIZE LEGACY MARK EVIDENCE
+        mark_match_status = "LEGACY_MARK_PIPELINE_NEUTRALIZED"
+        tier4_score = 0.0
+        assigned_pairs = []
+        unmatched_gal = list(range(len(valid_gallery_marks)))
+        unmatched_pro = list(range(len(valid_probe_marks)))
+        rejected_cands = []
+        mark_result = {
+            "score": 0.0,
+            "matched": 0,
+            "total_gallery": len(valid_gallery_marks),
+            "total_probe": len(valid_probe_marks),
+            "matches": [],
+            "lr_marks": 1.0,
+            "mark_lrs": [],
+        }
 
-            # Determine mark_match_status
-            if len(valid_probe_marks) < 2 or len(valid_gallery_marks) < 2:
-                mark_match_status = "INSUFFICIENT_MARKS"
-            elif mark_result.get("matched", 0) > 0:
-                mark_match_status = "MATCHED"
-            else:
-                mark_match_status = "NO_MATCHES"
-                
-        lr_marks = mark_result.get("lr_marks", 1.0)
-        _v2_mark_diagnostics_payload = None
+        lr_marks = 1.0
+        _v2_mark_diagnostics_payload = {
+            "raw_probe_marks_count": len(valid_probe_marks),
+            "raw_gallery_marks_count": len(valid_gallery_marks),
+            "accepted_correspondences_count": 0,
+            "rejected_candidates_count": 0,
+            "detector_status": "NEUTRALIZED",
+            "probe_detector_status": "NEUTRALIZED",
+            "gallery_detector_status": "NEUTRALIZED",
+            "matcher_status": "NEUTRALIZED",
+            "lr_marks": 1.0,
+            "mark_match_status": mark_match_status,
+            "rejection_summary": "Legacy mark pipeline disabled/neutralized because V2 mark pipeline requires isolated concurrency=1 deployment.",
+            "diagnostic_only": True,
+            "mark_detector_trace": {
+                "probe": trace_probe,
+                "gallery": trace_gallery,
+            },
+        }
 
     # ── BAYESIAN EVIDENCE FUSION (Scientific v4.0) ──
     # Convert Fused Ensemble score to Likelihood Ratio
@@ -2797,40 +2793,10 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     mark_debug_payload = None
 
     # ── Lightweight always-on mark diagnostics (production-safe) ──
-    if USE_MARK_PIPELINE_V2 and _v2_mark_diagnostics_payload:
+    if _v2_mark_diagnostics_payload is not None:
         mark_diagnostics_payload = _v2_mark_diagnostics_payload
     else:
-        # Use trace-based detector_status for richer reporting (v2.1)
-        _probe_det_status = trace_probe.get("detector_status", "UNKNOWN") if trace_probe else "UNKNOWN"
-        _gallery_det_status = trace_gallery.get("detector_status", "UNKNOWN") if trace_gallery else "UNKNOWN"
-        _fuse_detector_status = (
-            _probe_det_status if _probe_det_status != "OK"
-            else _gallery_det_status if _gallery_det_status != "OK"
-            else "OK" if (len(marks_gallery) > 0 or len(marks_probe) > 0)
-            else "NO_CANDIDATES"
-        )
-        mark_diagnostics_payload = {
-            "raw_probe_marks_count": len(valid_probe_marks),
-            "raw_gallery_marks_count": len(valid_gallery_marks),
-            "accepted_correspondences_count": mark_result.get("matched", 0),
-            "rejected_candidates_count": len(rejected_cands) if rejected_cands else 0,
-            "detector_status": _fuse_detector_status,
-            "probe_detector_status": _probe_det_status,
-            "gallery_detector_status": _gallery_det_status,
-            "matcher_status": "OK" if mark_result.get("matched", 0) > 0 else ("NO_MATCHES" if (len(valid_probe_marks) > 0 and len(valid_gallery_marks) > 0) else "INSUFFICIENT_INPUT"),
-            "lr_marks": finite_or_none(lr_marks),
-            "mark_match_status": mark_match_status,
-            "rejection_summary": _build_rejection_summary(
-                valid_probe_marks, valid_gallery_marks,
-                mark_result, rejected_cands, mark_match_status,
-                exact_image_match, TIER4_CALIBRATION,
-                trace_probe=trace_probe, trace_gallery=trace_gallery,
-            ),
-            "mark_detector_trace": {
-                "probe": trace_probe,
-                "gallery": trace_gallery,
-            },
-        }
+        mark_diagnostics_payload = {}
 
     if os.getenv("DEBUG_FORENSIC") == "true":
         _, gal_dbuf = cv2.imencode('.png', gal_debug_img)
