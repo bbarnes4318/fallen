@@ -2258,15 +2258,28 @@ def analyze_frequency_domain(image: np.ndarray) -> float:
 @app.post("/verify/fuse")
 @limiter.limit("5/minute")
 def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = Depends(verify_jwt)):
+    # ── V2 DIAGNOSTIC TIMING (temporary — remove after profiling) ──
+    import time as _t
+    _v2_timings = []
+    _v2_t0 = _t.time()
+    def _v2_log(stage):
+        elapsed = _t.time() - _v2_t0
+        _v2_timings.append((stage, elapsed))
+        if USE_MARK_PIPELINE_V2:
+            print(f"[V2-TIMING] {elapsed:7.2f}s | {stage}", flush=True)
+    _v2_log("request_received")
     # 1. Fetch images from GCS (with pre-decode binary hashing)
     gallery_img, gallery_file_hash = fetch_image_from_url(payload.gallery_url)
+    _v2_log("gallery_image_fetched")
     probe_img, probe_file_hash = fetch_image_from_url(payload.probe_url)
+    _v2_log("probe_image_fetched")
     
     # Phase 7: Synthetic Provenance Gatekeeper
     SYNTHETIC_ARTIFACT_THRESHOLD = 0.85
     gallery_anomaly = analyze_frequency_domain(gallery_img)
     probe_anomaly = analyze_frequency_domain(probe_img)
     max_anomaly = max(gallery_anomaly, probe_anomaly)
+    _v2_log("frequency_analysis_done")
     
     if max_anomaly > SYNTHETIC_ARTIFACT_THRESHOLD:
         ledger_session = SessionLocal()
@@ -2318,14 +2331,17 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     probe_pre_clahe_crop, _ppc_lm = align_face_crop(probe_img)
     gallery_aligned_crop_hash_pre_clahe = compute_image_hash(gallery_pre_clahe_crop)
     probe_aligned_crop_hash_pre_clahe = compute_image_hash(probe_pre_clahe_crop)
+    _v2_log("pre_clahe_alignment_done")
 
     # 2.5 Preprocess (CLAHE)
     gallery_clahe = apply_clahe(gallery_img)
     probe_clahe = apply_clahe(probe_img)
+    _v2_log("clahe_preprocessing_done")
     
     # 3. Face Alignment & Crop to canonical 256×256
     gallery_aligned, gallery_landmarks = align_face_crop(gallery_clahe)
     probe_aligned, probe_landmarks = align_face_crop(probe_clahe)
+    _v2_log("face_alignment_done")
 
     # Post-CLAHE aligned crop hashes (these are the actual model-input pixels)
     gallery_aligned_crop_hash_post_clahe = compute_image_hash(gallery_aligned)
@@ -2344,12 +2360,14 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
 
     # Cross-spectral matching before passing to textural/mark layers
     gallery_aligned, probe_aligned, spectral_correction = cross_spectral_normalize(gallery_aligned, probe_aligned)
+    _v2_log("age_spectral_done")
     
     # 4. TIER 1: Structural Identity (Neural Ensemble: 60% ArcFace, 40% Facenet512)
     ensemble_gallery = extract_ensemble_embeddings(gallery_aligned)
     ensemble_probe = extract_ensemble_embeddings(probe_aligned)
     structural_sim, arcface_sim, secondary_sim = compute_ensemble_similarity(ensemble_gallery, ensemble_probe)
     tier1_score = structural_sim * 100
+    _v2_log("ensemble_embeddings_done")
     
     # 5. TIER 2: Geometric Biometrics (3D Topographical Mapping)
     # Uses Euclidean distance between 12-D scale-invariant, 3D Procrustes-aligned facial ratio vectors.
@@ -2399,6 +2417,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     lbp_pro = extract_lbp_histogram(probe_aligned)
     chi_squared = 0.5 * float(np.sum(((lbp_gal - lbp_pro) ** 2) / (lbp_gal + lbp_pro + 1e-10)))
     tier3_score = max(0.0, min(100.0, (1.0 - chi_squared) * 100))
+    _v2_log("geometry_and_lbp_done")
     
     # 7. Veto Protocol — ArcFace Hard Fail (flag only — Bayesian math handles scoring)
     veto_triggered = structural_sim < 0.40
@@ -2407,6 +2426,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
     v2_mark_detector_version = MARK_DETECTOR_VERSION
     v2_mark_matcher_version = MARK_MATCHER_VERSION
     if USE_MARK_PIPELINE_V2:
+        _v2_log("mark_pipeline_v2_start")
         mark_payload = _run_mark_evidence_pipeline(
             probe_img=probe_img,
             gallery_img=gallery_img,
@@ -2415,6 +2435,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
             mode="production",
             target_size=1024,
         )
+        _v2_log("mark_pipeline_v2_end")
         
         valid_probe_marks = mark_payload.get("raw_probe_marks", [])
         valid_gallery_marks = mark_payload.get("raw_gallery_marks", [])
@@ -2588,6 +2609,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         marks_probe=marks_probe,
         mark_matches=mark_result["matches"],
     )
+    _v2_log("edge_delta_map_done")
 
     # 3DMM Wireframe HUD (Geometric Mesh Overlay)
     gallery_wireframe = generate_wireframe_hud(gallery_aligned, gallery_landmarks)
@@ -2639,6 +2661,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         fused_score=fused_score,
         probe_file_hash=probe_file_hash,
     )
+    _v2_log("forensic_receipt_done")
 
     audit = AuditLog(
         raw_cosine_score=round(structural_sim, 6),
@@ -2933,6 +2956,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         failed_provenance_veto=False,
         audit_log=audit,
     )
+    _v2_log("response_object_assembled")
 
     # ── Immutable Audit Ledger ──
     ledger_session = SessionLocal()
@@ -3043,6 +3067,7 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         raise HTTPException(status_code=500, detail="Failed to save verification job")
     finally:
         db.close()
+    _v2_log("db_write_done")
 
     return {
         "job_id": job_id,
@@ -3074,14 +3099,24 @@ def _run_mark_evidence_pipeline(
     from image_preprocessor import preprocess_for_mark_detection, IMAGE_PREPROCESSOR_VERSION
     from mark_detector import MARK_DETECTOR_VERSION
 
+    # ── V2 MARK PIPELINE TIMING (temporary) ──
+    import time as _t
+    _mp_t0 = _t.time()
+    def _mp_log(stage):
+        elapsed = _t.time() - _mp_t0
+        print(f"[V2-MARK-TIMING] {elapsed:7.2f}s | {stage}", flush=True)
+    _mp_log("mark_pipeline_entered")
+
     has_gallery = gallery_img is not None
     
     # ── 1. Alignment on RAW image ──
     probe_aligned_raw, probe_landmarks = align_face_crop(probe_img)
+    _mp_log("probe_align_done")
     gallery_aligned_raw = None
     gallery_landmarks = None
     if has_gallery:
         gallery_aligned_raw, gallery_landmarks = align_face_crop(gallery_img)
+        _mp_log("gallery_align_done")
 
     detector_thresholds = get_detector_thresholds()
     
@@ -3142,12 +3177,14 @@ def _run_mark_evidence_pipeline(
 
     # ── 2. Preprocessing & Detection (Probe) ──
     probe_pp = preprocess_for_mark_detection(probe_aligned_raw, landmarks=probe_landmarks, target_size=target_size)
+    _mp_log("probe_preprocess_done")
     probe_detector_input = probe_pp["images"]["mark_detector_input_bgr"]
     det_h, det_w = probe_detector_input.shape[:2]
     
     marks_probe, rejected_probe_raw, occ_probe, trace_probe, overlays_probe = detect_facial_marks(
         probe_detector_input, probe_landmarks, input_is_preprocessed=True
     )
+    _mp_log("probe_detect_done")
     
     valid_probe_marks = []
     for m in marks_probe:
@@ -3170,12 +3207,14 @@ def _run_mark_evidence_pipeline(
 
     if has_gallery and gallery_face_ok:
         gallery_pp = preprocess_for_mark_detection(gallery_aligned_raw, landmarks=gallery_landmarks, target_size=target_size)
+        _mp_log("gallery_preprocess_done")
         gallery_detector_input = gallery_pp["images"]["mark_detector_input_bgr"]
         gal_h, gal_w = gallery_detector_input.shape[:2]
         
         marks_gallery, rejected_gallery_raw, occ_gallery, trace_gallery, overlays_gallery = detect_facial_marks(
             gallery_detector_input, gallery_landmarks, input_is_preprocessed=True
         )
+        _mp_log("gallery_detect_done")
         for m in marks_gallery:
             cx, cy = int(m["centroid"][0] * gal_w), int(m["centroid"][1] * gal_h)
             if 0 <= cy < gal_h and 0 <= cx < gal_w and occ_gallery[cy, cx] == 0:
@@ -3246,6 +3285,7 @@ def _run_mark_evidence_pipeline(
             else:
                 mark_match_status = "NO_MATCHES"
 
+    _mp_log("matcher_done")
     # ── 5. Detector Status ──
     probe_detector_status = trace_probe.get("detector_status", "UNKNOWN") if trace_probe else "UNKNOWN"
     gallery_detector_status = trace_gallery.get("detector_status", "UNKNOWN") if trace_gallery else ("NOT_PROVIDED" if not has_gallery else "UNKNOWN")
@@ -3313,6 +3353,7 @@ def _run_mark_evidence_pipeline(
             "skin_mask_b64": pp_dict.get("debug_b64", {}).get("skin_mask_b64"),
         }
 
+    _mp_log("response_assembly_start")
     return {
         "mode": "probe_only" if not has_gallery else "paired",
         "aligned_probe_b64": probe_pp["debug_b64"]["aligned_b64"] if probe_pp else None,

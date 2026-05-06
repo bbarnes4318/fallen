@@ -3,7 +3,7 @@ import json
 import sys
 import time
 
-BASE_URL = "https://facial-backend-vkd6b6ijxa-uk.a.run.app"
+BASE_URL = "https://v2smoke---facial-backend-vkd6b6ijxa-uk.a.run.app"
 
 # 1. Login
 login_resp = requests.post(f"{BASE_URL}/login", json={"password": "aurum-admin-99"})
@@ -31,12 +31,12 @@ print("Job started:", job_id)
 # 3. Poll for result
 for _ in range(15):
     time.sleep(2)
-    poll_resp = requests.get(f"{BASE_URL}/verify/result/{job_id}", headers=headers)
+    poll_resp = requests.get(f"{BASE_URL}/verify/result/{job_id}?bypass_code=aurum-admin-99", headers=headers)
     if poll_resp.status_code == 200:
         result_data = poll_resp.json()
         if result_data.get("status") == "completed" or "audit_log" in result_data:
             print("Job completed!")
-            with open('live_verify_result.json', 'w') as f:
+            with open('v2_smoke_result.json', 'w') as f:
                 json.dump(result_data, f, indent=2)
             sys.exit(0)
         else:
