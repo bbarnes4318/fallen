@@ -170,10 +170,32 @@ def _contour_to_descriptor(cnt, gray, skin_mask, h, w, channel, landmarks, mark_
         mt = "linear_scar"
     elif channel in ("texture_cluster", "texture_anomaly"):
         mt = "texture_cluster"
+    elif channel == "structural_depression":
+        mt = "structural_crater" if circ >= 0.5 else "depression_scar"
     else:
         mt = "unknown_mark"
 
-    conf = min(1.0, salience / 30.0) if not is_fallback else min(0.5, salience / 60.0)
+    # Channel-aware salience adjustment
+    if channel == "structural_depression":
+        # Reward area, calculate local rim gradient to ensure structural validity
+        kx0, kx1 = max(0, x-5), min(w, x+bw+5)
+        ky0, ky1 = max(0, y-5), min(h, y+bh+5)
+        local_gray = gray[ky0:ky1, kx0:kx1]
+        sx = cv2.Scharr(local_gray, cv2.CV_64F, 1, 0)
+        sy = cv2.Scharr(local_gray, cv2.CV_64F, 0, 1)
+        local_grad = np.sqrt(sx**2 + sy**2)
+        
+        local_mm = mm[ky0:ky1, kx0:kx1]
+        rim_mask = cv2.dilate(local_mm, np.ones((5,5), np.uint8)) - local_mm
+        mean_rim_grad = float(cv2.mean(local_grad, mask=rim_mask)[0])
+        
+        # Boost salience based heavily on area and rim_grad, ignoring low absolute contrast
+        structural_score = mean_rim_grad / 255.0
+        salience = area * structural_score * (1.0 if inside else 0.5)
+        
+        conf = min(1.0, salience / 15.0) if not is_fallback else min(0.5, salience / 30.0)
+    else:
+        conf = min(1.0, salience / 30.0) if not is_fallback else min(0.5, salience / 60.0)
 
     return {
         "index": mark_index,
@@ -220,18 +242,35 @@ def _dedup_candidates(marks):
     """Remove overlapping candidates across channels. Keep highest confidence."""
     if len(marks) <= 1:
         return marks, 0
-    marks_sorted = sorted(marks, key=lambda m: m["confidence"], reverse=True)
+    
+    marks_sorted = sorted(marks, key=lambda m: (m.get("confidence", 0), m.get("salience_score", 0)), reverse=True)
     keep = []
     removed = 0
     for m in marks_sorted:
         cx, cy = m["centroid_px"]
+        m_area = m.get("area", 1)
         dominated = False
         for k in keep:
             kx, ky = k["centroid_px"]
+            k_area = k.get("area", 1)
             dist = math.sqrt((cx - kx)**2 + (cy - ky)**2)
-            if dist < _DEDUP_DIST_PX or _bbox_iou(m["bbox"], k["bbox"]) > _DEDUP_IOU:
+            
+            # Check if one is entirely within another or very similar
+            iou = _bbox_iou(m["bbox"], k["bbox"])
+            
+            if iou > _DEDUP_IOU:
                 dominated = True
                 break
+                
+            if dist < _DEDUP_DIST_PX:
+                # If they share a centroid but one is vastly larger than the other,
+                # they are distinct features (e.g. a pore inside a huge crater).
+                # Only dedup if they are relatively similar in size.
+                area_ratio = min(m_area, k_area) / max(m_area, k_area)
+                if area_ratio > 0.15:
+                    dominated = True
+                    break
+                    
         if not dominated:
             keep.append(m)
         else:
@@ -326,6 +365,20 @@ def _run_channels(aligned_crop, gray, valid_mask, kernel, h, w, input_is_preproc
         combined_lines = cv2.bitwise_or(combined_lines, opened)
     channels["linear_scar_v2"] = _generate_contours(combined_lines, valid_mask, kernel)
 
+    # Structural depression (broad low-contrast shadows)
+    if input_is_preprocessed:
+        # V2 only: Use LAB L channel
+        L_blur = cv2.medianBlur(L_enhanced, 7)
+        k_size = 31
+        k_sd = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
+        blackhat = cv2.morphologyEx(L_blur, cv2.MORPH_BLACKHAT, k_sd)
+        _, sd_thresh = cv2.threshold(blackhat, 5, 255, cv2.THRESH_BINARY)
+        k_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        sd_cleaned = cv2.morphologyEx(sd_thresh, cv2.MORPH_OPEN, k_clean)
+        channels["structural_depression"] = _generate_contours(sd_cleaned, valid_mask, kernel)
+    else:
+        channels["structural_depression"] = []
+
     # Texture anomaly (local variance)
     g32 = gray.astype(np.float32)
     mu = cv2.blur(g32, (7, 7))
@@ -353,9 +406,17 @@ def _filter_contours(channels, gray, skin_mask, valid_mask, h, w, landmarks,
     t = {"area_pass": 0, "shape_pass": 0, "region_pass": 0, "contrast_pass": 0}
 
     for ch_name, cnts in channels.items():
+        ch_min_contrast = min_contrast
+        ch_min_area = min_area
+        ch_max_area = max_area
+        if ch_name == "structural_depression":
+            ch_min_contrast = max(0.4, min_contrast * 0.3)
+            ch_min_area = max(10, min_area * 2.0)
+            ch_max_area = max_area * 10.0
+            
         for cnt in cnts:
             area = cv2.contourArea(cnt)
-            if area < min_area or area > max_area:
+            if area < ch_min_area or area > ch_max_area:
                 continue
             t["area_pass"] += 1
 
@@ -368,7 +429,7 @@ def _filter_contours(channels, gray, skin_mask, valid_mask, h, w, landmarks,
             ix, iy = int(desc["centroid_px"][0]), int(desc["centroid_px"][1])
             if iy >= h or ix >= w:
                 continue
-            if used_mask[iy, ix] > 0:
+            if ch_name != "structural_depression" and used_mask[iy, ix] > 0:
                 continue
 
             rej = None
@@ -387,9 +448,12 @@ def _filter_contours(channels, gray, skin_mask, valid_mask, h, w, landmarks,
                         rej = f"insufficient_face_overlap ({op/cp:.2f})"
             if rej is None:
                 t["region_pass"] += 1
-            if rej is None and desc["contrast_score"] < min_contrast:
-                if desc["contrast_score"] >= min_contrast * 0.5:
-                    desc["mark_type"] = "blemish"
+            if rej is None and desc["contrast_score"] < ch_min_contrast:
+                if desc["contrast_score"] >= ch_min_contrast * 0.5:
+                    if desc["salience_score"] < 5.0 and ch_name != "structural_depression":
+                        rej = "low_contrast"
+                    else:
+                        desc["mark_type"] = "blemish"
                 else:
                     rej = "low_contrast"
             if rej is not None:
@@ -448,10 +512,18 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks,
         "bright_scar_initial_candidates": len(channels.get("bright_scar", [])),
         "linear_scar_initial_candidates": len(channels.get("linear_scar_v2", [])),
         "texture_anomaly_initial_candidates": len(channels.get("texture_anomaly", [])),
+        "structural_depression_initial_candidates": len(channels.get("structural_depression", [])),
         "strict_final_valid_marks": 0, "fallback_used": False, "fallback_candidates": 0,
         "fallback_lr_cap": None, "fallback_penalty_applied": False,
         "dedup_removed": 0, "json_serialized_marks_count": 0,
         "detector_status": "OK", "final_valid_marks": 0, "roi_mode": roi_mode,
+        "structural_depression_area_pass": 0,
+        "structural_depression_contrast_relaxed_pass": 0,
+        "structural_depression_final_candidates": 0,
+        "structural_depression_thresholds": {
+            "min_contrast": max(0.4, _MIN_CONTRAST * 0.3),
+            "min_area": max(10, _MIN_AREA * 2.0)
+        }
     }
 
     # Strict pass
@@ -487,8 +559,12 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks,
     trace["dedup_removed"] = dedup_n
 
     # Cap to top N
-    marks.sort(key=lambda m: m["confidence"], reverse=True)
+    marks.sort(key=lambda m: (m["confidence"], m["salience_score"]), reverse=True)
     marks = marks[:_MAX_FINAL_MARKS]
+    
+    for m in marks:
+        if m.get("channel") == "structural_depression":
+            trace["structural_depression_final_candidates"] += 1
 
     # Re-index
     for i, m in enumerate(marks):
@@ -496,6 +572,9 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks,
     trace["final_valid_marks"] = len(marks)
     trace["json_serialized_marks_count"] = len(marks)
     trace["after_skin_mask"] = trace["initial_candidates"]
+
+    # Format trace dict for forensic json
+    trace_obj = {k: v for k, v in trace.items() if k not in ["structural_depression_area_pass", "structural_depression_contrast_relaxed_pass"]}
 
     if roi_mode == "LANDMARK_FALLBACK_ROI" and trace["detector_status"] == "OK":
         trace["detector_status"] = "LANDMARK_FALLBACK_ROI"
@@ -566,6 +645,8 @@ def get_thresholds() -> dict:
         "max_contour_area": _MAX_AREA,
         "min_overlap_ratio": _MIN_OVERLAP_RATIO,
         "min_contrast": _MIN_CONTRAST,
+        "structural_depression_min_contrast": max(0.4, _MIN_CONTRAST * 0.3),
+        "structural_depression_min_area": max(10, _MIN_AREA * 2.0),
         # Fallback pass
         "fallback_min_area": _FB_MIN_AREA,
         "fallback_min_overlap": _FB_MIN_OVERLAP,
