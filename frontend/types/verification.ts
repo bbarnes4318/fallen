@@ -91,6 +91,8 @@ export type MarkType =
   | "linear_scar"
   | "texture_cluster"
   | "blemish"
+  | "structural_crater"
+  | "depression_scar"
   | "unknown_mark"
   | "unknown";
 
