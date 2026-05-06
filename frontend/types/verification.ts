@@ -211,6 +211,8 @@ export interface MarkDetectorTrace {
   detector_status?: DetectorStatus;
   fallback_lr_cap?: number;
   fallback_penalty_applied?: boolean;
+  input_is_preprocessed?: boolean;
+  internal_clahe_applied?: boolean;
 }
 
 /** v2.1 debug overlay images (DEBUG_FORENSIC only) */
@@ -275,6 +277,7 @@ export type MarkMatchStatus =
   | "NO_MATCHES"
   | "FACE_NOT_DETECTED"
   | "DETECTOR_UNAVAILABLE"
+  | "LEGACY_MARK_PIPELINE_NEUTRALIZED"
   | "UNKNOWN";
 
 export interface VerificationResult {
