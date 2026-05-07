@@ -2462,9 +2462,11 @@ def verify_pipeline(request: Request, payload: VerificationRequest, _: dict = De
         tier4_score = mark_result["score"] if not exact_image_match else 100.0
         
         assigned_pairs = mark_result["matches"]
-        unmatched_gal = []
-        unmatched_pro = []
+        unmatched_gal = mark_payload.get("unmatched_gallery_indices", [])
+        unmatched_pro = mark_payload.get("unmatched_probe_indices", [])
         rejected_cands = mark_payload.get("rejected_correspondences", [])
+        rejected_probe = mark_payload.get("rejected_probe_marks", [])
+        rejected_gallery = mark_payload.get("rejected_gallery_marks", [])
         
         lr_marks = mark_result["lr_marks"]
         
@@ -3190,6 +3192,8 @@ def _run_mark_evidence_pipeline(
         rejected_gallery_serialized = [serialize_mark_descriptor(r) for r in rejected_gallery_raw]
 
     # ── 4. Matching & LR ──
+    rejected_probe = rejected_probe_serialized
+    rejected_gallery = rejected_gallery_serialized
     correspondences = []
     rejected_cands = []
     matcher_result = None
