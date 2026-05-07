@@ -4,47 +4,100 @@ on:
   workflow_dispatch:
     inputs:
       manifest_path:
-        description: 'Path to validation_pairs.csv'
+        description: 'Path to validation_pairs.csv (must exist in repo or be a GCS path)'
         required: true
         default: 'validation/validation_pairs.example.csv'
-      dry_run:
-        description: 'Run in dry-run mode (validate manifest only)'
+      mode:
+        description: 'Execution mode'
         required: true
-        type: boolean
-        default: false
+        type: choice
+        options:
+          - dry-run
+          - full-pipeline
+          - embeddings-only
+        default: 'dry-run'
 
 jobs:
-  validate-pipeline:
+  validate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
           cache: 'pip'
-          
+
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
-          
-      - name: Run Full Pipeline Validation (Dry Run)
-        if: ${{ inputs.dry_run }}
+
+      - name: Generate Run ID
+        id: run_id
+        run: echo "id=$(date +%Y%m%d_%H%M%S)" >> $GITHUB_OUTPUT
+
+      # ── Dry Run: Validate manifest structure only ──
+      - name: Dry Run — Validate Manifest
+        if: ${{ inputs.mode == 'dry-run' }}
         run: |
-          python scripts/validate_full_pipeline.py --manifest ${{ inputs.manifest_path }} --output-dir validation/results/run --dry-run
-          
-      - name: Run Full Pipeline Validation (Live Evaluation)
-        if: ${{ !inputs.dry_run }}
+          python scripts/validate_full_pipeline.py \
+            --manifest ${{ inputs.manifest_path }} \
+            --output-dir validation/results/${{ steps.run_id.outputs.id }} \
+            --dry-run
+
+      # ── Full Pipeline: Production-equivalent validation ──
+      - name: Full Pipeline Validation
+        if: ${{ inputs.mode == 'full-pipeline' }}
+        env:
+          BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GCP_SA_KEY_PATH }}
+          KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          OPERATOR_PASSWORD: ${{ secrets.OPERATOR_PASSWORD }}
+          USE_MARK_PIPELINE_V2: "true"
         run: |
-          # Requires secure access to GCS buckets containing validation images
-          # and credentials loaded into environment.
-          python scripts/validate_full_pipeline.py --manifest ${{ inputs.manifest_path }} --output-dir validation/results/run
-          
+          echo "WARNING: Full pipeline validation. This will process real images."
+          python scripts/validate_full_pipeline.py \
+            --manifest ${{ inputs.manifest_path }} \
+            --output-dir validation/results/${{ steps.run_id.outputs.id }}
+
+      # ── Embeddings Only: Non-production-equivalent diagnostic ──
+      - name: Embeddings-Only Validation
+        if: ${{ inputs.mode == 'embeddings-only' }}
+        env:
+          BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GCP_SA_KEY_PATH }}
+          KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          OPERATOR_PASSWORD: ${{ secrets.OPERATOR_PASSWORD }}
+        run: |
+          python scripts/validate_embeddings.py \
+            --manifest ${{ inputs.manifest_path }} \
+            --output-dir validation/results/${{ steps.run_id.outputs.id }}
+
+      # ── Post-processing: Policy simulation (only after full pipeline) ──
+      - name: Simulate Decision Policies
+        if: ${{ inputs.mode == 'full-pipeline' }}
+        run: |
+          python scripts/simulate_decision_policies.py \
+            --input validation/results/${{ steps.run_id.outputs.id }}/validation_results.jsonl \
+            --output-dir validation/results/${{ steps.run_id.outputs.id }}/policies
+
+      - name: Evaluate Mark LR Correlation
+        if: ${{ inputs.mode == 'full-pipeline' }}
+        run: |
+          python scripts/evaluate_mark_lr_correlation.py \
+            --input validation/results/${{ steps.run_id.outputs.id }}/validation_results.jsonl \
+            --output-dir validation/results/${{ steps.run_id.outputs.id }}/mark_analysis
+
       - name: Upload Validation Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: validation-results
-          path: validation/results/run/
+          name: validation-results-${{ steps.run_id.outputs.id }}
+          path: validation/results/${{ steps.run_id.outputs.id }}/

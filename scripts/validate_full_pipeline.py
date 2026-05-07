@@ -1,84 +1,400 @@
+"""
+Validate Full Pipeline — Production-equivalent biometric verification validation.
+
+This script calls the exact same core backend logic used by /verify/fuse:
+  - fetch_image_from_url (GCS image loading)
+  - apply_clahe (CLAHE preprocessing)
+  - align_face_crop (MediaPipe alignment to 256x256 canonical crop)
+  - extract_ensemble_embeddings (ArcFace + Facenet512)
+  - compute_ensemble_similarity (60/40 weighted cosine)
+  - _run_mark_evidence_pipeline (mark detection + matching + LR)
+  - score_to_lr_ensemble (calibrated LR from ensemble score)
+  - evaluate_mark_veto_override (mark override eligibility)
+  - Bayesian posterior fusion (LR_total -> posterior)
+  - Veto protocol (structural_sim < 0.40)
+
+It does NOT:
+  - Write to the database
+  - Create payment jobs
+  - Call the frontend
+  - Mutate any production data
+  - Change any scoring logic
+
+Usage:
+  # Dry-run (validate manifest only):
+  python scripts/validate_full_pipeline.py --manifest validation/validation_pairs.csv --output-dir validation/results/run1 --dry-run
+
+  # Full run (requires backend container environment with models loaded):
+  python scripts/validate_full_pipeline.py --manifest validation/validation_pairs.csv --output-dir validation/results/run1
+"""
+
 import argparse
 import csv
 import json
 import os
+import sys
 import time
-from datetime import datetime
+import math
+import traceback
 
-# NOTE: This script is a validation harness designed to run via GitHub Actions or Cloud Run.
-# It imports the core processing logic from backend.main but avoids DB mutation or frontend API calls.
-# from backend.main import verify_fuse_pipeline, load_images_from_gcs  # (To be implemented upon full integration)
+# Ensure the backend package is importable
+BACKEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend")
+sys.path.insert(0, BACKEND_DIR)
+
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Validate full verification pipeline against a manifest.")
-    parser.add_argument("--manifest", required=True, help="Path to the validation_pairs.csv manifest")
-    parser.add_argument("--output-dir", required=True, help="Directory to save validation_results.jsonl")
-    parser.add_argument("--dry-run", action="store_true", help="Validate manifest structure without processing images")
+    parser = argparse.ArgumentParser(
+        description="Run production-equivalent verification pipeline against a validation manifest."
+    )
+    parser.add_argument("--manifest", required=True, help="Path to validation_pairs.csv")
+    parser.add_argument("--output-dir", required=True, help="Directory to write results")
+    parser.add_argument("--dry-run", action="store_true", help="Validate manifest only, do not process images")
     return parser.parse_args()
 
+
+REQUIRED_COLUMNS = [
+    "pair_id", "image1_url_or_gcs_path", "image2_url_or_gcs_path",
+    "label_same_person", "category",
+]
+
+
 def validate_manifest(manifest_path):
+    """Load and validate the CSV manifest structure."""
+    if not os.path.exists(manifest_path):
+        print(f"ERROR: Manifest not found: {manifest_path}")
+        sys.exit(1)
+
     pairs = []
-    with open(manifest_path, 'r', encoding='utf-8') as f:
+    with open(manifest_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
-        for row in reader:
-            if not all(k in row for k in ['pair_id', 'image1_url_or_gcs_path', 'image2_url_or_gcs_path', 'label_same_person']):
-                raise ValueError(f"Manifest missing required columns in row: {row}")
+        header = reader.fieldnames or []
+        missing = [c for c in REQUIRED_COLUMNS if c not in header]
+        if missing:
+            print(f"ERROR: Manifest missing required columns: {missing}")
+            sys.exit(1)
+        for i, row in enumerate(reader):
+            row["_row_num"] = i + 2  # 1-indexed, skip header
             pairs.append(row)
-    print(f"Validated {len(pairs)} pairs in manifest.")
+
+    print(f"Manifest validated: {len(pairs)} pairs, columns={header}")
     return pairs
+
+
+def run_single_pair(pair, pipeline_modules):
+    """Run the full production-equivalent pipeline for a single image pair.
+
+    This replicates the exact sequence inside verify_pipeline() from main.py
+    lines ~2260-2590, without any DB writes or HTTP response wrapping.
+    """
+    fetch_image_from_url = pipeline_modules["fetch_image_from_url"]
+    apply_clahe = pipeline_modules["apply_clahe"]
+    align_face_crop = pipeline_modules["align_face_crop"]
+    extract_ensemble_embeddings = pipeline_modules["extract_ensemble_embeddings"]
+    compute_ensemble_similarity = pipeline_modules["compute_ensemble_similarity"]
+    score_to_lr_ensemble = pipeline_modules["score_to_lr_ensemble"]
+    evaluate_mark_veto_override = pipeline_modules["evaluate_mark_veto_override"]
+    _run_mark_evidence_pipeline = pipeline_modules["_run_mark_evidence_pipeline"]
+    estimate_age = pipeline_modules["estimate_age"]
+    cross_spectral_normalize = pipeline_modules["cross_spectral_normalize"]
+    compute_image_hash = pipeline_modules["compute_image_hash"]
+    calculate_cosine_similarity = pipeline_modules["calculate_cosine_similarity"]
+    finite_or_none = pipeline_modules["finite_or_none"]
+
+    t0 = time.time()
+
+    # 1. Fetch images from GCS (same as verify_pipeline line 2272-2274)
+    gallery_img, gallery_file_hash = fetch_image_from_url(pair["image2_url_or_gcs_path"])
+    probe_img, probe_file_hash = fetch_image_from_url(pair["image1_url_or_gcs_path"])
+
+    # 2. CLAHE preprocessing (same as verify_pipeline line 2337-2338)
+    gallery_clahe = apply_clahe(gallery_img)
+    probe_clahe = apply_clahe(probe_img)
+
+    # 3. Face alignment & crop to 256x256 (same as verify_pipeline line 2342-2343)
+    gallery_aligned, gallery_landmarks = align_face_crop(gallery_clahe)
+    probe_aligned, probe_landmarks = align_face_crop(probe_clahe)
+
+    if gallery_landmarks is None or probe_landmarks is None:
+        return {
+            "error": "FACE_NOT_DETECTED",
+            "timing_ms": int((time.time() - t0) * 1000),
+        }
+
+    # 3.5 Temporal Invariance (same as verify_pipeline line 2357-2362)
+    gallery_age = estimate_age(gallery_aligned)
+    probe_age = estimate_age(probe_aligned)
+    temporal_delta = abs(probe_age - gallery_age)
+    gallery_aligned, probe_aligned, spectral_correction = cross_spectral_normalize(
+        gallery_aligned, probe_aligned
+    )
+
+    # 4. TIER 1: Structural Identity — Neural Ensemble (same as line 2366-2369)
+    ensemble_gallery = extract_ensemble_embeddings(gallery_aligned)
+    ensemble_probe = extract_ensemble_embeddings(probe_aligned)
+    structural_sim, arcface_sim, secondary_sim = compute_ensemble_similarity(
+        ensemble_gallery, ensemble_probe
+    )
+
+    # 5. Veto Protocol (same as line 2422-2423)
+    veto_triggered = structural_sim < 0.40
+
+    # 6. Mark Evidence Pipeline (same as line 2428-2471)
+    mark_payload = _run_mark_evidence_pipeline(
+        probe_img=probe_img,
+        gallery_img=gallery_img,
+        probe_file_hash=probe_file_hash,
+        gallery_file_hash=gallery_file_hash,
+        mode="production",
+        target_size=1024,
+    )
+    raw_probe_marks = mark_payload.get("raw_probe_marks", [])
+    raw_gallery_marks = mark_payload.get("raw_gallery_marks", [])
+    accepted_correspondences = mark_payload.get("accepted_correspondences", [])
+    lr_marks = mark_payload.get("lr_marks") if mark_payload.get("lr_marks") is not None else 1.0
+    individual_mark_lrs = mark_payload.get("individual_mark_lrs", [])
+
+    mark_result = {
+        "matched": len(accepted_correspondences),
+        "total_gallery": len(raw_gallery_marks),
+        "total_probe": len(raw_probe_marks),
+        "lr_marks": lr_marks,
+        "mark_lrs": individual_mark_lrs,
+    }
+
+    # 7. Bayesian Evidence Fusion (same as line 2539-2555)
+    lr_ensemble = score_to_lr_ensemble(structural_sim, temporal_delta=temporal_delta)
+    lr_total = lr_ensemble * lr_marks
+    PRIOR = 0.5
+    posterior = (PRIOR * lr_total) / ((PRIOR * lr_total) + (1.0 - PRIOR))
+    fused_score = posterior * 100.0
+    bayesian_fused_score = fused_score
+
+    # 8. Mark Override Protocol (same as line 2563-2585)
+    mark_override_eval = evaluate_mark_veto_override(mark_result, lr_marks)
+    veto_reason = None
+    veto_override_applied = False
+
+    if veto_triggered:
+        if mark_override_eval["eligible"]:
+            veto_reason = "ARCFACE_VETO_MARK_OVERRIDE"
+            veto_override_applied = True
+        else:
+            fused_score = 0.0
+            veto_reason = "ARCFACE_VETO"
+
+    # 9. Determine conclusion (same as line 2586-2591)
+    if veto_triggered and not veto_override_applied:
+        conclusion = "Inconclusive — Limited by Face-Model Threshold"
+    elif veto_triggered and veto_override_applied:
+        conclusion = "Supports Common Source — Face-Model Veto Overridden by Mark Correspondence"
+    elif fused_score > 90.0:
+        conclusion = "Strongly Supports Common Source"
+    elif fused_score > 75.0:
+        conclusion = "Supports Common Source"
+    else:
+        conclusion = "Inconclusive — Insufficient Evidence"
+
+    elapsed_ms = int((time.time() - t0) * 1000)
+
+    return {
+        "structural_sim": round(structural_sim, 6),
+        "arcface_sim": round(arcface_sim, 6),
+        "facenet_sim": round(secondary_sim, 6),
+        "fused_score": round(fused_score, 4),
+        "bayesian_fused_score": round(bayesian_fused_score, 4),
+        "lr_ensemble": finite_or_none(lr_ensemble),
+        "lr_marks": finite_or_none(lr_marks),
+        "lr_total": finite_or_none(lr_total),
+        "raw_probe_marks_count": len(raw_probe_marks),
+        "raw_gallery_marks_count": len(raw_gallery_marks),
+        "accepted_correspondences_count": len(accepted_correspondences),
+        "individual_mark_lrs": [finite_or_none(x) for x in individual_mark_lrs],
+        "veto_triggered": veto_triggered,
+        "veto_reason": veto_reason,
+        "veto_override_applied": veto_override_applied,
+        "conclusion": conclusion,
+        "temporal_delta": round(temporal_delta, 1),
+        "spectral_correction": spectral_correction,
+        "error": None,
+        "timing_ms": elapsed_ms,
+    }
+
 
 def main():
     args = parse_args()
-    
-    print(f"Starting validation pipeline. Output dir: {args.output_dir}")
     os.makedirs(args.output_dir, exist_ok=True)
-    
     pairs = validate_manifest(args.manifest)
-    
+
     if args.dry_run:
-        print("Dry-run complete. Manifest is valid. Exiting.")
+        print("DRY-RUN complete. Manifest is valid. No images were processed.")
+        # Write a summary for CI verification
+        summary = {
+            "dry_run": True,
+            "manifest_path": args.manifest,
+            "pair_count": len(pairs),
+            "categories": list(set(p.get("category", "") for p in pairs)),
+        }
+        with open(os.path.join(args.output_dir, "dry_run_summary.json"), "w") as f:
+            json.dump(summary, f, indent=2)
         return
 
-    output_file = os.path.join(args.output_dir, "validation_results.jsonl")
-    
-    with open(output_file, 'w', encoding='utf-8') as f:
-        for pair in pairs:
-            start_time = time.time()
-            result = {
-                "pair_id": pair["pair_id"],
-                "label_same_person": pair["label_same_person"].lower() == 'true',
-                "category": pair.get("category", "unknown"),
+    # ── Import production pipeline modules ──
+    # These are the exact same functions used by the /verify/fuse endpoint.
+    # Importing here so dry-run works without the full backend environment.
+    try:
+        from main import (
+            fetch_image_from_url,
+            apply_clahe,
+            align_face_crop,
+            extract_ensemble_embeddings,
+            compute_ensemble_similarity,
+            score_to_lr_ensemble,
+            evaluate_mark_veto_override,
+            _run_mark_evidence_pipeline,
+            estimate_age,
+            cross_spectral_normalize,
+            compute_image_hash,
+            calculate_cosine_similarity,
+            finite_or_none,
+        )
+    except ImportError as e:
+        print(f"FATAL: Cannot import backend pipeline modules. "
+              f"This script must run inside the backend container environment.\n{e}")
+        sys.exit(1)
+
+    pipeline_modules = {
+        "fetch_image_from_url": fetch_image_from_url,
+        "apply_clahe": apply_clahe,
+        "align_face_crop": align_face_crop,
+        "extract_ensemble_embeddings": extract_ensemble_embeddings,
+        "compute_ensemble_similarity": compute_ensemble_similarity,
+        "score_to_lr_ensemble": score_to_lr_ensemble,
+        "evaluate_mark_veto_override": evaluate_mark_veto_override,
+        "_run_mark_evidence_pipeline": _run_mark_evidence_pipeline,
+        "estimate_age": estimate_age,
+        "cross_spectral_normalize": cross_spectral_normalize,
+        "compute_image_hash": compute_image_hash,
+        "calculate_cosine_similarity": calculate_cosine_similarity,
+        "finite_or_none": finite_or_none,
+    }
+
+    results_path = os.path.join(args.output_dir, "validation_results.jsonl")
+    fp_path = os.path.join(args.output_dir, "false_positives.csv")
+    fn_path = os.path.join(args.output_dir, "false_negatives.csv")
+    conflict_path = os.path.join(args.output_dir, "conflicting_evidence_cases.csv")
+    summary_path = os.path.join(args.output_dir, "summary_metrics.json")
+
+    all_results = []
+
+    with open(results_path, "w", encoding="utf-8") as f:
+        for idx, pair in enumerate(pairs):
+            pair_id = pair["pair_id"]
+            label = pair["label_same_person"].strip().lower() == "true"
+            category = pair.get("category", "unknown")
+            print(f"[{idx+1}/{len(pairs)}] Processing {pair_id} ({category})...", end=" ", flush=True)
+
+            row = {
+                "pair_id": pair_id,
+                "label_same_person": label,
+                "category": category,
             }
-            
+
             try:
-                # ---------------------------------------------------------
-                # DO NOT ALTER DATABASE RECORDS.
-                # Simulated call to the exact core logic used by /verify/fuse
-                # ---------------------------------------------------------
-                # img1 = load_images_from_gcs(pair["image1_url_or_gcs_path"])
-                # img2 = load_images_from_gcs(pair["image2_url_or_gcs_path"])
-                # verification_result = verify_fuse_pipeline(img1, img2, skip_db_insert=True)
-                
-                # Placeholder structure mapping to what verification_result will provide:
-                result.update({
-                    "structural_score": 0.0, # Replace with verification_result.structural_score
-                    "fused_identity_score": 0.0,
-                    "lr_marks": 1.0,
-                    "raw_probe_marks_count": 0,
-                    "raw_gallery_marks_count": 0,
-                    "accepted_correspondences_count": 0,
-                    "veto_triggered": False,
-                    "veto_override_applied": False,
-                    "final_decision": "PENDING",
-                    "error": None
-                })
+                result = run_single_pair(pair, pipeline_modules)
+                row.update(result)
             except Exception as e:
-                result["error"] = str(e)
-            
-            result["timing_ms"] = int((time.time() - start_time) * 1000)
-            f.write(json.dumps(result) + "\n")
-            
-    print(f"Validation finished. Results written to {output_file}")
+                row["error"] = f"{type(e).__name__}: {str(e)}"
+                row["timing_ms"] = 0
+                traceback.print_exc()
+
+            all_results.append(row)
+            f.write(json.dumps(row) + "\n")
+            status = row.get("error") or row.get("conclusion", "?")
+            print(f"{row.get('timing_ms', 0)}ms — {status}")
+
+    # ── Post-processing: generate summary outputs ──
+    tp, fp, tn, fn = 0, 0, 0, 0
+    false_positives = []
+    false_negatives = []
+    conflicting_cases = []
+
+    for r in all_results:
+        if r.get("error"):
+            continue
+        label = r["label_same_person"]
+        score = r.get("fused_score", 0)
+        veto = r.get("veto_triggered", False)
+        predicted_match = score > 50.0 and not (veto and not r.get("veto_override_applied", False))
+
+        if predicted_match and label:
+            tp += 1
+        elif predicted_match and not label:
+            fp += 1
+            false_positives.append(r)
+        elif not predicted_match and not label:
+            tn += 1
+        elif not predicted_match and label:
+            fn += 1
+            false_negatives.append(r)
+
+        # Conflicting evidence: face weak / marks strong, or face strong / marks weak
+        face_strong = r.get("structural_sim", 0) >= 0.60
+        face_weak = r.get("structural_sim", 0) < 0.40
+        marks_strong = r.get("lr_marks", 1.0) > 10.0
+        marks_weak = r.get("lr_marks", 1.0) <= 1.0
+
+        if (face_weak and marks_strong) or (face_strong and marks_weak):
+            conflict_type = "face_weak_marks_strong" if face_weak else "face_strong_marks_weak"
+            conflicting_cases.append({**r, "conflict_type": conflict_type})
+
+    total = tp + fp + tn + fn
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+    far = fp / (fp + tn) if (fp + tn) > 0 else 0
+    frr = fn / (fn + tp) if (fn + tp) > 0 else 0
+
+    summary = {
+        "total_pairs": len(all_results),
+        "errors": sum(1 for r in all_results if r.get("error")),
+        "evaluated": total,
+        "TP": tp, "FP": fp, "TN": tn, "FN": fn,
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "FAR": round(far, 4),
+        "FRR": round(frr, 4),
+        "false_positive_count": len(false_positives),
+        "false_negative_count": len(false_negatives),
+        "conflicting_evidence_count": len(conflicting_cases),
+    }
+
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
+
+    _write_csv(fp_path, false_positives)
+    _write_csv(fn_path, false_negatives)
+    _write_csv(conflict_path, conflicting_cases)
+
+    print(f"\n{'='*60}")
+    print(f"Validation complete.")
+    print(f"  Total: {len(all_results)}, Evaluated: {total}, Errors: {summary['errors']}")
+    print(f"  TP={tp} FP={fp} TN={tn} FN={fn}")
+    print(f"  Precision={precision:.4f} Recall={recall:.4f} FAR={far:.4f} FRR={frr:.4f}")
+    print(f"  Results: {args.output_dir}")
+    print(f"{'='*60}")
+
+
+def _write_csv(path, rows):
+    """Write a list of dicts to CSV."""
+    if not rows:
+        with open(path, "w", newline="") as f:
+            f.write("(no results)\n")
+        return
+    keys = list(rows[0].keys())
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=keys)
+        writer.writeheader()
+        writer.writerows(rows)
+
 
 if __name__ == "__main__":
     main()
