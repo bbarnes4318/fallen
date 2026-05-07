@@ -15,7 +15,21 @@ on:
           - dry-run
           - full-pipeline
           - embeddings-only
+          - generate-manifest
         default: 'dry-run'
+      manifest_max_matched:
+        description: 'Max matched (same-person) pairs for manifest generation'
+        required: false
+        default: '50'
+      manifest_max_mismatched:
+        description: 'Max mismatched (different-person) pairs for manifest generation'
+        required: false
+        default: '50'
+      manifest_check_gcs:
+        description: 'Verify GCS blob existence during manifest generation'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   validate:
@@ -50,6 +64,29 @@ jobs:
             --manifest ${{ inputs.manifest_path }} \
             --output-dir validation/results/${{ steps.run_id.outputs.id }} \
             --dry-run
+
+      # ── Generate Manifest: Create LFW baseline manifest from existing GCS images ──
+      - name: Authenticate to GCP (manifest GCS check)
+        if: ${{ inputs.mode == 'generate-manifest' && inputs.manifest_check_gcs == 'true' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.SA_EMAIL }}
+
+      - name: Generate LFW Manifest
+        if: ${{ inputs.mode == 'generate-manifest' }}
+        run: |
+          GCS_FLAG=""
+          if [ "${{ inputs.manifest_check_gcs }}" = "true" ]; then
+            GCS_FLAG="--check-gcs-exists"
+          fi
+          python scripts/generate_lfw_validation_manifest.py \
+            --pairs-url https://vis-www.cs.umass.edu/lfw/pairsDevTrain.txt \
+            --gcs-prefix gs://hoppwhistle-facial-uploads/gallery/ \
+            --output validation/results/${{ steps.run_id.outputs.id }}/validation_pairs_lfw_baseline.csv \
+            --max-matched ${{ inputs.manifest_max_matched }} \
+            --max-mismatched ${{ inputs.manifest_max_mismatched }} \
+            $GCS_FLAG
 
       # ── Full Pipeline: Production-equivalent validation ──
       - name: Full Pipeline Validation
