@@ -684,7 +684,7 @@ def _run_mark_evidence_pipeline(
 
 import pickle
 from mark_detector import detect_facial_marks, serialize_mark_descriptor, get_thresholds as get_detector_thresholds, MARK_DETECTOR_VERSION
-from mark_matcher import match_marks_v2, get_thresholds as get_matcher_thresholds, MARK_MATCHER_V2_VERSION
+from mark_matcher import match_facial_marks as match_marks_v2, get_thresholds as get_matcher_thresholds, MARK_MATCHER_V2_VERSION
 
 def _load_calibration():
     """Attempt to load calibration JSON from GCS, fallback to local file."""
