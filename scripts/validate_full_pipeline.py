@@ -99,6 +99,8 @@ def run_single_pair(pair, pipeline_modules):
     compute_image_hash = pipeline_modules["compute_image_hash"]
     calculate_cosine_similarity = pipeline_modules["calculate_cosine_similarity"]
     finite_or_none = pipeline_modules["finite_or_none"]
+    CALIBRATION = pipeline_modules["CALIBRATION"]
+    TIER4_CALIBRATION = pipeline_modules["TIER4_CALIBRATION"]
 
     t0 = time.time()
 
@@ -197,6 +199,12 @@ def run_single_pair(pair, pipeline_modules):
     elapsed_ms = int((time.time() - t0) * 1000)
 
     return {
+        "calibration_loaded": CALIBRATION is not None,
+        "calibration_source": "gcs_or_local" if CALIBRATION else "missing",
+        "calibration_status": "loaded" if CALIBRATION else "failed",
+        "calibration_keys": list(CALIBRATION.keys()) if CALIBRATION else [],
+        "ensemble_threshold_count": len(CALIBRATION.get("ensemble", {}).get("thresholds", {})) if CALIBRATION else 0,
+        "arcface_threshold_count": len(CALIBRATION.get("arcface", {}).get("thresholds", {})) if CALIBRATION else 0,
         "structural_sim": round(structural_sim, 6),
         "arcface_sim": round(arcface_sim, 6),
         "facenet_sim": round(secondary_sim, 6),
@@ -256,6 +264,8 @@ def main():
             compute_image_hash,
             calculate_cosine_similarity,
             finite_or_none,
+            CALIBRATION,
+            TIER4_CALIBRATION,
         )
     except ImportError as e:
         print(f"FATAL: Cannot import backend pipeline modules. "
@@ -276,6 +286,8 @@ def main():
         "compute_image_hash": compute_image_hash,
         "calculate_cosine_similarity": calculate_cosine_similarity,
         "finite_or_none": finite_or_none,
+        "CALIBRATION": CALIBRATION,
+        "TIER4_CALIBRATION": TIER4_CALIBRATION,
     }
 
     results_path = os.path.join(args.output_dir, "validation_results.jsonl")

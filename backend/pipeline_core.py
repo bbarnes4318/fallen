@@ -690,7 +690,7 @@ def _load_calibration():
     """Attempt to load calibration JSON from GCS, fallback to local file."""
     import json as _json
 
-    bucket_name = os.getenv("BUCKET_NAME", "hoppwhistle-facial-uploads")
+    bucket_name = os.getenv("BUCKET_NAME") or "hoppwhistle-facial-uploads"
     gcs_path = "calibration/lfw_calibration.json"
 
     # Try GCS first
@@ -720,7 +720,7 @@ def _load_calibration():
     except Exception as _e:
         print(f"WARNING: Failed to load calibration data: {_e}. FAR will be reported as UNCALIBRATED.")
 
-    return None
+    raise RuntimeError("CALIBRATION_MISSING: Could not load LFW calibration data from GCS or local path.")
 
 CALIBRATION = _load_calibration()
 
@@ -738,7 +738,7 @@ def _load_tier4_calibration():
         sys.modules["numpy._core.numeric"] = sys.modules["numpy.core.numeric"]
         sys.modules["numpy._core.multiarray"] = sys.modules["numpy.core.multiarray"]
 
-    bucket_name = os.getenv("BUCKET_NAME", "hoppwhistle-facial-uploads")
+    bucket_name = os.getenv("BUCKET_NAME") or "hoppwhistle-facial-uploads"
     gcs_path = "calibration/tier4_population_model.pkl"
 
     # Try local file first (faster)
@@ -766,8 +766,7 @@ def _load_tier4_calibration():
     except Exception as e:
         print(f"GCS Tier 4 model load failed: {e}")
 
-    print("WARNING: No Tier 4 Bayesian calibration data found. Mark LR will be unavailable.")
-    return None
+    raise RuntimeError("CALIBRATION_MISSING: No Tier 4 Bayesian calibration data found.")
 
 TIER4_CALIBRATION = _load_tier4_calibration()
 

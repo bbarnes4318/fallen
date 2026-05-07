@@ -55,27 +55,27 @@ def load_results(path):
 
 def apply_current_hard_safety_rule(r, threshold):
     """Current production logic: structural_sim < 0.40 → score = 0 unless mark override."""
-    score = r.get("bayesian_fused_score", 0)
+    score = r.get("fused_score", 0)
     veto = r.get("veto_triggered", False)
     override = r.get("veto_override_applied", False)
     if veto and not override:
         score = 0.0
-    return score >= threshold
+    return score > threshold
 
 
 def apply_soft_cap(r, threshold):
     """If veto triggered, cap score at 50 instead of zeroing."""
-    score = r.get("bayesian_fused_score", 0)
+    score = r.get("fused_score", 0)
     veto = r.get("veto_triggered", False)
     if veto:
         score = min(score, 50.0)
-    return score >= threshold
+    return score > threshold
 
 
 def apply_human_review_flag(r, threshold):
     """Keep the Bayesian score intact regardless of veto. Flag for review but don't auto-reject."""
-    score = r.get("bayesian_fused_score", 0)
-    return score >= threshold
+    score = r.get("fused_score", 0)
+    return score > threshold
 
 
 def apply_separate_channels(r, _threshold):
@@ -87,7 +87,7 @@ def apply_separate_channels(r, _threshold):
 
 def apply_strict_mark_override(r, threshold):
     """Veto can ONLY be overridden if 3+ matched marks AND lr_marks >= 100."""
-    score = r.get("bayesian_fused_score", 0)
+    score = r.get("fused_score", 0)
     veto = r.get("veto_triggered", False)
     if veto:
         mark_count = r.get("accepted_correspondences_count", 0)
@@ -96,7 +96,7 @@ def apply_strict_mark_override(r, threshold):
             pass  # Override: keep the score
         else:
             score = 0.0
-    return score >= threshold
+    return score > threshold
 
 
 POLICIES = {
@@ -208,7 +208,7 @@ def main():
                     "original_state": "FN",
                     "new_state": "TP",
                     "structural_sim": r.get("structural_sim"),
-                    "fused_score": r.get("bayesian_fused_score"),
+                    "fused_score": r.get("fused_score"),
                     "lr_marks": r.get("lr_marks"),
                 })
             elif not baseline_pred and policy_pred and not label:
@@ -218,7 +218,7 @@ def main():
                     "original_state": "TN",
                     "new_state": "FP",
                     "structural_sim": r.get("structural_sim"),
-                    "fused_score": r.get("bayesian_fused_score"),
+                    "fused_score": r.get("fused_score"),
                     "lr_marks": r.get("lr_marks"),
                 })
 
