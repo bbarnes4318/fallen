@@ -369,11 +369,15 @@ def _run_channels(aligned_crop, gray, valid_mask, kernel, h, w, input_is_preproc
     if input_is_preprocessed:
         # V2 only: Use LAB L channel
         L_blur = cv2.medianBlur(L_enhanced, 7)
-        k_size = 31
-        k_sd = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
-        blackhat = cv2.morphologyEx(L_blur, cv2.MORPH_BLACKHAT, k_sd)
-        _, sd_thresh = cv2.threshold(blackhat, 5, 255, cv2.THRESH_BINARY)
-        k_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        # Use a large median blur to establish local background for broad features
+        bg_sd = cv2.medianBlur(L_enhanced, 61)
+        dark_delta_sd = cv2.subtract(bg_sd, L_blur)
+        
+        # Broad structural depressions have low contrast. Threshold > 4 units depth.
+        _, sd_thresh = cv2.threshold(dark_delta_sd, 4, 255, cv2.THRESH_BINARY)
+        
+        # Clean up noise
+        k_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         sd_cleaned = cv2.morphologyEx(sd_thresh, cv2.MORPH_OPEN, k_clean)
         channels["structural_depression"] = _generate_contours(sd_cleaned, valid_mask, kernel)
     else:
