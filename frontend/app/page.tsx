@@ -198,12 +198,15 @@ export default function Home() {
     if (r.failed_provenance_veto) {
       return 'Synthetic Provenance Veto Triggered';
     }
-    if (r.veto_triggered && !r.veto_override_applied) {
-      return 'Inconclusive — Limited by Face-Model Threshold';
+    if (r.veto_triggered && r.veto_override_applied) {
+      return 'Conflicting Evidence — Human Review Needed';
     }
-    if (r.fused_identity_score >= 90) return 'Strongly Supports Common Source';
-    if (r.fused_identity_score >= 75) return 'Supports Common Source';
-    return 'Inconclusive — Insufficient Evidence';
+    if (r.veto_triggered && !r.veto_override_applied) {
+      return 'Face Similarity Was Too Low to Confirm Same Person';
+    }
+    if (r.fused_identity_score >= 90) return 'Strongly Supports Same Person';
+    if (r.fused_identity_score >= 75) return 'Supports Same Person';
+    return 'Not Enough Evidence to Confirm Same Person';
   }
 
   const [results, setResults] = useState<VerificationResult | null>(null);
@@ -498,11 +501,11 @@ export default function Home() {
           <div style="display:flex;gap:8px;margin-bottom:10px;flex-shrink:0;">
             <div style="flex:1;border:1px solid #333;padding:4px;background:#0a0a0a;text-align:center;">
               <img src="${safeImgSrc(results.probe_aligned_b64)}" style="width:100%;height:180px;object-fit:contain;display:block;" />
-              <div style="font-size:7px;color:#666;letter-spacing:3px;margin-top:4px;">PROBE (UNKNOWN TARGET)</div>
+              <div style="font-size:7px;color:#666;letter-spacing:3px;margin-top:4px;">IMAGE 1</div>
             </div>
             <div style="flex:1;border:1px solid #333;padding:4px;background:#0a0a0a;text-align:center;">
               <img src="${safeImgSrc(results.gallery_aligned_b64)}" style="width:100%;height:180px;object-fit:contain;display:block;" />
-              <div style="font-size:7px;color:#666;letter-spacing:3px;margin-top:4px;">GALLERY (VAULT MATCH)</div>
+              <div style="font-size:7px;color:#666;letter-spacing:3px;margin-top:4px;">IMAGE 2</div>
             </div>
           </div>
 
@@ -543,9 +546,9 @@ export default function Home() {
                 <span style="font-size:6px;color:#666;">MATCHER: ${escapeHtml(results.mark_diagnostics.matcher_status || 'N/A')}</span>
               </div>
               <div style="display:flex;gap:12px;font-size:7px;margin-bottom:6px;">
-                <div style="flex:1;display:flex;justify-content:space-between;"><span style="color:#555;">PROBE MARKS</span><span style="color:#fff;font-weight:bold;">${results.mark_diagnostics.raw_probe_marks_count}</span></div>
-                <div style="flex:1;display:flex;justify-content:space-between;"><span style="color:#555;">GALLERY MARKS</span><span style="color:#fff;font-weight:bold;">${results.mark_diagnostics.raw_gallery_marks_count}</span></div>
-                <div style="flex:1;display:flex;justify-content:space-between;"><span style="color:#555;">CORRESPONDENCES</span><span style="color:#34d399;font-weight:bold;">${results.mark_diagnostics.accepted_correspondences_count}</span></div>
+                <div style="flex:1;display:flex;justify-content:space-between;"><span style="color:#555;">IMAGE 1 MARKS</span><span style="color:#fff;font-weight:bold;">${results.mark_diagnostics.raw_probe_marks_count}</span></div>
+                <div style="flex:1;display:flex;justify-content:space-between;"><span style="color:#555;">IMAGE 2 MARKS</span><span style="color:#fff;font-weight:bold;">${results.mark_diagnostics.raw_gallery_marks_count}</span></div>
+                <div style="flex:1;display:flex;justify-content:space-between;"><span style="color:#555;">CONFIRMED MARKS</span><span style="color:#34d399;font-weight:bold;">${results.mark_diagnostics.accepted_correspondences_count}</span></div>
                 <div style="flex:1;display:flex;justify-content:space-between;"><span style="color:#555;">REJECTED</span><span style="color:#fbbf24;font-weight:bold;">${results.mark_diagnostics.rejected_candidates_count}</span></div>
               </div>
               <div style="display:flex;gap:12px;font-size:7px;margin-bottom:6px;">
@@ -1075,7 +1078,7 @@ export default function Home() {
                     <div className="flex flex-col items-center text-[#D4AF37]/80">
                       <svg className="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 4v16m8-8H4"></path></svg>
                       <span className="text-[#D4AF37] font-bold text-sm tracking-[0.15em]">UPLOAD TARGET</span>
-                      <span className="text-gray-600 text-[9px] tracking-widest mt-1">PROBE IMAGE</span>
+                      <span className="text-gray-600 text-[9px] tracking-widest mt-1">IMAGE 1</span>
                     </div>
                   )}
                 </div>
@@ -1092,7 +1095,7 @@ export default function Home() {
                     <div className="flex flex-col items-center text-gray-500">
                       <svg className="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 4v16m8-8H4"></path></svg>
                       <span className="font-bold text-sm tracking-[0.15em]">UPLOAD KNOWN ALIAS</span>
-                      <span className="text-gray-600 text-[9px] tracking-widest mt-1">GALLERY IMAGE</span>
+                      <span className="text-gray-600 text-[9px] tracking-widest mt-1">IMAGE 2</span>
                     </div>
                   )}
                 </div>
@@ -1303,368 +1306,76 @@ export default function Home() {
             <div className="w-[30%] flex flex-col gap-1.5 min-h-0 overflow-y-auto overflow-x-hidden shrink-0 min-w-0 break-words pr-0.5 scrollbar-thin">
 
               {/* ═══ VERDICT — Primary User-Facing Result ═══ */}
-              {(() => {
-                const preDecision = getTechnicalPosteriorPercent(results);
-                const displayed = results.fused_identity_score;
-                const scoreDiverged = preDecision != null && Math.abs(preDecision - displayed) > 0.5;
-                const resultLabel = getResultLabel(results);
-                return (
-              <div className={`relative overflow-hidden rounded-lg border-2 ${displayed < 40 ? 'border-red-700/60 bg-gradient-to-br from-[#1a0505] to-[#0d0d0e]' : displayed >= 75 ? 'border-emerald-700/50 bg-gradient-to-br from-[#051a0d] to-[#0d0d0e]' : 'border-[#D4AF37]/50 bg-gradient-to-br from-[#1a170d] to-[#0d0d0e]'}`}>
-                <div className={`absolute -top-6 -right-6 w-20 h-20 rounded-full ${displayed < 40 ? 'bg-red-500/5' : 'bg-[#D4AF37]/5'}`}></div>
-                {/* Verdict Banner */}
-                <div className={`px-3 py-1.5 text-[10px] font-bold tracking-[0.12em] ${
-                  displayed < 40 ? 'bg-red-900/40 text-red-300' :
-                  results.veto_triggered ? 'bg-amber-900/40 text-amber-300' :
-                  displayed >= 75 ? 'bg-emerald-900/30 text-emerald-300' :
-                  'bg-[#D4AF37]/10 text-[#D4AF37]'
-                }`}>
-                  {resultLabel.toUpperCase()}
-                </div>
-                {/* Score + Evidence Level */}
-                <div className="relative z-10 p-3 pt-2">
-                  <div className="flex items-center gap-3 min-w-0">
-                    {/* Left: displayed decision score */}
-                    <div className="shrink-0">
-                      {displayed > 0 ? (
-                        <div className="flex items-baseline gap-0.5">
-                          <span className={`text-3xl font-bold tabular-nums leading-none ${displayed < 40 ? 'text-red-400' : displayed >= 75 ? 'text-emerald-400' : 'text-[#D4AF37]'}`}>{displayed}</span>
-                          <span className={`text-sm font-bold ${displayed < 40 ? 'text-red-400/60' : displayed >= 75 ? 'text-emerald-400/60' : 'text-[#D4AF37]/60'}`}>%</span>
-                        </div>
-                      ) : (
-                        <div className="text-lg font-bold text-red-400/80 leading-none">No Positive<br/>Support Result</div>
-                      )}
-                    </div>
-                    {/* Right: plain-language */}
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[8px] text-gray-500 tracking-wider mb-0.5">DISPLAYED DECISION SCORE</div>
-                      <div className={`text-[9px] font-medium ${displayed < 40 ? 'text-red-300/90' : displayed >= 75 ? 'text-emerald-300/90' : displayed > 50 ? 'text-[#D4AF37]/90' : 'text-gray-400'}`}>
-                        {resultLabel}
-                      </div>
-                    </div>
+              <div className="flex flex-col gap-3 p-3 bg-[#0d0d0e] border-2 border-[#1f1f1f] rounded-lg">
+                <div className="text-[10px] font-bold text-gray-400 tracking-widest uppercase border-b border-[#1f1f1f] pb-2">Final Result</div>
+                <div className="flex flex-col gap-2">
+                  <div className={`text-xl font-bold ${
+                    results.veto_triggered && results.veto_override_applied ? 'text-amber-400' :
+                    results.veto_triggered ? 'text-red-400' :
+                    results.fused_identity_score >= 75 ? 'text-emerald-400' : 'text-gray-400'
+                  }`}>
+                    {getResultLabel(results)}
                   </div>
-                  {/* Score bar */}
-                  <div className="mt-2 h-1.5 w-full bg-[#111] rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-700 ${displayed >= 75 ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' : displayed >= 40 ? 'bg-gradient-to-r from-amber-600 to-amber-400' : 'bg-gradient-to-r from-red-700 to-red-500'}`}
-                      style={{ width: `${Math.min(100, displayed)}%` }}
-                    />
-                  </div>
-                  {/* Pre-Decision Bayesian divergence callout */}
-                  {scoreDiverged && preDecision != null && (
-                    <div className="mt-2 px-2 py-1.5 bg-amber-950/30 border border-amber-900/30 rounded text-[9px] leading-relaxed">
-                      <div className="flex items-center justify-between gap-2 mb-0.5">
-                        <span className="text-amber-300/80 font-bold tracking-wide text-[8px]">PRE-DECISION BAYESIAN SCORE</span>
-                        <span className="text-amber-300 font-bold tabular-nums">{preDecision.toFixed(2)}%</span>
-                      </div>
-                      <p className="text-amber-200/60 text-[8px]">
-                        {results.veto_triggered
-                          ? 'Face-model threshold rule reduced the displayed score. The pre-decision Bayesian evidence is shown above.'
-                          : 'The displayed score differs from the raw Bayesian posterior due to decision policy.'}
-                      </p>
-                    </div>
-                  )}
-                  {/* Veto explanation (plain language) */}
-                  {results.veto_triggered && !scoreDiverged && results.fused_identity_score < 40 && (
-                    <div className="mt-2 text-[9px] text-red-300/70 leading-relaxed">
-                      Result limited by face-model threshold. Technical details available in forensic breakdown.
-                    </div>
-                  )}
-                  <div className="mt-1.5 flex items-center justify-between">
-                    <div className="text-[7px] text-gray-600 group relative cursor-help">
-                      Derived from Bayesian likelihood ratios
-                      <div className="pointer-events-none absolute bottom-full left-0 mb-1.5 w-48 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-50">
-                        <div className="bg-[#111] border border-[#333] rounded px-2 py-1.5 text-[8px] text-gray-300 leading-relaxed shadow-lg">
-                          Displayed Decision Score may differ from the Pre-Decision Bayesian Score when threshold or veto rules are applied. See Technical Details for full derivation.
-                        </div>
-                      </div>
-                    </div>
-                    {results.marks_matched != null && results.marks_matched > 0 && (
-                      <span className="text-[7px] text-emerald-500/60">{results.marks_matched} shared marks</span>
-                    )}
-                  </div>
+                  <p className="text-[10px] text-gray-500 leading-relaxed">
+                    {results.veto_triggered && results.veto_override_applied 
+                      ? "Facial mark evidence strongly supports that these may be the same person. However, the face similarity score is too low to confirm a match automatically. Human review is recommended."
+                      : results.veto_triggered 
+                      ? "The face similarity score is too low to confirm a match automatically. The facial marks detected do not provide enough evidence to override this safety rule."
+                      : results.fused_identity_score >= 75
+                      ? "Both the face similarity score and the facial marks strongly suggest these are the same person."
+                      : "There is not enough evidence to confirm these are the same person."}
+                  </p>
                 </div>
               </div>
-                );
-              })()}
 
-              {/* ═══ SHARED MARK EVIDENCE — First-Class Panel ═══ */}
-              <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg overflow-hidden" data-testid="shared-mark-evidence-panel">
-                <div className="px-2.5 py-1.5 border-b border-[#1a1a1a] bg-[#111]">
-                  <span className="text-[9px] text-[#D4AF37] tracking-wider font-bold">▸ SHARED MARK EVIDENCE</span>
-                </div>
-                {!results.mark_diagnostics ? (
-                  <div className="p-2.5">
-                    <div className="px-2 py-1.5 bg-red-950/30 rounded border border-red-900/30">
-                      <p className="text-[9px] text-red-400/90 font-bold">Mark evidence diagnostics unavailable.</p>
-                      <p className="text-[8px] text-red-400/60 mt-1">The backend did not return mark_diagnostics. This comparison cannot be audited for mark evidence.</p>
-                    </div>
+              {/* ═══ EVIDENCE SUMMARY ═══ */}
+              <div className="flex flex-col gap-3 p-3 bg-[#0d0d0e] border-2 border-[#1f1f1f] rounded-lg mb-4">
+                <div className="text-[10px] font-bold text-gray-400 tracking-widest uppercase border-b border-[#1f1f1f] pb-2">Evidence Summary</div>
+                
+                {/* Face Similarity Channel */}
+                <div className="flex justify-between items-center border-b border-[#1a1a1a] pb-2">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-gray-300 font-bold tracking-wider">Face Similarity</span>
+                    <span className="text-[8px] text-gray-500">Overall face shape and proportions</span>
                   </div>
-                ) : (
-                  <div className="p-2.5">
-                    {/* Status Banner */}
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={`text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded ${
-                        results.mark_diagnostics.mark_match_status === 'MATCHED' ? 'bg-emerald-900/40 text-emerald-400' :
-                        results.mark_diagnostics.mark_match_status === 'EXACT_SELF_MATCH' ? 'bg-cyan-900/40 text-cyan-400' :
-                        'bg-amber-900/30 text-amber-400'
-                      }`}>{results.mark_diagnostics.mark_match_status || 'UNKNOWN'}</span>
-                      <span className="text-[7px] text-gray-600">DETECTOR: {results.mark_diagnostics.detector_status}</span>
-                      <span className="text-[7px] text-gray-600">·</span>
-                      <span className="text-[7px] text-gray-600">MATCHER: {results.mark_diagnostics.matcher_status}</span>
-                    </div>
-                    {/* Counts Grid */}
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[9px] mb-2">
-                      <div className="flex justify-between"><span className="text-gray-500">Probe Marks Detected</span><span className="text-white font-bold tabular-nums">{results.mark_diagnostics.raw_probe_marks_count}</span></div>
-                      <div className="flex justify-between"><span className="text-gray-500">Gallery Marks Detected</span><span className="text-white font-bold tabular-nums">{results.mark_diagnostics.raw_gallery_marks_count}</span></div>
-                      <div className="flex justify-between"><span className="text-gray-500">Accepted Shared Mark Correspondences</span><span className="text-emerald-400 font-bold tabular-nums">{results.mark_diagnostics.accepted_correspondences_count}</span></div>
-                      <div className="flex justify-between"><span className="text-gray-500">Rejected Candidates</span><span className="text-amber-400/70 font-bold tabular-nums">{results.mark_diagnostics.rejected_candidates_count}</span></div>
-                      <div className="flex justify-between"><span className="text-gray-500">Input is Preprocessed</span><span className="text-gray-400 font-bold">{results.mark_diagnostics.mark_detector_trace?.probe?.input_is_preprocessed ? 'Yes' : 'No'}</span></div>
-                      <div className="flex justify-between"><span className="text-gray-500">Internal CLAHE Applied</span><span className="text-gray-400 font-bold">{results.mark_diagnostics.mark_detector_trace?.probe?.internal_clahe_applied ? 'Yes' : 'No'}</span></div>
-                    </div>
-                    {/* v2.1 Detector Trace Telemetry */}
-                    {(() => {
-                      const trace = results.mark_diagnostics?.mark_detector_trace;
-                      const probeTrace = trace?.probe;
-                      const galleryTrace = trace?.gallery;
-                      if (!probeTrace && !galleryTrace) return null;
-                      const fallbackUsed = probeTrace?.fallback_used || galleryTrace?.fallback_used;
-                      const fallbackCap = probeTrace?.fallback_lr_cap ?? galleryTrace?.fallback_lr_cap;
-                      return (
-                        <>
-                          {/* Fallback Warning */}
-                          {fallbackUsed && (
-                            <div className="px-2 py-1.5 mb-2 bg-amber-950/30 rounded border border-amber-900/30 flex items-center gap-2">
-                              <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0"></div>
-                              <span className="text-[8px] text-amber-400/90">FALLBACK MODE — low-confidence candidates included{fallbackCap ? ` (LR capped at ${fallbackCap})` : ''}</span>
-                            </div>
-                          )}
-                          {/* Per-Channel Counts */}
-                          <div className="flex flex-wrap gap-1.5 mb-2">
-                            {probeTrace?.dark_lesion_initial_candidates != null && probeTrace.dark_lesion_initial_candidates > 0 && (
-                              <span className="text-[7px] px-1.5 py-0.5 rounded bg-purple-900/30 text-purple-300 border border-purple-800/30 font-mono">DARK_LESION: {probeTrace.dark_lesion_initial_candidates}</span>
-                            )}
-                            {probeTrace?.bright_scar_initial_candidates != null && probeTrace.bright_scar_initial_candidates > 0 && (
-                              <span className="text-[7px] px-1.5 py-0.5 rounded bg-sky-900/30 text-sky-300 border border-sky-800/30 font-mono">BRIGHT_SCAR: {probeTrace.bright_scar_initial_candidates}</span>
-                            )}
-                            {probeTrace?.linear_scar_initial_candidates != null && probeTrace.linear_scar_initial_candidates > 0 && (
-                              <span className="text-[7px] px-1.5 py-0.5 rounded bg-rose-900/30 text-rose-300 border border-rose-800/30 font-mono">LINEAR_SCAR: {probeTrace.linear_scar_initial_candidates}</span>
-                            )}
-                            {probeTrace?.texture_anomaly_initial_candidates != null && probeTrace.texture_anomaly_initial_candidates > 0 && (
-                              <span className="text-[7px] px-1.5 py-0.5 rounded bg-teal-900/30 text-teal-300 border border-teal-800/30 font-mono">TEXTURE: {probeTrace.texture_anomaly_initial_candidates}</span>
-                            )}
-                          </div>
-                          {/* Dedup & Final Stats */}
-                          <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[8px] mb-2">
-                            {probeTrace?.dedup_removed != null && (
-                              <div className="flex justify-between"><span className="text-gray-600">Dedup Removed (Probe)</span><span className="text-gray-400 tabular-nums">{probeTrace.dedup_removed}</span></div>
-                            )}
-                            {galleryTrace?.dedup_removed != null && (
-                              <div className="flex justify-between"><span className="text-gray-600">Dedup Removed (Gallery)</span><span className="text-gray-400 tabular-nums">{galleryTrace.dedup_removed}</span></div>
-                            )}
-                            {probeTrace?.final_valid_marks != null && (
-                              <div className="flex justify-between"><span className="text-gray-600">Final Marks (Probe)</span><span className="text-white tabular-nums font-bold">{probeTrace.final_valid_marks}</span></div>
-                            )}
-                            {galleryTrace?.final_valid_marks != null && (
-                              <div className="flex justify-between"><span className="text-gray-600">Final Marks (Gallery)</span><span className="text-white tabular-nums font-bold">{galleryTrace.final_valid_marks}</span></div>
-                            )}
-                          </div>
-                        </>
-                      );
-                    })()}
-                    {/* Mark Evidence Likelihood Ratio */}
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-[8px] text-gray-500">Mark Evidence Likelihood Ratio (LR<sub>marks</sub>)</span>
-                      <span className={`text-[11px] font-bold tabular-nums ${
-                        results.mark_diagnostics.lr_marks != null && results.mark_diagnostics.lr_marks > 1 ? 'text-[#D4AF37]' : 'text-gray-400'
-                      }`}>{results.mark_diagnostics.lr_marks != null ? formatLRSci(results.mark_diagnostics.lr_marks) : 'N/A'}</span>
-                    </div>
-                    {/* Evidence Contribution Label */}
-                    <div className="mb-2">
-                      {results.mark_diagnostics.mark_match_status === 'LEGACY_MARK_PIPELINE_NEUTRALIZED' ? (
-                        <span className="text-[7px] text-amber-400/70 italic">Legacy mark evidence was neutralized and did not affect the Bayesian score.</span>
-                      ) : results.mark_diagnostics.mark_detector_trace?.probe?.input_is_preprocessed === true && results.mark_diagnostics.mark_detector_trace?.probe?.internal_clahe_applied === false ? (
-                        <span className="text-[7px] text-emerald-400/80 font-bold">V2 mark evidence active.</span>
-                      ) : results.mark_diagnostics.lr_marks == null ? (
-                        <span className="text-[7px] text-gray-500 italic">Evidence contribution could not be determined</span>
-                      ) : results.mark_diagnostics.lr_marks === 1.0 ? (
-                        <span className="text-[7px] text-amber-400/70 italic">Neutral Mark Evidence — mark channel neither supports nor refutes the same-source hypothesis</span>
-                      ) : results.mark_diagnostics.lr_marks > 10000 ? (
-                        <span className="text-[7px] text-emerald-400/80 italic">Extremely strong evidence supporting the same-source hypothesis</span>
-                      ) : results.mark_diagnostics.lr_marks > 100 ? (
-                        <span className="text-[7px] text-emerald-400/70 italic">Strong evidence supporting the same-source hypothesis</span>
-                      ) : results.mark_diagnostics.lr_marks > 1 ? (
-                        <span className="text-[7px] text-[#D4AF37]/70 italic">Evidence supporting the same-source hypothesis</span>
-                      ) : (
-                        <span className="text-[7px] text-red-400/70 italic">Evidence supporting the different-source hypothesis</span>
-                      )}
-                    </div>
-                    {/* Individual Mark LRs */}
-                    {results.mark_lrs && results.mark_lrs.length > 0 && (
-                      <div className="mb-2">
-                        <div className="text-[7px] text-gray-600 mb-1">Individual Mark LRs ({results.mark_lrs.length})</div>
-                        <div className="flex flex-wrap gap-1">
-                          {results.mark_lrs.map((lr, i) => (
-                            <span key={i} className={`text-[7px] px-1 py-0.5 rounded font-bold tabular-nums ${lr > 10 ? 'bg-[#D4AF37]/15 text-[#D4AF37]' : 'bg-gray-800 text-gray-400'}`}>{lr.toFixed(1)}</span>
-                          ))}
-                        </div>
-                        {results.mark_lrs.length > 1 && (
-                          <div className="text-[7px] text-gray-600 mt-1 font-mono">
-                            LR<sub>marks</sub> = {results.mark_lrs.map((lr, i) => `${lr.toFixed(1)}${i < results.mark_lrs!.length - 1 ? ' ×' : ''}`).join(' ')} = {formatLRSci(results.mark_diagnostics.lr_marks)}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {/* Rejection Summary — explains why LR_marks is neutral or absent */}
-                    {(results.mark_diagnostics.lr_marks == null || results.mark_diagnostics.lr_marks === 1.0) && results.mark_diagnostics.rejection_summary && (
-                      <div className="mt-2 px-2 py-1.5 bg-amber-950/20 rounded border border-amber-900/20">
-                        <p className="text-[8px] text-amber-400/80 leading-relaxed">{results.mark_diagnostics.rejection_summary}</p>
-                      </div>
-                    )}
-                    {/* Zero marks on both sides diagnostic */}
-                    {results.mark_diagnostics.raw_probe_marks_count === 0 && results.mark_diagnostics.raw_gallery_marks_count === 0 && !results.mark_diagnostics.rejection_summary && (
-                      <div className="mt-2 px-2 py-1.5 bg-amber-950/20 rounded border border-amber-900/20">
-                        <p className="text-[8px] text-amber-400/80 leading-relaxed">No facial marks (scars, moles, blemishes) were detected on either the probe or gallery image. This may be due to image quality, lighting, occlusion, or the absence of distinguishing marks.</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* ═══ HOW WE SCORED THIS — Breakdown ═══ */}
-              <div className="border border-[#1f1f1f] bg-[#0d0d0e] rounded-lg overflow-hidden">
-                <div className="px-2.5 py-1.5 border-b border-[#1a1a1a] bg-[#111]">
-                  <span className="text-[9px] text-gray-400 tracking-wider font-bold">HOW WE ANALYZED THIS</span>
+                  <span className={`text-[10px] font-bold px-2 py-1 rounded ${results.structural_score > 80 ? 'bg-emerald-900/30 text-emerald-400' : results.structural_score > 60 ? 'bg-amber-900/30 text-amber-400' : 'bg-red-900/30 text-red-400'}`}>
+                    {results.structural_score > 80 ? 'STRONG' : results.structural_score > 60 ? 'MODERATE' : 'WEAK'}
+                  </span>
                 </div>
 
-                {/* Tier 1: Face Shape & Identity */}
-                <div className="p-2.5 border-b border-[#1a1a1a]">
-                  <div className="flex items-baseline justify-between">
-                    <h3 className="text-gray-300 text-[9px] tracking-wider font-bold">FACE EMBEDDING ANALYSIS</h3>
-                    <span className={`text-lg font-bold tabular-nums ${results.structural_score > 80 ? 'text-emerald-400' : results.structural_score > 60 ? 'text-amber-400' : 'text-red-400'}`}>{results.structural_score}%</span>
+                {/* Facial Mark Evidence Channel */}
+                <div className="flex justify-between items-center border-b border-[#1a1a1a] pb-2">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-gray-300 font-bold tracking-wider">Facial Mark Evidence</span>
+                    <span className="text-[8px] text-gray-500">Scars, moles, and blemishes</span>
                   </div>
-                  <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${results.structural_score > 80 ? 'bg-emerald-500/70' : results.structural_score > 60 ? 'bg-amber-500/70' : 'bg-red-500/70'}`}
-                      style={{ width: `${Math.min(100, results.structural_score)}%` }}
-                    />
-                  </div>
-                  <p className="text-[9px] text-gray-500 mt-1.5 leading-relaxed">How similar are the neural face embeddings? This measures cosine distance between 512-D ArcFace vectors. It does not prove identity.</p>
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    <div className={`w-1 h-1 rounded-full ${results.structural_score > 80 ? 'bg-emerald-500' : results.structural_score > 60 ? 'bg-amber-500' : 'bg-red-500'}`}></div>
-                    <span className={`text-[8px] italic ${results.structural_score > 80 ? 'text-emerald-500/70' : results.structural_score > 60 ? 'text-amber-500/70' : 'text-red-500/70'}`}>
-                      {results.structural_score > 85 ? 'Strong embedding similarity' : results.structural_score > 70 ? 'Moderate embedding similarity — further review recommended' : results.structural_score > 50 ? 'Weak embedding similarity' : 'Very low embedding similarity'}
-                    </span>
-                  </div>
-                  <div className="text-[7px] text-gray-700 mt-1 tracking-wide">ArcFace 512-D CNN · LR<sub>face_model</sub> channel</div>
+                  <span className={`text-[10px] font-bold px-2 py-1 rounded ${
+                    (results.mark_diagnostics?.lr_marks ?? 1) > 100 ? 'bg-emerald-900/30 text-emerald-400' : 
+                    (results.mark_diagnostics?.lr_marks ?? 1) > 1 ? 'bg-amber-900/30 text-amber-400' : 
+                    'bg-gray-800 text-gray-400'
+                  }`}>
+                    {(results.mark_diagnostics?.lr_marks ?? 1) > 100 ? 'STRONG' : 
+                     (results.mark_diagnostics?.lr_marks ?? 1) > 1 ? 'MODERATE' : 
+                     (results.mark_diagnostics?.raw_probe_marks_count === 0 && results.mark_diagnostics?.raw_gallery_marks_count === 0) ? 'NONE DETECTED' : 'WEAK / NEUTRAL'}
+                  </span>
                 </div>
 
-                {/* Tier 2: Face Proportions */}
-                <div className="p-2.5 border-b border-[#1a1a1a]">
-                  <div className="flex items-baseline justify-between">
-                    <h3 className="text-gray-300 text-[9px] tracking-wider font-bold">FACE PROPORTIONS</h3>
-                    <span className={`text-lg font-bold tabular-nums ${
-                      results.geometry_status && results.geometry_status !== 'OK'
-                        ? 'text-gray-500'
-                        : results.soft_biometrics_score > 80 ? 'text-emerald-400' : results.soft_biometrics_score > 60 ? 'text-amber-400' : 'text-red-400'
-                    }`}>
-                      {results.geometry_status && results.geometry_status !== 'OK' ? 'FAILED' : `${results.soft_biometrics_score}%`}
-                    </span>
+                {/* Final Safety Rule */}
+                <div className="flex justify-between items-center">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-gray-300 font-bold tracking-wider">Final Safety Rule</span>
+                    <span className="text-[8px] text-gray-500">Prevents false positive matches</span>
                   </div>
-                  <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${
-                        results.geometry_status && results.geometry_status !== 'OK'
-                          ? 'bg-gray-700/50'
-                          : results.soft_biometrics_score > 80 ? 'bg-emerald-500/70' : results.soft_biometrics_score > 60 ? 'bg-amber-500/70' : 'bg-red-500/70'
-                      }`}
-                      style={{ width: `${results.geometry_status && results.geometry_status !== 'OK' ? 0 : Math.min(100, results.soft_biometrics_score)}%` }}
-                    />
-                  </div>
-                  <p className="text-[9px] text-gray-500 mt-1.5 leading-relaxed">Are the facial measurements similar? Compares the distances between eyes, nose width, jawline angle, and brow spacing — like a ruler measuring each face.</p>
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    <div className={`w-1 h-1 rounded-full ${
-                      results.geometry_status && results.geometry_status !== 'OK'
-                        ? 'bg-gray-500'
-                        : results.soft_biometrics_score > 80 ? 'bg-emerald-500' : results.soft_biometrics_score > 60 ? 'bg-amber-500' : results.soft_biometrics_score > 0 ? 'bg-red-500' : 'bg-yellow-500'
-                    }`}></div>
-                    <span className={`text-[8px] italic ${
-                      results.geometry_status && results.geometry_status !== 'OK'
-                        ? 'text-gray-500/70'
-                        : results.soft_biometrics_score > 80 ? 'text-emerald-500/70' : results.soft_biometrics_score > 60 ? 'text-amber-500/70' : results.soft_biometrics_score > 0 ? 'text-red-500/70' : 'text-yellow-500/70'
-                    }`}>
-                      {results.geometry_status && results.geometry_status !== 'OK'
-                        ? (results.geometry_status === 'INVALID_IOD' ? 'Could not measure — eyes not clearly visible' : 'Could not measure — face angle or quality too low')
-                        : results.soft_biometrics_score > 80 ? 'Proportions closely match' : results.soft_biometrics_score > 60 ? 'Proportions partially align' : results.soft_biometrics_score > 0 ? 'Proportions do not match' : 'Could not measure — face angle or quality too low'}
-                    </span>
-                  </div>
-                  <div className="text-[7px] text-gray-700 mt-1 tracking-wide">25% of overall score · 12-point landmark geometry</div>
+                  <span className={`text-[10px] font-bold px-2 py-1 rounded ${
+                    results.veto_triggered && results.veto_override_applied ? 'bg-amber-900/30 text-amber-400' :
+                    results.veto_triggered ? 'bg-red-900/30 text-red-400' :
+                    'bg-emerald-900/30 text-emerald-400'
+                  }`}>
+                    {results.veto_triggered && results.veto_override_applied ? 'HUMAN REVIEW NEEDED' :
+                     results.veto_triggered ? 'BLOCKED AUTOMATIC CONFIRMATION' :
+                     'PASSED'}
+                  </span>
                 </div>
-
-                {/* Tier 3: Skin Texture */}
-                <div className="p-2.5">
-                  <div className="flex items-baseline justify-between">
-                    <h3 className="text-gray-300 text-[9px] tracking-wider font-bold">SKIN TEXTURE</h3>
-                    <span className={`text-lg font-bold tabular-nums ${results.micro_topology_score > 80 ? 'text-emerald-400' : results.micro_topology_score > 60 ? 'text-amber-400' : 'text-red-400'}`}>{results.micro_topology_score}%</span>
-                  </div>
-                  <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${results.micro_topology_score > 80 ? 'bg-emerald-500/70' : results.micro_topology_score > 60 ? 'bg-amber-500/70' : 'bg-red-500/70'}`}
-                      style={{ width: `${Math.min(100, results.micro_topology_score)}%` }}
-                    />
-                  </div>
-                  <p className="text-[9px] text-gray-500 mt-1.5 leading-relaxed">Does the skin look similar? Analyzes pore patterns, wrinkle depth, scars, and surface texture. High scores can occur between people of similar age and ethnicity — this alone does not confirm identity.</p>
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    <div className={`w-1 h-1 rounded-full ${results.micro_topology_score > 80 ? 'bg-emerald-500' : results.micro_topology_score > 60 ? 'bg-amber-500' : 'bg-red-500'}`}></div>
-                    <span className={`text-[8px] italic ${results.micro_topology_score > 80 ? 'text-emerald-500/70' : results.micro_topology_score > 60 ? 'text-amber-500/70' : 'text-red-500/70'}`}>
-                      {results.micro_topology_score > 80 ? 'Similar skin texture detected' : results.micro_topology_score > 60 ? 'Partial texture similarity' : 'Skin textures differ'}
-                    </span>
-                  </div>
-                  <div className="text-[7px] text-gray-700 mt-1 tracking-wide">15% of overall score · LBP texture analysis</div>
-                </div>
-
-                {/* Tier 4: Mark Correspondence — Bayesian LR (Only if marks found) */}
-                {results.marks_matched !== undefined && results.marks_matched > 0 && (
-                  <div className="p-2.5 border-t border-[#1a1a1a]">
-                    <div className="flex items-baseline justify-between">
-                      <h3 className="text-[#D4AF37] text-[9px] tracking-wider font-bold">MARK EVIDENCE (LR)</h3>
-                      <span className="text-lg font-bold tabular-nums text-[#D4AF37] break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log?.lr_marks)}</span>
-                    </div>
-                    {/* LR magnitude bar — log-scaled */}
-                    <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden border border-[#D4AF37]/20">
-                      <div
-                        className="h-full rounded-full bg-gradient-to-r from-[#D4AF37]/60 to-[#D4AF37] transition-all duration-700"
-                        style={{ width: `${Math.min(100, results.audit_log?.lr_marks != null ? Math.min(100, Math.log10(Math.max(1, results.audit_log.lr_marks)) * 10) : 0)}%` }}
-                      />
-                    </div>
-                    <p className="text-[8px] break-words text-[#D4AF37]/70 mt-1.5 leading-relaxed">Bayesian Likelihood Ratio from {results.marks_matched} matching scars, moles, and birthmarks. Values {'>'} 1 support the same-source hypothesis; values {'>'} 10,000 constitute extremely strong evidential support.</p>
-                    {/* Individual mark LR breakdown */}
-                    {results.audit_log?.lr_arcface != null && (
-                      <div className="mt-1.5 flex items-center gap-3 flex-wrap">
-                        <div className="flex items-center gap-1">
-                          <span className="text-[7px] text-gray-500">LR<sub>arcface</sub></span>
-                          <span className="text-[8px] font-bold text-[#D4AF37]/80 tabular-nums break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_arcface)}</span>
-                        </div>
-                        <span className="text-[7px] text-gray-600">×</span>
-                        <div className="flex items-center gap-1">
-                          <span className="text-[7px] text-gray-500">LR<sub>marks</sub></span>
-                          <span className="text-[8px] font-bold text-[#D4AF37]/80 tabular-nums break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_marks)}</span>
-                        </div>
-                        <span className="text-[7px] text-gray-600">=</span>
-                        <div className="flex items-center gap-1">
-                          <span className="text-[7px] text-gray-500">LR<sub>total</sub></span>
-                          <span className="text-[8px] font-bold text-[#D4AF37] tabular-nums break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_total)}</span>
-                        </div>
-                      </div>
-                    )}
-                    <div className="mt-1.5 flex items-center gap-1.5">
-                      <div className="w-1 h-1 rounded-full bg-[#D4AF37]"></div>
-                      <span className="text-[8px] italic text-[#D4AF37]/80">
-                        {results.marks_matched} corresponding marks matched across both faces
-                      </span>
-                    </div>
-                    <div className="text-[7px] text-[#D4AF37]/50 mt-1 tracking-wide">Bayesian LR fusion · P(same|evidence) = LR/(LR+1)</div>
-                  </div>
-                )}
               </div>
 
               {/* ═══ ACTIONS — Report + Technical Details ═══ */}
@@ -1859,6 +1570,288 @@ export default function Home() {
                         </div>
                       </div>
 
+                      {/* ═══ SHARED MARK EVIDENCE — First-Class Panel ═══ */}
+              <div className="border border-[#2a1a1a] bg-[#020101] rounded-lg overflow-hidden" data-testid="shared-mark-evidence-panel">
+                <div className="px-2.5 py-1.5 border-b border-[#1a1a1a] bg-[#111]">
+                  <span className="text-[9px] text-[#D4AF37] tracking-wider font-bold">▸ SHARED MARK EVIDENCE</span>
+                </div>
+                {!results.mark_diagnostics ? (
+                  <div className="p-2.5">
+                    <div className="px-2 py-1.5 bg-red-950/30 rounded border border-red-900/30">
+                      <p className="text-[9px] text-red-400/90 font-bold">Mark evidence diagnostics unavailable.</p>
+                      <p className="text-[8px] text-red-400/60 mt-1">The backend did not return mark_diagnostics. This comparison cannot be audited for mark evidence.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-2.5">
+                    {/* Status Banner */}
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className={`text-[8px] font-bold tracking-wider px-1.5 py-0.5 rounded ${
+                        results.mark_diagnostics.mark_match_status === 'MATCHED' ? 'bg-emerald-900/40 text-emerald-400' :
+                        results.mark_diagnostics.mark_match_status === 'EXACT_SELF_MATCH' ? 'bg-cyan-900/40 text-cyan-400' :
+                        'bg-amber-900/30 text-amber-400'
+                      }`}>{results.mark_diagnostics.mark_match_status || 'UNKNOWN'}</span>
+                      <span className="text-[7px] text-gray-600">DETECTOR: {results.mark_diagnostics.detector_status}</span>
+                      <span className="text-[7px] text-gray-600">·</span>
+                      <span className="text-[7px] text-gray-600">MATCHER: {results.mark_diagnostics.matcher_status}</span>
+                    </div>
+                    {/* Counts Grid */}
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[9px] mb-2">
+                      <div className="flex justify-between"><span className="text-gray-500">Probe Marks Detected</span><span className="text-white font-bold tabular-nums">{results.mark_diagnostics.raw_probe_marks_count}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-500">Gallery Marks Detected</span><span className="text-white font-bold tabular-nums">{results.mark_diagnostics.raw_gallery_marks_count}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-500">Accepted Shared Mark Correspondences</span><span className="text-emerald-400 font-bold tabular-nums">{results.mark_diagnostics.accepted_correspondences_count}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-500">Rejected Candidates</span><span className="text-amber-400/70 font-bold tabular-nums">{results.mark_diagnostics.rejected_candidates_count}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-500">Input is Preprocessed</span><span className="text-gray-400 font-bold">{results.mark_diagnostics.mark_detector_trace?.probe?.input_is_preprocessed ? 'Yes' : 'No'}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-500">Internal CLAHE Applied</span><span className="text-gray-400 font-bold">{results.mark_diagnostics.mark_detector_trace?.probe?.internal_clahe_applied ? 'Yes' : 'No'}</span></div>
+                    </div>
+                    {/* v2.1 Detector Trace Telemetry */}
+                    {(() => {
+                      const trace = results.mark_diagnostics?.mark_detector_trace;
+                      const probeTrace = trace?.probe;
+                      const galleryTrace = trace?.gallery;
+                      if (!probeTrace && !galleryTrace) return null;
+                      const fallbackUsed = probeTrace?.fallback_used || galleryTrace?.fallback_used;
+                      const fallbackCap = probeTrace?.fallback_lr_cap ?? galleryTrace?.fallback_lr_cap;
+                      return (
+                        <>
+                          {/* Fallback Warning */}
+                          {fallbackUsed && (
+                            <div className="px-2 py-1.5 mb-2 bg-amber-950/30 rounded border border-amber-900/30 flex items-center gap-2">
+                              <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0"></div>
+                              <span className="text-[8px] text-amber-400/90">FALLBACK MODE — low-confidence candidates included{fallbackCap ? ` (LR capped at ${fallbackCap})` : ''}</span>
+                            </div>
+                          )}
+                          {/* Per-Channel Counts */}
+                          <div className="flex flex-wrap gap-1.5 mb-2">
+                            {probeTrace?.dark_lesion_initial_candidates != null && probeTrace.dark_lesion_initial_candidates > 0 && (
+                              <span className="text-[7px] px-1.5 py-0.5 rounded bg-purple-900/30 text-purple-300 border border-purple-800/30 font-mono">DARK_LESION: {probeTrace.dark_lesion_initial_candidates}</span>
+                            )}
+                            {probeTrace?.bright_scar_initial_candidates != null && probeTrace.bright_scar_initial_candidates > 0 && (
+                              <span className="text-[7px] px-1.5 py-0.5 rounded bg-sky-900/30 text-sky-300 border border-sky-800/30 font-mono">BRIGHT_SCAR: {probeTrace.bright_scar_initial_candidates}</span>
+                            )}
+                            {probeTrace?.linear_scar_initial_candidates != null && probeTrace.linear_scar_initial_candidates > 0 && (
+                              <span className="text-[7px] px-1.5 py-0.5 rounded bg-rose-900/30 text-rose-300 border border-rose-800/30 font-mono">LINEAR_SCAR: {probeTrace.linear_scar_initial_candidates}</span>
+                            )}
+                            {probeTrace?.texture_anomaly_initial_candidates != null && probeTrace.texture_anomaly_initial_candidates > 0 && (
+                              <span className="text-[7px] px-1.5 py-0.5 rounded bg-teal-900/30 text-teal-300 border border-teal-800/30 font-mono">TEXTURE: {probeTrace.texture_anomaly_initial_candidates}</span>
+                            )}
+                          </div>
+                          {/* Dedup & Final Stats */}
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[8px] mb-2">
+                            {probeTrace?.dedup_removed != null && (
+                              <div className="flex justify-between"><span className="text-gray-600">Dedup Removed (Probe)</span><span className="text-gray-400 tabular-nums">{probeTrace.dedup_removed}</span></div>
+                            )}
+                            {galleryTrace?.dedup_removed != null && (
+                              <div className="flex justify-between"><span className="text-gray-600">Dedup Removed (Gallery)</span><span className="text-gray-400 tabular-nums">{galleryTrace.dedup_removed}</span></div>
+                            )}
+                            {probeTrace?.final_valid_marks != null && (
+                              <div className="flex justify-between"><span className="text-gray-600">Final Marks (Probe)</span><span className="text-white tabular-nums font-bold">{probeTrace.final_valid_marks}</span></div>
+                            )}
+                            {galleryTrace?.final_valid_marks != null && (
+                              <div className="flex justify-between"><span className="text-gray-600">Final Marks (Gallery)</span><span className="text-white tabular-nums font-bold">{galleryTrace.final_valid_marks}</span></div>
+                            )}
+                          </div>
+                        </>
+                      );
+                    })()}
+                    {/* Mark Evidence Likelihood Ratio */}
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[8px] text-gray-500">Mark Evidence Likelihood Ratio (LR<sub>marks</sub>)</span>
+                      <span className={`text-[11px] font-bold tabular-nums ${
+                        results.mark_diagnostics.lr_marks != null && results.mark_diagnostics.lr_marks > 1 ? 'text-[#D4AF37]' : 'text-gray-400'
+                      }`}>{results.mark_diagnostics.lr_marks != null ? formatLRSci(results.mark_diagnostics.lr_marks) : 'N/A'}</span>
+                    </div>
+                    {/* Evidence Contribution Label */}
+                    <div className="mb-2">
+                      {results.mark_diagnostics.mark_match_status === 'LEGACY_MARK_PIPELINE_NEUTRALIZED' ? (
+                        <span className="text-[7px] text-amber-400/70 italic">Legacy mark evidence was neutralized and did not affect the Bayesian score.</span>
+                      ) : results.mark_diagnostics.mark_detector_trace?.probe?.input_is_preprocessed === true && results.mark_diagnostics.mark_detector_trace?.probe?.internal_clahe_applied === false ? (
+                        <span className="text-[7px] text-emerald-400/80 font-bold">V2 mark evidence active.</span>
+                      ) : results.mark_diagnostics.lr_marks == null ? (
+                        <span className="text-[7px] text-gray-500 italic">Evidence contribution could not be determined</span>
+                      ) : results.mark_diagnostics.lr_marks === 1.0 ? (
+                        <span className="text-[7px] text-amber-400/70 italic">Neutral Mark Evidence — mark channel neither supports nor refutes the same-source hypothesis</span>
+                      ) : results.mark_diagnostics.lr_marks > 10000 ? (
+                        <span className="text-[7px] text-emerald-400/80 italic">Extremely strong evidence supporting the same-source hypothesis</span>
+                      ) : results.mark_diagnostics.lr_marks > 100 ? (
+                        <span className="text-[7px] text-emerald-400/70 italic">Strong evidence supporting the same-source hypothesis</span>
+                      ) : results.mark_diagnostics.lr_marks > 1 ? (
+                        <span className="text-[7px] text-[#D4AF37]/70 italic">Evidence supporting the same-source hypothesis</span>
+                      ) : (
+                        <span className="text-[7px] text-red-400/70 italic">Evidence supporting the different-source hypothesis</span>
+                      )}
+                    </div>
+                    {/* Individual Mark LRs */}
+                    {results.mark_lrs && results.mark_lrs.length > 0 && (
+                      <div className="mb-2">
+                        <div className="text-[7px] text-gray-600 mb-1">Individual Mark LRs ({results.mark_lrs.length})</div>
+                        <div className="flex flex-wrap gap-1">
+                          {results.mark_lrs.map((lr, i) => (
+                            <span key={i} className={`text-[7px] px-1 py-0.5 rounded font-bold tabular-nums ${lr > 10 ? 'bg-[#D4AF37]/15 text-[#D4AF37]' : 'bg-gray-800 text-gray-400'}`}>{lr.toFixed(1)}</span>
+                          ))}
+                        </div>
+                        {results.mark_lrs.length > 1 && (
+                          <div className="text-[7px] text-gray-600 mt-1 font-mono">
+                            LR<sub>marks</sub> = {results.mark_lrs.map((lr, i) => `${lr.toFixed(1)}${i < results.mark_lrs!.length - 1 ? ' ×' : ''}`).join(' ')} = {formatLRSci(results.mark_diagnostics.lr_marks)}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {/* Rejection Summary — explains why LR_marks is neutral or absent */}
+                    {(results.mark_diagnostics.lr_marks == null || results.mark_diagnostics.lr_marks === 1.0) && results.mark_diagnostics.rejection_summary && (
+                      <div className="mt-2 px-2 py-1.5 bg-amber-950/20 rounded border border-amber-900/20">
+                        <p className="text-[8px] text-amber-400/80 leading-relaxed">{results.mark_diagnostics.rejection_summary}</p>
+                      </div>
+                    )}
+                    {/* Zero marks on both sides diagnostic */}
+                    {results.mark_diagnostics.raw_probe_marks_count === 0 && results.mark_diagnostics.raw_gallery_marks_count === 0 && !results.mark_diagnostics.rejection_summary && (
+                      <div className="mt-2 px-2 py-1.5 bg-amber-950/20 rounded border border-amber-900/20">
+                        <p className="text-[8px] text-amber-400/80 leading-relaxed">No facial marks (scars, moles, blemishes) were detected on either the probe or gallery image. This may be due to image quality, lighting, occlusion, or the absence of distinguishing marks.</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              
+                      {/* ═══ HOW WE SCORED THIS — Breakdown ═══ */}
+              <div className="border border-[#2a1a1a] bg-[#020101] rounded-lg overflow-hidden">
+                <div className="px-2.5 py-1.5 border-b border-[#1a1a1a] bg-[#111]">
+                  <span className="text-[9px] text-gray-400 tracking-wider font-bold">HOW WE ANALYZED THIS</span>
+                </div>
+
+                {/* Tier 1: Face Shape & Identity */}
+                <div className="p-2.5 border-b border-[#1a1a1a]">
+                  <div className="flex items-baseline justify-between">
+                    <h3 className="text-gray-300 text-[9px] tracking-wider font-bold">FACE EMBEDDING ANALYSIS</h3>
+                    <span className={`text-lg font-bold tabular-nums ${results.structural_score > 80 ? 'text-emerald-400' : results.structural_score > 60 ? 'text-amber-400' : 'text-red-400'}`}>{results.structural_score}%</span>
+                  </div>
+                  <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${results.structural_score > 80 ? 'bg-emerald-500/70' : results.structural_score > 60 ? 'bg-amber-500/70' : 'bg-red-500/70'}`}
+                      style={{ width: `${Math.min(100, results.structural_score)}%` }}
+                    />
+                  </div>
+                  <p className="text-[9px] text-gray-500 mt-1.5 leading-relaxed">How similar are the neural face embeddings? This measures cosine distance between 512-D ArcFace vectors. It does not prove identity.</p>
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <div className={`w-1 h-1 rounded-full ${results.structural_score > 80 ? 'bg-emerald-500' : results.structural_score > 60 ? 'bg-amber-500' : 'bg-red-500'}`}></div>
+                    <span className={`text-[8px] italic ${results.structural_score > 80 ? 'text-emerald-500/70' : results.structural_score > 60 ? 'text-amber-500/70' : 'text-red-500/70'}`}>
+                      {results.structural_score > 85 ? 'Strong embedding similarity' : results.structural_score > 70 ? 'Moderate embedding similarity — further review recommended' : results.structural_score > 50 ? 'Weak embedding similarity' : 'Very low embedding similarity'}
+                    </span>
+                  </div>
+                  <div className="text-[7px] text-gray-700 mt-1 tracking-wide">ArcFace 512-D CNN · LR<sub>face_model</sub> channel</div>
+                </div>
+
+                {/* Tier 2: Face Proportions */}
+                <div className="p-2.5 border-b border-[#1a1a1a]">
+                  <div className="flex items-baseline justify-between">
+                    <h3 className="text-gray-300 text-[9px] tracking-wider font-bold">FACE PROPORTIONS</h3>
+                    <span className={`text-lg font-bold tabular-nums ${
+                      results.geometry_status && results.geometry_status !== 'OK'
+                        ? 'text-gray-500'
+                        : results.soft_biometrics_score > 80 ? 'text-emerald-400' : results.soft_biometrics_score > 60 ? 'text-amber-400' : 'text-red-400'
+                    }`}>
+                      {results.geometry_status && results.geometry_status !== 'OK' ? 'FAILED' : `${results.soft_biometrics_score}%`}
+                    </span>
+                  </div>
+                  <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${
+                        results.geometry_status && results.geometry_status !== 'OK'
+                          ? 'bg-gray-700/50'
+                          : results.soft_biometrics_score > 80 ? 'bg-emerald-500/70' : results.soft_biometrics_score > 60 ? 'bg-amber-500/70' : 'bg-red-500/70'
+                      }`}
+                      style={{ width: `${results.geometry_status && results.geometry_status !== 'OK' ? 0 : Math.min(100, results.soft_biometrics_score)}%` }}
+                    />
+                  </div>
+                  <p className="text-[9px] text-gray-500 mt-1.5 leading-relaxed">Are the facial measurements similar? Compares the distances between eyes, nose width, jawline angle, and brow spacing — like a ruler measuring each face.</p>
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <div className={`w-1 h-1 rounded-full ${
+                      results.geometry_status && results.geometry_status !== 'OK'
+                        ? 'bg-gray-500'
+                        : results.soft_biometrics_score > 80 ? 'bg-emerald-500' : results.soft_biometrics_score > 60 ? 'bg-amber-500' : results.soft_biometrics_score > 0 ? 'bg-red-500' : 'bg-yellow-500'
+                    }`}></div>
+                    <span className={`text-[8px] italic ${
+                      results.geometry_status && results.geometry_status !== 'OK'
+                        ? 'text-gray-500/70'
+                        : results.soft_biometrics_score > 80 ? 'text-emerald-500/70' : results.soft_biometrics_score > 60 ? 'text-amber-500/70' : results.soft_biometrics_score > 0 ? 'text-red-500/70' : 'text-yellow-500/70'
+                    }`}>
+                      {results.geometry_status && results.geometry_status !== 'OK'
+                        ? (results.geometry_status === 'INVALID_IOD' ? 'Could not measure — eyes not clearly visible' : 'Could not measure — face angle or quality too low')
+                        : results.soft_biometrics_score > 80 ? 'Proportions closely match' : results.soft_biometrics_score > 60 ? 'Proportions partially align' : results.soft_biometrics_score > 0 ? 'Proportions do not match' : 'Could not measure — face angle or quality too low'}
+                    </span>
+                  </div>
+                  <div className="text-[7px] text-gray-700 mt-1 tracking-wide">25% of overall score · 12-point landmark geometry</div>
+                </div>
+
+                {/* Tier 3: Skin Texture */}
+                <div className="p-2.5">
+                  <div className="flex items-baseline justify-between">
+                    <h3 className="text-gray-300 text-[9px] tracking-wider font-bold">SKIN TEXTURE</h3>
+                    <span className={`text-lg font-bold tabular-nums ${results.micro_topology_score > 80 ? 'text-emerald-400' : results.micro_topology_score > 60 ? 'text-amber-400' : 'text-red-400'}`}>{results.micro_topology_score}%</span>
+                  </div>
+                  <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${results.micro_topology_score > 80 ? 'bg-emerald-500/70' : results.micro_topology_score > 60 ? 'bg-amber-500/70' : 'bg-red-500/70'}`}
+                      style={{ width: `${Math.min(100, results.micro_topology_score)}%` }}
+                    />
+                  </div>
+                  <p className="text-[9px] text-gray-500 mt-1.5 leading-relaxed">Does the skin look similar? Analyzes pore patterns, wrinkle depth, scars, and surface texture. High scores can occur between people of similar age and ethnicity — this alone does not confirm identity.</p>
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <div className={`w-1 h-1 rounded-full ${results.micro_topology_score > 80 ? 'bg-emerald-500' : results.micro_topology_score > 60 ? 'bg-amber-500' : 'bg-red-500'}`}></div>
+                    <span className={`text-[8px] italic ${results.micro_topology_score > 80 ? 'text-emerald-500/70' : results.micro_topology_score > 60 ? 'text-amber-500/70' : 'text-red-500/70'}`}>
+                      {results.micro_topology_score > 80 ? 'Similar skin texture detected' : results.micro_topology_score > 60 ? 'Partial texture similarity' : 'Skin textures differ'}
+                    </span>
+                  </div>
+                  <div className="text-[7px] text-gray-700 mt-1 tracking-wide">15% of overall score · LBP texture analysis</div>
+                </div>
+
+                {/* Tier 4: Mark Correspondence — Bayesian LR (Only if marks found) */}
+                {results.marks_matched !== undefined && results.marks_matched > 0 && (
+                  <div className="p-2.5 border-t border-[#1a1a1a]">
+                    <div className="flex items-baseline justify-between">
+                      <h3 className="text-[#D4AF37] text-[9px] tracking-wider font-bold">MARK EVIDENCE (LR)</h3>
+                      <span className="text-lg font-bold tabular-nums text-[#D4AF37] break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log?.lr_marks)}</span>
+                    </div>
+                    {/* LR magnitude bar — log-scaled */}
+                    <div className="mt-1 h-1 w-full bg-[#111] rounded-full overflow-hidden border border-[#D4AF37]/20">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-[#D4AF37]/60 to-[#D4AF37] transition-all duration-700"
+                        style={{ width: `${Math.min(100, results.audit_log?.lr_marks != null ? Math.min(100, Math.log10(Math.max(1, results.audit_log.lr_marks)) * 10) : 0)}%` }}
+                      />
+                    </div>
+                    <p className="text-[8px] break-words text-[#D4AF37]/70 mt-1.5 leading-relaxed">Bayesian Likelihood Ratio from {results.marks_matched} matching scars, moles, and birthmarks. Values {'>'} 1 support the same-source hypothesis; values {'>'} 10,000 constitute extremely strong evidential support.</p>
+                    {/* Individual mark LR breakdown */}
+                    {results.audit_log?.lr_arcface != null && (
+                      <div className="mt-1.5 flex items-center gap-3 flex-wrap">
+                        <div className="flex items-center gap-1">
+                          <span className="text-[7px] text-gray-500">LR<sub>arcface</sub></span>
+                          <span className="text-[8px] font-bold text-[#D4AF37]/80 tabular-nums break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_arcface)}</span>
+                        </div>
+                        <span className="text-[7px] text-gray-600">×</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[7px] text-gray-500">LR<sub>marks</sub></span>
+                          <span className="text-[8px] font-bold text-[#D4AF37]/80 tabular-nums break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_marks)}</span>
+                        </div>
+                        <span className="text-[7px] text-gray-600">=</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[7px] text-gray-500">LR<sub>total</sub></span>
+                          <span className="text-[8px] font-bold text-[#D4AF37] tabular-nums break-all whitespace-normal overflow-hidden">{formatLRSci(results.audit_log.lr_total)}</span>
+                        </div>
+                      </div>
+                    )}
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <div className="w-1 h-1 rounded-full bg-[#D4AF37]"></div>
+                      <span className="text-[8px] italic text-[#D4AF37]/80">
+                        {results.marks_matched} corresponding marks matched across both faces
+                      </span>
+                    </div>
+                    <div className="text-[7px] text-[#D4AF37]/50 mt-1 tracking-wide">Bayesian LR fusion · P(same|evidence) = LR/(LR+1)</div>
+                  </div>
+                )}
+              </div>
+
+              
                       {/* Block 4: Bayesian Evidence + Decision Policy */}
                       <div className="border border-[#2a1a2a] rounded-lg p-4 bg-[#020102] min-w-0 shadow-[inset_0_0_20px_rgba(20,0,20,0.1)]">
                         <div className="text-purple-400/80 tracking-[0.2em] mb-2 border-b border-purple-900/30 pb-2 text-[10px] font-bold">▸ BAYESIAN EVIDENCE &amp; DECISION POLICY</div>
