@@ -14,6 +14,7 @@ on:
         options:
           - dry-run
           - full-pipeline
+          - full-pipeline-sharded
           - embeddings-only
           - generate-manifest
           - generate-and-validate-lfw
@@ -45,9 +46,14 @@ on:
         required: false
         type: boolean
         default: true
+      validation_shard_count:
+        description: 'Number of parallel validation shards'
+        required: false
+        default: '1'
 
 jobs:
   validate:
+    if: inputs.mode != 'full-pipeline-sharded'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -234,3 +240,125 @@ jobs:
         with:
           name: validation-results-${{ steps.run_id.outputs.id }}
           path: validation/results/${{ steps.run_id.outputs.id }}/
+
+  setup-shards:
+    if: inputs.mode == 'full-pipeline-sharded'
+    runs-on: ubuntu-latest
+    outputs:
+      shard_matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          count="${{ inputs.validation_shard_count }}"
+          if [ "$count" -lt 1 ]; then
+            echo "ERROR: validation_shard_count must be at least 1."
+            exit 1
+          fi
+          if [ "$count" -gt 10 ]; then
+            count=10
+            echo "WARNING: Capping validation_shard_count to 10."
+          fi
+          matrix=$(seq 0 $((count-1)) | jq -R . | jq -s -c .)
+          echo "matrix=$matrix" >> $GITHUB_OUTPUT
+
+  validate-sharded:
+    needs: setup-shards
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard_index: ${{ fromJSON(needs.setup-shards.outputs.shard_matrix) }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Generate Run ID
+        id: run_id
+        run: echo "id=$(date +%Y%m%d_%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.SA_EMAIL }}
+
+      - name: Full Pipeline Validation Shard
+        env:
+          BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
+          KMS_KEY_ID: ${{ secrets.KMS_KEY_ID }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          OPERATOR_PASSWORD: ${{ secrets.OPERATOR_PASSWORD }}
+          USE_MARK_PIPELINE_V2: "true"
+        run: |
+          echo "WARNING: Full pipeline validation sharded. This will process real images."
+          python scripts/validate_full_pipeline.py \
+            --manifest ${{ inputs.manifest_path }} \
+            --output-dir validation/results/${{ steps.run_id.outputs.id }}/shard_${{ matrix.shard_index }} \
+            --shard-index ${{ matrix.shard_index }} \
+            --shard-count ${{ inputs.validation_shard_count }}
+
+      - name: Upload Shard Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-results-${{ steps.run_id.outputs.id }}-shard-${{ matrix.shard_index }}
+          path: validation/results/${{ steps.run_id.outputs.id }}/shard_${{ matrix.shard_index }}/
+
+  merge-shards:
+    needs: [setup-shards, validate-sharded]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Generate Run ID
+        id: run_id
+        run: echo "id=$(date +%Y%m%d_%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Download all shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: validation/results/${{ steps.run_id.outputs.id }}/shards/
+
+      - name: Merge validation shards
+        run: |
+          python scripts/merge_validation_shards.py \
+            --input-dir validation/results/${{ steps.run_id.outputs.id }}/shards/ \
+            --output-dir validation/results/${{ steps.run_id.outputs.id }}/merged/
+
+      - name: Simulate Decision Policies
+        run: |
+          python scripts/simulate_decision_policies.py \
+            --input validation/results/${{ steps.run_id.outputs.id }}/merged/validation_results.jsonl \
+            --output-dir validation/results/${{ steps.run_id.outputs.id }}/merged/policies
+
+      - name: Evaluate Mark LR Correlation
+        run: |
+          python scripts/evaluate_mark_lr_correlation.py \
+            --input validation/results/${{ steps.run_id.outputs.id }}/merged/validation_results.jsonl \
+            --output-dir validation/results/${{ steps.run_id.outputs.id }}/merged/mark_analysis
+
+      - name: Upload Final Merged Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-results-${{ steps.run_id.outputs.id }}
+          path: validation/results/${{ steps.run_id.outputs.id }}/merged/

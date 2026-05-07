@@ -49,6 +49,8 @@ def parse_args():
     parser.add_argument("--manifest", required=True, help="Path to validation_pairs.csv")
     parser.add_argument("--output-dir", required=True, help="Directory to write results")
     parser.add_argument("--dry-run", action="store_true", help="Validate manifest only, do not process images")
+    parser.add_argument("--shard-index", type=int, default=0, help="Index of the shard to process (0-based)")
+    parser.add_argument("--shard-count", type=int, default=1, help="Total number of shards")
     return parser.parse_args()
 
 
@@ -232,6 +234,14 @@ def main():
     args = parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
     pairs = validate_manifest(args.manifest)
+    
+    total_pairs = len(pairs)
+    if args.shard_count > 1:
+        pairs = [p for i, p in enumerate(pairs) if i % args.shard_count == args.shard_index]
+        print(f"Total manifest pairs: {total_pairs}")
+        print(f"Shard index: {args.shard_index}")
+        print(f"Shard count: {args.shard_count}")
+        print(f"Shard pair count: {len(pairs)}")
 
     if args.dry_run:
         print("DRY-RUN complete. Manifest is valid. No images were processed.")
