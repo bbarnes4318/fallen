@@ -46,11 +46,6 @@ on:
         type: boolean
         default: true
 
-env:
-  LFW_FULL_URL: "https://vis-www.cs.umass.edu/lfw/pairs.txt"
-  LFW_DEV_TRAIN_URL: "https://vis-www.cs.umass.edu/lfw/pairsDevTrain.txt"
-  LFW_DEV_TEST_URL: "https://vis-www.cs.umass.edu/lfw/pairsDevTest.txt"
-
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -76,16 +71,23 @@ jobs:
         id: run_id
         run: echo "id=$(date +%Y%m%d_%H%M%S)" >> $GITHUB_OUTPUT
 
-      - name: Resolve LFW Pairs URL
-        id: lfw_url
+      - name: Resolve LFW Pairs File
+        id: lfw_pairs
         run: |
           case "${{ inputs.lfw_pairs_source }}" in
-            full)      echo "url=${{ env.LFW_FULL_URL }}" >> $GITHUB_OUTPUT ;;
-            dev-train) echo "url=${{ env.LFW_DEV_TRAIN_URL }}" >> $GITHUB_OUTPUT ;;
-            dev-test)  echo "url=${{ env.LFW_DEV_TEST_URL }}" >> $GITHUB_OUTPUT ;;
-            *)         echo "url=${{ env.LFW_FULL_URL }}" >> $GITHUB_OUTPUT ;;
+            full)      PAIRS_FILE="validation/lfw_pairs.txt" ;;
+            dev-train) PAIRS_FILE="validation/lfw_pairsDevTrain.txt" ;;
+            dev-test)  PAIRS_FILE="validation/lfw_pairsDevTest.txt" ;;
+            *)         PAIRS_FILE="validation/lfw_pairs.txt" ;;
           esac
-          echo "Resolved LFW pairs URL: $(cat $GITHUB_OUTPUT | grep url)"
+          echo "file=$PAIRS_FILE" >> $GITHUB_OUTPUT
+          if [ -f "$PAIRS_FILE" ]; then
+            LINES=$(wc -l < "$PAIRS_FILE")
+            echo "LFW pairs file: $PAIRS_FILE ($LINES lines)"
+          else
+            echo "ERROR: LFW pairs file not found: $PAIRS_FILE"
+            exit 1
+          fi
 
       # ── GCP Authentication ──
       # Required for: generate-manifest (with GCS check), generate-and-validate-lfw, full-pipeline, embeddings-only
@@ -125,7 +127,7 @@ jobs:
             FLAGS="$FLAGS --fail-on-missing"
           fi
           python scripts/generate_lfw_validation_manifest.py \
-            --pairs-url "${{ steps.lfw_url.outputs.url }}" \
+            --pairs-file "${{ steps.lfw_pairs.outputs.file }}" \
             --gcs-prefix gs://hoppwhistle-facial-uploads/gallery/ \
             --output validation/results/${{ steps.run_id.outputs.id }}/validation_pairs_lfw_baseline.csv \
             --max-matched ${{ inputs.manifest_max_matched }} \
@@ -139,7 +141,7 @@ jobs:
         if: inputs.mode == 'generate-and-validate-lfw'
         run: |
           python scripts/generate_lfw_validation_manifest.py \
-            --pairs-url "${{ steps.lfw_url.outputs.url }}" \
+            --pairs-file "${{ steps.lfw_pairs.outputs.file }}" \
             --gcs-prefix gs://hoppwhistle-facial-uploads/gallery/ \
             --output validation/results/${{ steps.run_id.outputs.id }}/validation_pairs_lfw_baseline.csv \
             --max-matched ${{ inputs.manifest_max_matched }} \
