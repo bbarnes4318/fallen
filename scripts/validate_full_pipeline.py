@@ -200,6 +200,103 @@ def run_single_pair(pair, pipeline_modules):
 
     elapsed_ms = int((time.time() - t0) * 1000)
 
+    # Build evidence trace
+    raw_probe = mark_payload.get("raw_probe_marks", [])
+    raw_gallery = mark_payload.get("raw_gallery_marks", [])
+    accepted = mark_payload.get("accepted_correspondences", [])
+    rejected = mark_payload.get("rejected_correspondences", [])
+    
+    probe_summary = [
+        {
+            "mark_type": m.get("type"),
+            "channel": m.get("channel"),
+            "face_region": m.get("region"),
+            "centroid": m.get("centroid"),
+            "area": m.get("area"),
+            "confidence": m.get("confidence"),
+            "salience": m.get("salience")
+        } for m in raw_probe
+    ]
+    
+    gallery_summary = [
+        {
+            "mark_type": m.get("type"),
+            "channel": m.get("channel"),
+            "face_region": m.get("region"),
+            "centroid": m.get("centroid"),
+            "area": m.get("area"),
+            "confidence": m.get("confidence"),
+            "salience": m.get("salience")
+        } for m in raw_gallery
+    ]
+    
+    accepted_detail = [
+        {
+            "gallery_idx": c.get("gallery_idx"),
+            "probe_idx": c.get("probe_idx"),
+            "mark_type": c.get("type"),
+            "channel": c.get("channel"),
+            "face_region": c.get("region"),
+            "gallery_centroid": c.get("gallery_centroid"),
+            "probe_centroid": c.get("probe_centroid"),
+            "position_distance": c.get("position_distance"),
+            "area_ratio": c.get("area_ratio"),
+            "match_quality": c.get("match_quality"),
+            "match_cost": c.get("cost"),
+            "lr": finite_or_none(c.get("lr", 1.0))
+        } for c in accepted
+    ]
+    
+    rejected_sorted = sorted(rejected, key=lambda x: x.get("cost", 9999))[:25]
+    rejected_summary = [
+        {
+            "reason": c.get("reason"),
+            "gallery_idx": c.get("gallery_idx"),
+            "probe_idx": c.get("probe_idx"),
+            "cost": c.get("cost"),
+            "distance": c.get("distance"),
+            "type_mismatch": c.get("type_mismatch"),
+            "region_mismatch": c.get("region_mismatch")
+        } for c in rejected_sorted
+    ]
+    
+    distances = [c.get("position_distance", 0) for c in accepted_detail if c.get("position_distance") is not None]
+    regions = [c.get("face_region") for c in accepted_detail if c.get("face_region") is not None]
+    types = [c.get("mark_type") for c in accepted_detail if c.get("mark_type") is not None]
+    channels = [c.get("channel") for c in accepted_detail if c.get("channel") is not None]
+    qualities = [c.get("match_quality", 0) for c in accepted_detail if c.get("match_quality") is not None]
+    lrs = [c.get("lr", 1.0) for c in accepted_detail]
+    
+    import collections
+    region_counts = collections.Counter(regions)
+    type_counts = collections.Counter(types)
+    channel_counts = collections.Counter(channels)
+    
+    def safe_median(lst):
+        if not lst: return 0.0
+        s = sorted(lst)
+        n = len(s)
+        if n % 2 == 1:
+            return float(s[n//2])
+        else:
+            return float((s[n//2 - 1] + s[n//2]) / 2.0)
+            
+    evidence_aggregate = {
+        "accepted_correspondences_count": len(accepted),
+        "distinct_face_regions_count": len(set(regions)),
+        "distinct_mark_types_count": len(set(types)),
+        "distinct_channels_count": len(set(channels)),
+        "average_position_distance": round(sum(distances) / len(distances), 4) if distances else 0.0,
+        "median_position_distance": round(safe_median(distances), 4),
+        "max_position_distance": round(max(distances), 4) if distances else 0.0,
+        "average_match_quality": round(sum(qualities) / len(qualities), 4) if qualities else 0.0,
+        "top_5_individual_mark_lrs": [finite_or_none(x) for x in sorted(lrs, reverse=True)[:5]],
+        "top_5_mark_types": [t[0] for t in type_counts.most_common(5)],
+        "same_region_cluster_count": sum(1 for c in region_counts.values() if c > 1),
+        "largest_single_region_correspondence_count": max(region_counts.values()) if region_counts else 0,
+        "largest_single_channel_correspondence_count": max(channel_counts.values()) if channel_counts else 0,
+    }
+
     return {
         "calibration_loaded": CALIBRATION is not None,
         "calibration_source": "gcs_or_local" if CALIBRATION else "missing",
@@ -227,6 +324,11 @@ def run_single_pair(pair, pipeline_modules):
         "spectral_correction": spectral_correction,
         "error": None,
         "timing_ms": elapsed_ms,
+        "accepted_correspondences_detail": accepted_detail,
+        "raw_probe_marks_summary": probe_summary,
+        "raw_gallery_marks_summary": gallery_summary,
+        "rejected_correspondences_summary": rejected_summary,
+        "evidence_aggregate": evidence_aggregate,
     }
 
 
