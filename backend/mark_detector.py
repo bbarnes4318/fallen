@@ -370,52 +370,100 @@ def _run_channels(aligned_crop, gray, valid_mask, kernel, h, w, input_is_preproc
         combined_lines = cv2.bitwise_or(combined_lines, opened)
     channels["linear_scar_v2"] = _generate_contours(combined_lines, valid_mask, kernel)
 
-    # Structural depression (broad low-contrast shadows)
-    sd_diag = {"structural_source_used": "none", "structural_source_dimensions": None,
-               "structural_depression_mask_nonzero_pixels": 0,
-               "structural_depression_depth_max": 0.0, "structural_depression_depth_mean": 0.0,
-               "structural_depression_threshold_used": 0}
+    # Structural depression v3: DoG + LoG + local variance curvature detector
+    sd_diag = {
+        "structural_source_used": "none",
+        "structural_source_dimensions": None,
+        "structural_depression_algorithm": "none",
+        "structural_depression_mask_nonzero_pixels": 0,
+        "structural_depression_depth_max": 0.0,
+        "structural_depression_depth_mean": 0.0,
+        "structural_depression_score_max": 0.0,
+        "structural_depression_score_mean": 0.0,
+        "structural_depression_score_percentile_threshold": 0.0,
+        "structural_depression_threshold_used": 0,
+    }
+    sd_final = np.zeros((h, w), dtype=np.uint8)
     if input_is_preprocessed:
-        # Determine source image for structural channel
+        # Determine source image
         if structural_source_bgr is not None:
-            # Use pre-CLAHE aligned image to preserve broad shadow/depth
             sd_src = structural_source_bgr
-            sd_diag["structural_source_used"] = "illumination_normalized_bgr"
+            sd_diag["structural_source_used"] = "aligned_bgr"
         else:
             sd_src = aligned_crop
             sd_diag["structural_source_used"] = "mark_detector_input_bgr"
         sd_diag["structural_source_dimensions"] = list(sd_src.shape[:2])
+        sd_diag["structural_depression_algorithm"] = "dog_log_local_variance_v3"
 
-        # Extract L channel from the structural source (NOT the CLAHE input)
+        # Convert to float32 grayscale from L channel
         sd_lab = cv2.cvtColor(sd_src, cv2.COLOR_BGR2LAB)
-        sd_L = sd_lab[:, :, 0]
+        sd_gray = sd_lab[:, :, 0].astype(np.float32)
 
-        # Small blur to reduce sensor noise
-        sd_L_blur = cv2.medianBlur(sd_L, 7)
-        # Large background estimate to capture broad features
-        sd_bg = cv2.medianBlur(sd_L, 61)
-        # Depth map: how much darker each pixel is vs local background
-        dark_delta_sd = cv2.subtract(sd_bg, sd_L_blur)
+        face_pixels = valid_mask > 0
+        n_face = int(np.count_nonzero(face_pixels))
 
-        # Depth stats for diagnostics
-        depth_in_face = dark_delta_sd[valid_mask > 0] if np.any(valid_mask > 0) else dark_delta_sd.ravel()
-        sd_diag["structural_depression_depth_max"] = float(np.max(depth_in_face)) if depth_in_face.size > 0 else 0.0
-        sd_diag["structural_depression_depth_mean"] = float(np.mean(depth_in_face)) if depth_in_face.size > 0 else 0.0
+        if n_face > 100:
+            # --- Cue 1: Difference of Gaussians (blob detector at crater scale) ---
+            blur_small = cv2.GaussianBlur(sd_gray, (0, 0), sigmaX=2.0)
+            blur_large = cv2.GaussianBlur(sd_gray, (0, 0), sigmaX=10.0)
+            dog = blur_large - blur_small  # positive = darker than surroundings
 
-        # Adaptive threshold: use fixed 3 or p95-based if depth range is very low
-        sd_thresh_val = 3
-        sd_diag["structural_depression_threshold_used"] = sd_thresh_val
-        _, sd_thresh = cv2.threshold(dark_delta_sd, sd_thresh_val, 255, cv2.THRESH_BINARY)
+            # --- Cue 2: Laplacian of Gaussian (curvature / rim features) ---
+            log_resp = np.abs(cv2.Laplacian(blur_small, cv2.CV_32F))
 
-        # Clean up noise with small morphological open
-        k_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        sd_cleaned = cv2.morphologyEx(sd_thresh, cv2.MORPH_OPEN, k_clean)
+            # --- Cue 3: Local variance (texture roughness) ---
+            lv_k = 11
+            mu_lv = cv2.blur(sd_gray, (lv_k, lv_k))
+            mu2_lv = cv2.blur(sd_gray * sd_gray, (lv_k, lv_k))
+            local_var = np.clip(mu2_lv - mu_lv * mu_lv, 0, None)
 
-        # Apply face mask
-        sd_final = cv2.bitwise_and(sd_cleaned, valid_mask)
-        sd_diag["structural_depression_mask_nonzero_pixels"] = int(np.count_nonzero(sd_final))
+            # --- Normalize each cue within face mask to [0, 1] ---
+            def _norm(arr):
+                vals = arr[face_pixels]
+                mn = float(np.min(vals))
+                mx = float(np.max(vals))
+                rng = mx - mn
+                if rng < 1e-6:
+                    return np.zeros_like(arr)
+                return np.clip((arr - mn) / rng, 0.0, 1.0)
 
-        channels["structural_depression"] = _generate_contours(sd_cleaned, valid_mask, kernel)
+            dog_n = _norm(dog)
+            log_n = _norm(log_resp)
+            var_n = _norm(local_var)
+
+            # --- Combined structural score ---
+            structural_score = dog_n * 0.4 + log_n * 0.35 + var_n * 0.25
+            structural_score[~face_pixels] = 0.0
+
+            # --- Adaptive percentile threshold (top 1.5% of face pixels) ---
+            face_scores = structural_score[face_pixels]
+            pct_val = 98.5
+            pct_threshold = float(np.percentile(face_scores, pct_val))
+
+            # Diagnostics
+            sd_diag["structural_depression_score_max"] = float(np.max(face_scores))
+            sd_diag["structural_depression_score_mean"] = float(np.mean(face_scores))
+            sd_diag["structural_depression_score_percentile_threshold"] = pct_threshold
+            sd_diag["structural_depression_threshold_used"] = pct_val
+
+            # Legacy depth stats (kept for continuity)
+            depth_in_face = dog[face_pixels]
+            sd_diag["structural_depression_depth_max"] = float(np.max(depth_in_face))
+            sd_diag["structural_depression_depth_mean"] = float(np.mean(depth_in_face))
+
+            # --- Binary mask from structural score ---
+            sd_mask = (structural_score >= pct_threshold).astype(np.uint8) * 255
+
+            # Light close to merge nearby crater rim fragments
+            k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            sd_mask = cv2.morphologyEx(sd_mask, cv2.MORPH_CLOSE, k_close)
+
+            sd_final = cv2.bitwise_and(sd_mask, valid_mask)
+            sd_diag["structural_depression_mask_nonzero_pixels"] = int(np.count_nonzero(sd_final))
+
+            channels["structural_depression"] = _generate_contours(sd_mask, valid_mask, kernel)
+        else:
+            channels["structural_depression"] = []
     else:
         channels["structural_depression"] = []
 
@@ -454,8 +502,8 @@ def _filter_contours(channels, gray, skin_mask, valid_mask, h, w, landmarks,
         ch_min_area = min_area
         ch_max_area = max_area
         if ch_name == "structural_depression":
-            ch_min_contrast = max(0.4, min_contrast * 0.3)
-            ch_min_area = max(10, min_area * 2.0)
+            ch_min_contrast = 0.0  # v3: structural_score is primary evidence, not L-depth
+            ch_min_area = 15  # above micro-pore but allow subtle structures
             ch_max_area = max_area * 10.0
             
         for cnt in cnts:
@@ -576,9 +624,13 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks,
     trace.update({
         "structural_source_used": sd_diag.get("structural_source_used", "none"),
         "structural_source_dimensions": sd_diag.get("structural_source_dimensions"),
+        "structural_depression_algorithm": sd_diag.get("structural_depression_algorithm", "none"),
         "structural_depression_mask_nonzero_pixels": sd_diag.get("structural_depression_mask_nonzero_pixels", 0),
         "structural_depression_depth_max": sd_diag.get("structural_depression_depth_max", 0.0),
         "structural_depression_depth_mean": sd_diag.get("structural_depression_depth_mean", 0.0),
+        "structural_depression_score_max": sd_diag.get("structural_depression_score_max", 0.0),
+        "structural_depression_score_mean": sd_diag.get("structural_depression_score_mean", 0.0),
+        "structural_depression_score_percentile_threshold": sd_diag.get("structural_depression_score_percentile_threshold", 0.0),
         "structural_depression_threshold_used": sd_diag.get("structural_depression_threshold_used", 0),
     })
 
