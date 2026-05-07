@@ -34,6 +34,7 @@ except Exception as e:
     print(f"Warning: pad_session initialization failed: {e}")
 
 mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True)
 
 def finite_or_none(value) -> float | None:
     """Safe float serializer — preserves scientific notation, rejects NaN/Inf."""
@@ -679,4 +680,214 @@ def _run_mark_evidence_pipeline(
         "probe_preprocessing": _pp_summary(probe_pp),
         "gallery_preprocessing": _pp_summary(gallery_pp),
     }
+
+
+import pickle
+from mark_detector import detect_facial_marks, serialize_mark_descriptor, get_thresholds as get_detector_thresholds, MARK_DETECTOR_VERSION
+from mark_matcher import match_marks_v2, get_thresholds as get_matcher_thresholds, MARK_MATCHER_V2_VERSION
+
+def _load_calibration():
+    """Attempt to load calibration JSON from GCS, fallback to local file."""
+    import json as _json
+
+    bucket_name = os.getenv("BUCKET_NAME", "hoppwhistle-facial-uploads")
+    gcs_path = "calibration/lfw_calibration.json"
+
+    # Try GCS first
+    try:
+        gcs_client = storage.Client()
+        bucket = gcs_client.bucket(bucket_name)
+        blob = bucket.blob(gcs_path)
+        if blob.exists():
+            content = blob.download_as_text()
+            cal = _json.loads(content)
+            print(f"Calibration loaded from GCS: {cal['benchmark']} ({cal['pairs_evaluated']} pairs)")
+            return cal
+        else:
+            print(f"No calibration blob at gs://{bucket_name}/{gcs_path}")
+    except Exception as e:
+        print(f"GCS calibration load failed: {e}")
+
+    # Fallback to local file (for dev environments)
+    _local_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration_data", "lfw_calibration.json")
+    try:
+        with open(_local_path, "r") as _f:
+            cal = _json.load(_f)
+        print(f"Calibration loaded from local file: {cal['benchmark']} ({cal['pairs_evaluated']} pairs)")
+        return cal
+    except FileNotFoundError:
+        print("WARNING: No calibration data found (GCS or local). FAR will be reported as UNCALIBRATED.")
+    except Exception as _e:
+        print(f"WARNING: Failed to load calibration data: {_e}. FAR will be reported as UNCALIBRATED.")
+
+    return None
+
+CALIBRATION = _load_calibration()
+
+CALIBRATION = _load_calibration()
+
+def _load_tier4_calibration():
+    """Load the Tier 4 population model from local file or GCS."""
+    import json as _json
+    import sys
+    import numpy as np
+    
+    # Monkey-patch to allow unpickling numpy 2.x models in numpy 1.x environments
+    if "numpy.core.numeric" in sys.modules and "numpy._core.numeric" not in sys.modules:
+        sys.modules["numpy._core"] = sys.modules["numpy.core"]
+        sys.modules["numpy._core.numeric"] = sys.modules["numpy.core.numeric"]
+        sys.modules["numpy._core.multiarray"] = sys.modules["numpy.core.multiarray"]
+
+    bucket_name = os.getenv("BUCKET_NAME", "hoppwhistle-facial-uploads")
+    gcs_path = "calibration/tier4_population_model.pkl"
+
+    # Try local file first (faster)
+    local_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration_data", "tier4_population_model.pkl")
+    try:
+        with open(local_path, "rb") as f:
+            cal = pickle.load(f)
+        print(f"Tier 4 Bayesian model loaded from local: {cal.get('total_marks', '?')} population marks")
+        return cal
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"WARNING: Failed to load local Tier 4 model: {e}")
+
+    # Fallback to GCS
+    try:
+        gcs_client = storage.Client()
+        bucket = gcs_client.bucket(bucket_name)
+        blob = bucket.blob(gcs_path)
+        if blob.exists():
+            pkl_bytes = blob.download_as_bytes()
+            cal = pickle.loads(pkl_bytes)
+            print(f"Tier 4 Bayesian model loaded from GCS: {cal.get('total_marks', '?')} population marks")
+            return cal
+    except Exception as e:
+        print(f"GCS Tier 4 model load failed: {e}")
+
+    print("WARNING: No Tier 4 Bayesian calibration data found. Mark LR will be unavailable.")
+    return None
+
+TIER4_CALIBRATION = _load_tier4_calibration()
+
+TIER4_CALIBRATION = _load_tier4_calibration()
+
+def extract_arcface_embedding(image: np.ndarray) -> np.ndarray:
+    """
+    Extracts a 512-D ArcFace biometric embedding from an aligned face crop.
+    This is the TRUE identity discriminator — replaces MediaPipe geometric
+    cosine for Tier 1 structural identity matching.
+
+    CRITICAL: We use detector_backend='retinaface' — the ONLY backend that
+    reliably handles BOTH failure modes:
+
+    - 'skip' bypasses alignment entirely. Our align_face_crop() uses MediaPipe
+      landmarks which don't match ArcFace's training alignment → poor
+      discriminative power between different identities.
+
+    - 'opencv' (Haar cascade) fails on tightly-cropped face images. With
+      enforce_detection=False, failed detections produce degenerate embeddings
+      that are nearly identical across all subjects → mass false matches.
+
+    - 'retinaface' is a deep-learning face detector that successfully detects
+      faces even in pre-cropped images AND provides the 5 facial landmarks
+      needed for ArcFace-compatible affine alignment. This is the standard
+      recommended backend for ArcFace in the DeepFace library.
+
+    Returns a 512-D numpy array (ArcFace latent space).
+    """
+    # DeepFace expects RGB; our pipeline uses BGR (OpenCV)
+    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+    result = DeepFace.represent(
+        img_path=rgb_image,
+        model_name="ArcFace",
+        enforce_detection=False,
+        detector_backend="retinaface",
+    )
+    embedding = np.array(result[0]["embedding"], dtype=np.float64)
+    return embedding  # 512-D vector
+
+
+def extract_facenet_embedding(image: np.ndarray) -> np.ndarray:
+    """
+    Extracts a 512-D Facenet512 biometric embedding from an aligned face crop.
+    This serves as the secondary model in the Tier 1 Neural Ensemble.
+    Uses 'retinaface' detector backend for consistency with ArcFace extraction.
+    """
+    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    result = DeepFace.represent(
+        img_path=rgb_image,
+        model_name="Facenet512",
+        enforce_detection=False,
+        detector_backend="retinaface",
+    )
+    return np.array(result[0]["embedding"], dtype=np.float64)
+
+
+def _build_rejection_summary(
+    valid_probe_marks: list,
+    valid_gallery_marks: list,
+    mark_result: dict,
+    rejected_cands: list,
+    mark_match_status: str,
+    exact_image_match: bool,
+    tier4_calibration,
+    trace_probe: dict = None,
+    trace_gallery: dict = None,
+) -> str:
+    """Return a human-readable explanation for why LR_marks is neutral or absent."""
+    matched = mark_result.get("matched", 0)
+    n_probe = len(valid_probe_marks)
+    n_gallery = len(valid_gallery_marks)
+
+    def _get_stage_reason(side_name, trace):
+        if not trace:
+            return f"No raw marks detected on {side_name}"
+        if trace.get("initial_candidates", 0) == 0:
+            return f"No initial mark candidates found after thresholding on {side_name}"
+        if trace.get("after_skin_mask", 0) == 0:
+            return f"Candidates found, but removed by occlusion/skin mask on {side_name}"
+        if trace.get("after_area_filter", 0) == 0:
+            return f"Initial candidates found, but all rejected by area threshold on {side_name}"
+        if trace.get("after_shape_filter", 0) == 0:
+            return f"Initial candidates found, but all rejected by shape/geometry filter on {side_name}"
+        if trace.get("after_region_exclusion", 0) == 0:
+            return f"Candidates found, but removed by facial-region exclusion mask on {side_name}"
+        if trace.get("after_contrast_filter", 0) == 0:
+            return f"Candidates found, but all rejected by low contrast threshold on {side_name}"
+        return f"No raw marks detected on {side_name}"
+
+    if exact_image_match:
+        return "Exact self-match: mark evidence self-corresponding by identity (LR neutralized to 1.0)"
+    if n_probe == 0 and n_gallery == 0:
+        reason_p = _get_stage_reason("probe", trace_probe)
+        reason_g = _get_stage_reason("gallery", trace_gallery)
+        base_p = reason_p.replace(" on probe", "")
+        base_g = reason_g.replace(" on gallery", "")
+        if base_p == base_g:
+            return f"{base_p} on both images"
+        return f"{reason_p}. {reason_g}."
+    if n_probe == 0:
+        return _get_stage_reason("probe", trace_probe)
+    if n_gallery == 0:
+        return _get_stage_reason("gallery", trace_gallery)
+    if tier4_calibration is None and matched > 0:
+        return "Mark calibration data unavailable — LR defaulted to 1.0"
+    if mark_match_status == "DETECTOR_UNAVAILABLE":
+        return "Mark detector unavailable"
+    if matched == 0 and len(rejected_cands) > 0:
+        return f"All {len(rejected_cands)} candidate marks rejected by cost/distance thresholds"
+    if matched == 0:
+        return "Raw marks detected, but no accepted correspondences passed matching thresholds"
+    if matched > 0:
+        lr_marks_val = mark_result.get("lr_marks", 1.0)
+        if lr_marks_val == 1.0 and tier4_calibration is None:
+            return "Mark calibration data unavailable — LR defaulted to 1.0"
+        if lr_marks_val is None or lr_marks_val == 1.0:
+            return f"{matched} mark(s) matched but combined LR is neutral (1.0) — mark evidence neither supports nor refutes common source"
+        return None  # Marks contributing normally — LR != 1.0
+    return "Unknown mark pipeline state"
+
 
