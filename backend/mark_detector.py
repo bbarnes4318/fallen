@@ -401,6 +401,7 @@ def _run_channels(aligned_crop, gray, valid_mask, kernel, h, w, input_is_preproc
 
         face_pixels = valid_mask > 0
         n_face = int(np.count_nonzero(face_pixels))
+        sd_diag["n_face_pixels"] = n_face
 
         if n_face > 100:
             # --- Cue 1: Difference of Gaussians (blob detector at crater scale) ---
@@ -445,6 +446,16 @@ def _run_channels(aligned_crop, gray, valid_mask, kernel, h, w, input_is_preproc
             sd_diag["structural_depression_score_mean"] = float(np.mean(face_scores))
             sd_diag["structural_depression_score_percentile_threshold"] = pct_threshold
             sd_diag["structural_depression_threshold_used"] = pct_val
+            # Raw cue ranges for debugging
+            dog_face = dog[face_pixels]
+            log_face = log_resp[face_pixels]
+            var_face = local_var[face_pixels]
+            sd_diag["dog_min"] = float(np.min(dog_face))
+            sd_diag["dog_max"] = float(np.max(dog_face))
+            sd_diag["log_min"] = float(np.min(log_face))
+            sd_diag["log_max"] = float(np.max(log_face))
+            sd_diag["var_min"] = float(np.min(var_face))
+            sd_diag["var_max"] = float(np.max(var_face))
 
             # Legacy depth stats (kept for continuity)
             depth_in_face = dog[face_pixels]
@@ -625,6 +636,7 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks,
         "structural_source_used": sd_diag.get("structural_source_used", "none"),
         "structural_source_dimensions": sd_diag.get("structural_source_dimensions"),
         "structural_depression_algorithm": sd_diag.get("structural_depression_algorithm", "none"),
+        "structural_depression_n_face_pixels": sd_diag.get("n_face_pixels", 0),
         "structural_depression_mask_nonzero_pixels": sd_diag.get("structural_depression_mask_nonzero_pixels", 0),
         "structural_depression_depth_max": sd_diag.get("structural_depression_depth_max", 0.0),
         "structural_depression_depth_mean": sd_diag.get("structural_depression_depth_mean", 0.0),
@@ -632,6 +644,9 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks,
         "structural_depression_score_mean": sd_diag.get("structural_depression_score_mean", 0.0),
         "structural_depression_score_percentile_threshold": sd_diag.get("structural_depression_score_percentile_threshold", 0.0),
         "structural_depression_threshold_used": sd_diag.get("structural_depression_threshold_used", 0),
+        "structural_depression_dog_range": [sd_diag.get("dog_min", 0), sd_diag.get("dog_max", 0)],
+        "structural_depression_log_range": [sd_diag.get("log_min", 0), sd_diag.get("log_max", 0)],
+        "structural_depression_var_range": [sd_diag.get("var_min", 0), sd_diag.get("var_max", 0)],
     })
 
     # Strict pass
