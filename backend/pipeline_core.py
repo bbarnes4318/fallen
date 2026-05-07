@@ -1,6 +1,9 @@
 import os
 os.environ["TF_USE_LEGACY_KERAS"] = "1"
-os.environ["DEEPFACE_HOME"] = "/app"
+if os.path.exists("/app") or os.access("/", os.W_OK):
+    os.environ["DEEPFACE_HOME"] = "/app"
+else:
+    os.environ["DEEPFACE_HOME"] = os.path.expanduser("~")
 
 import cv2
 import numpy as np
