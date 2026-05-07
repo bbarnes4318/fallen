@@ -1,0 +1,50 @@
+name: Biometric Validation Framework
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest_path:
+        description: 'Path to validation_pairs.csv'
+        required: true
+        default: 'validation/validation_pairs.example.csv'
+      dry_run:
+        description: 'Run in dry-run mode (validate manifest only)'
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  validate-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          
+      - name: Run Full Pipeline Validation (Dry Run)
+        if: ${{ inputs.dry_run }}
+        run: |
+          python scripts/validate_full_pipeline.py --manifest ${{ inputs.manifest_path }} --output-dir validation/results/run --dry-run
+          
+      - name: Run Full Pipeline Validation (Live Evaluation)
+        if: ${{ !inputs.dry_run }}
+        run: |
+          # Requires secure access to GCS buckets containing validation images
+          # and credentials loaded into environment.
+          python scripts/validate_full_pipeline.py --manifest ${{ inputs.manifest_path }} --output-dir validation/results/run
+          
+      - name: Upload Validation Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-results
+          path: validation/results/run/

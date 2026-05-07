@@ -1,0 +1,9 @@
+pair_id,image1_url_or_gcs_path,image2_url_or_gcs_path,label_same_person,category,notes,expected_challenge_type
+P001,gs://facial-validation-images/placeholder/img1_A.jpg,gs://facial-validation-images/placeholder/img1_B.jpg,True,same_person_normal,"Clear frontal photos, 1 year apart",baseline
+P002,gs://facial-validation-images/placeholder/img2_A.jpg,gs://facial-validation-images/placeholder/img2_B.jpg,True,same_person_age_gap,"Photos 10 years apart",aging
+P003,gs://facial-validation-images/placeholder/img3_A.jpg,gs://facial-validation-images/placeholder/img3_B.jpg,True,same_person_lighting_pose,"Studio lighting vs CCTV",pose_and_illumination
+P004,gs://facial-validation-images/placeholder/img4_A.jpg,gs://facial-validation-images/placeholder/img5_A.jpg,False,different_person_random,"Different individuals, different demographics",baseline_negative
+P005,gs://facial-validation-images/placeholder/img6_A.jpg,gs://facial-validation-images/placeholder/img7_A.jpg,False,different_person_lookalike,"Siblings or high structural similarity",false_positive_challenge
+P006,gs://facial-validation-images/placeholder/img8_A.jpg,gs://facial-validation-images/placeholder/img8_B.jpg,True,mark_heavy_same_person,"Subject with severe acne scarring",mark_overcounting_risk
+P007,gs://facial-validation-images/placeholder/img9_A.jpg,gs://facial-validation-images/placeholder/img10_A.jpg,False,mark_heavy_different_person,"Both subjects have similar skin conditions",mark_false_positive_risk
+P008,gs://facial-validation-images/placeholder/img11_A.jpg,gs://facial-validation-images/placeholder/img12_A.jpg,False,twins_or_high_similarity_imposters,"Identical twins",mark_differentiation_test
