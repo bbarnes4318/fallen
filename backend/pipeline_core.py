@@ -148,7 +148,7 @@ def fetch_image_from_url(uri: str) -> tuple:
             storage_client = storage.Client()
             parts = uri.replace("gs://", "").split("/", 1)
             bucket_name_req = parts[0]
-            configured_bucket = os.getenv("BUCKET_NAME", "hoppwhistle-facial-uploads")
+            configured_bucket = os.getenv("BUCKET_NAME") or "hoppwhistle-facial-uploads"
             from security_helpers import is_safe_image_url
             if not is_safe_image_url(uri, configured_bucket):
                 raise ValueError("Unauthorized GCS bucket.")
@@ -178,10 +178,10 @@ def fetch_image_from_url(uri: str) -> tuple:
             raise ValueError("Image dimensions exceed 4096x4096.")
             
         return img, raw_hash
-    except HTTPException:
+    except ValueError:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to fetch image: {str(e)}")
+        raise ValueError(f"Failed to fetch image: {str(e)}")
 
 def apply_clahe(image: np.ndarray) -> np.ndarray:
     """
