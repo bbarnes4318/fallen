@@ -580,7 +580,7 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks,
         "structural_depression_depth_max": sd_diag.get("structural_depression_depth_max", 0.0),
         "structural_depression_depth_mean": sd_diag.get("structural_depression_depth_mean", 0.0),
         "structural_depression_threshold_used": sd_diag.get("structural_depression_threshold_used", 0),
-    }
+    })
 
     # Strict pass
     marks, rejected, ft = _filter_contours(
