@@ -12,20 +12,24 @@ This script does NOT:
   - Touch production scoring or /vault/search
 
 Usage (GitHub Actions or Cloud Shell):
+  # Full LFW pairs, all matched/mismatched, with GCS verification:
+  python scripts/generate_lfw_validation_manifest.py \
+    --pairs-url https://vis-www.cs.umass.edu/lfw/pairs.txt \
+    --gcs-prefix gs://hoppwhistle-facial-uploads/gallery/ \
+    --output validation/validation_pairs_lfw_baseline.csv \
+    --check-gcs-exists \
+    --fail-on-missing
+
+  # Dev-train split, limited to 50/50:
   python scripts/generate_lfw_validation_manifest.py \
     --pairs-url https://vis-www.cs.umass.edu/lfw/pairsDevTrain.txt \
-    --gcs-prefix gs://hoppwhistle-facial-uploads/gallery/ \
     --output validation/validation_pairs_lfw_baseline.csv \
     --max-matched 50 \
     --max-mismatched 50
 
+  # Dry run (no CSV written):
   python scripts/generate_lfw_validation_manifest.py \
-    --pairs-file /path/to/pairsDevTrain.txt \
-    --output validation/validation_pairs_lfw_baseline.csv \
-    --check-gcs-exists
-
-  python scripts/generate_lfw_validation_manifest.py \
-    --pairs-url https://vis-www.cs.umass.edu/lfw/pairsDevTrain.txt \
+    --pairs-url https://vis-www.cs.umass.edu/lfw/pairs.txt \
     --dry-run
 """
 
@@ -38,11 +42,18 @@ from pathlib import Path
 from typing import List, Tuple, Optional
 
 
+# ── Well-known LFW pairs file URLs ──
+LFW_FULL_PAIRS_URL = "https://vis-www.cs.umass.edu/lfw/pairs.txt"
+LFW_DEV_TRAIN_PAIRS_URL = "https://vis-www.cs.umass.edu/lfw/pairsDevTrain.txt"
+LFW_DEV_TEST_PAIRS_URL = "https://vis-www.cs.umass.edu/lfw/pairsDevTest.txt"
+
+
 # ── LFW Pairs File Format ──
 # Line 1: <num_folds>\t<pairs_per_fold>   (e.g. "10\t300")
-# Matched pairs:    Name\tImageNum1\tImageNum2
-# Mismatched pairs: Name1\tImageNum1\tName2\tImageNum2
+# Matched pairs:    Name  ImageNum1  ImageNum2
+# Mismatched pairs: Name1 ImageNum1  Name2  ImageNum2
 #
+# Fields may be tab-delimited OR whitespace-delimited depending on source.
 # Image number N maps to filename: Name_NNNN.jpg (zero-padded to 4 digits)
 # GCS path: gs://bucket/gallery/Name_NNNN.jpg
 
@@ -60,6 +71,9 @@ def lfw_image_name(person_name: str, image_num: int) -> str:
 def parse_lfw_pairs(lines: List[str]) -> Tuple[List[dict], List[dict]]:
     """Parse the official LFW pairs text file.
 
+    Uses generic whitespace splitting to handle both tab-delimited and
+    space-delimited variants of the pairs file.
+
     Returns:
         (matched_pairs, mismatched_pairs) where each entry is a dict with:
         - name1, num1, name2, num2, label
@@ -67,13 +81,13 @@ def parse_lfw_pairs(lines: List[str]) -> Tuple[List[dict], List[dict]]:
     matched = []
     mismatched = []
 
-    # Skip header line (e.g. "10\t300")
+    # Skip header line (e.g. "10\t300" or "10  300")
     start_idx = 0
     for i, line in enumerate(lines):
         stripped = line.strip()
         if not stripped:
             continue
-        parts = stripped.split('\t')
+        parts = stripped.split()
         # Header line has exactly 2 numeric fields
         if len(parts) == 2:
             try:
@@ -91,10 +105,10 @@ def parse_lfw_pairs(lines: List[str]) -> Tuple[List[dict], List[dict]]:
         stripped = line.strip()
         if not stripped:
             continue
-        parts = stripped.split('\t')
+        parts = stripped.split()
 
         if len(parts) == 3:
-            # Matched pair: Name\tNum1\tNum2
+            # Matched pair: Name Num1 Num2
             try:
                 name = parts[0]
                 num1 = int(parts[1])
@@ -108,7 +122,7 @@ def parse_lfw_pairs(lines: List[str]) -> Tuple[List[dict], List[dict]]:
                 print(f"  WARNING: Could not parse matched line: {stripped}")
 
         elif len(parts) == 4:
-            # Mismatched pair: Name1\tNum1\tName2\tNum2
+            # Mismatched pair: Name1 Num1 Name2 Num2
             try:
                 name1 = parts[0]
                 num1 = int(parts[1])
@@ -150,30 +164,43 @@ def read_pairs_from_file(filepath: str) -> List[str]:
     return lines
 
 
-def check_gcs_blob_exists(gcs_uri: str) -> bool:
-    """Check whether a GCS blob exists. Requires google-cloud-storage."""
+def create_gcs_checker(gcs_prefix: str):
+    """Create a reusable GCS existence checker.
+
+    Returns a callable (gcs_uri) -> bool, or None if GCS is unavailable.
+    Reuses a single storage client and bucket reference for efficiency.
+    """
     try:
         from google.cloud import storage
     except ImportError:
-        print("  WARNING: google-cloud-storage not installed. Cannot verify GCS existence.")
-        return True  # Assume exists if we can't check
+        return None
 
-    # Parse gs://bucket/path
-    if not gcs_uri.startswith("gs://"):
-        return False
-    parts = gcs_uri[5:].split("/", 1)
-    if len(parts) != 2:
-        return False
-    bucket_name, blob_path = parts
+    # Parse bucket from prefix: gs://bucket-name/path/ -> bucket-name
+    if not gcs_prefix.startswith("gs://"):
+        return None
+    bucket_name = gcs_prefix[5:].split("/", 1)[0]
 
     try:
         client = storage.Client()
         bucket = client.bucket(bucket_name)
-        blob = bucket.blob(blob_path)
-        return blob.exists()
     except Exception as e:
-        print(f"  WARNING: GCS check failed for {gcs_uri}: {e}")
-        return False
+        print(f"  ERROR: Failed to create GCS client: {e}")
+        return None
+
+    def check_exists(gcs_uri: str) -> bool:
+        if not gcs_uri.startswith("gs://"):
+            return False
+        blob_path = gcs_uri[5:].split("/", 1)
+        if len(blob_path) != 2:
+            return False
+        try:
+            blob = bucket.blob(blob_path[1])
+            return blob.exists()
+        except Exception as e:
+            print(f"  WARNING: GCS check failed for {gcs_uri}: {e}")
+            return False
+
+    return check_exists
 
 
 def main():
@@ -200,23 +227,32 @@ def main():
         help="Output CSV path"
     )
     parser.add_argument(
-        "--max-matched", type=int, default=50,
-        help="Maximum number of matched (same-person) pairs"
+        "--max-matched", type=int, default=0,
+        help="Maximum number of matched (same-person) pairs. 0 = unlimited."
     )
     parser.add_argument(
-        "--max-mismatched", type=int, default=50,
-        help="Maximum number of mismatched (different-person) pairs"
+        "--max-mismatched", type=int, default=0,
+        help="Maximum number of mismatched (different-person) pairs. 0 = unlimited."
     )
     parser.add_argument(
         "--check-gcs-exists", action="store_true",
         help="Verify each GCS blob exists before including the pair"
     )
     parser.add_argument(
+        "--fail-on-missing", action="store_true",
+        help="Exit non-zero if any selected GCS image is missing (requires --check-gcs-exists)"
+    )
+    parser.add_argument(
         "--dry-run", action="store_true",
-        help="Parse and validate the pairs file without writing output"
+        help="Parse and validate the pairs file without writing CSV output"
     )
 
     args = parser.parse_args()
+
+    # ── Validate flag combinations ──
+    if args.fail_on_missing and not args.check_gcs_exists:
+        print("  WARNING: --fail-on-missing has no effect without --check-gcs-exists. Enabling --check-gcs-exists.")
+        args.check_gcs_exists = True
 
     # ── Ensure GCS prefix ends with /
     gcs_prefix = args.gcs_prefix
@@ -224,6 +260,7 @@ def main():
         gcs_prefix += "/"
 
     # ── 1. Load pairs file ──
+    pairs_source = args.pairs_file or args.pairs_url
     if args.pairs_file:
         lines = read_pairs_from_file(args.pairs_file)
     else:
@@ -237,15 +274,26 @@ def main():
         print("  ERROR: No pairs found. Check the pairs file format.")
         sys.exit(1)
 
-    # ── 3. Apply limits ──
-    selected_matched = matched[:args.max_matched]
-    selected_mismatched = mismatched[:args.max_mismatched]
+    # ── 3. Apply limits (0 = unlimited) ──
+    selected_matched = matched if args.max_matched <= 0 else matched[:args.max_matched]
+    selected_mismatched = mismatched if args.max_mismatched <= 0 else mismatched[:args.max_mismatched]
     print(f"  Selected {len(selected_matched)} matched, {len(selected_mismatched)} mismatched.")
 
-    # ── 4. Build manifest rows ──
+    # ── 4. Set up GCS checker if needed ──
+    gcs_checker = None
+    if args.check_gcs_exists:
+        gcs_checker = create_gcs_checker(gcs_prefix)
+        if gcs_checker is None:
+            print("  ERROR: --check-gcs-exists is set but google-cloud-storage is not available or GCS client creation failed.")
+            print("         Install google-cloud-storage or remove --check-gcs-exists.")
+            sys.exit(1)
+        print("  GCS existence checking enabled (single client reused).")
+
+    # ── 5. Build manifest rows ──
     rows = []
     gcs_check_pass = 0
     gcs_check_fail = 0
+    missing_pairs = []
 
     for i, pair in enumerate(selected_matched, 1):
         img1_name = lfw_image_name(pair["name1"], pair["num1"])
@@ -253,17 +301,21 @@ def main():
         img1_uri = f"{gcs_prefix}{img1_name}"
         img2_uri = f"{gcs_prefix}{img2_name}"
 
-        # Optional GCS existence check
-        if args.check_gcs_exists:
-            exists1 = check_gcs_blob_exists(img1_uri)
-            exists2 = check_gcs_blob_exists(img2_uri)
+        if gcs_checker:
+            exists1 = gcs_checker(img1_uri)
+            exists2 = gcs_checker(img2_uri)
             if not exists1 or not exists2:
                 gcs_check_fail += 1
                 missing = []
                 if not exists1:
-                    missing.append(img1_name)
+                    missing.append(img1_uri)
                 if not exists2:
-                    missing.append(img2_name)
+                    missing.append(img2_uri)
+                missing_pairs.append({
+                    "pair_id": f"lfw_matched_{i:04d}",
+                    "type": "matched",
+                    "missing_uris": missing,
+                })
                 print(f"  SKIP matched pair {i}: missing {', '.join(missing)}")
                 continue
             gcs_check_pass += 1
@@ -285,17 +337,21 @@ def main():
         img1_uri = f"{gcs_prefix}{img1_name}"
         img2_uri = f"{gcs_prefix}{img2_name}"
 
-        # Optional GCS existence check
-        if args.check_gcs_exists:
-            exists1 = check_gcs_blob_exists(img1_uri)
-            exists2 = check_gcs_blob_exists(img2_uri)
+        if gcs_checker:
+            exists1 = gcs_checker(img1_uri)
+            exists2 = gcs_checker(img2_uri)
             if not exists1 or not exists2:
                 gcs_check_fail += 1
                 missing = []
                 if not exists1:
-                    missing.append(img1_name)
+                    missing.append(img1_uri)
                 if not exists2:
-                    missing.append(img2_name)
+                    missing.append(img2_uri)
+                missing_pairs.append({
+                    "pair_id": f"lfw_mismatched_{i:04d}",
+                    "type": "mismatched",
+                    "missing_uris": missing,
+                })
                 print(f"  SKIP mismatched pair {i}: missing {', '.join(missing)}")
                 continue
             gcs_check_pass += 1
@@ -312,7 +368,7 @@ def main():
             "expected_challenge_type": "baseline",
         })
 
-    # ── 5. Summary ──
+    # ── 6. Summary ──
     total = len(rows)
     same_count = sum(1 for r in rows if r["label_same_person"] == "true")
     diff_count = sum(1 for r in rows if r["label_same_person"] == "false")
@@ -320,47 +376,84 @@ def main():
     print(f"\n{'='*60}")
     print(f"  MANIFEST GENERATION SUMMARY")
     print(f"{'='*60}")
-    print(f"  Total pairs:           {total}")
-    print(f"  Same person:           {same_count}")
-    print(f"  Different person:      {diff_count}")
+    print(f"  Pairs source:          {pairs_source}")
+    print(f"  GCS prefix:            {gcs_prefix}")
+    print(f"  Selected matched:      {len(selected_matched)}")
+    print(f"  Selected mismatched:   {len(selected_mismatched)}")
+    print(f"  Selected total:        {len(selected_matched) + len(selected_mismatched)}")
+    print(f"  Written total:         {total}")
+    print(f"  Written same-person:   {same_count}")
+    print(f"  Written diff-person:   {diff_count}")
     if args.check_gcs_exists:
         print(f"  GCS exists (pass):     {gcs_check_pass}")
         print(f"  GCS exists (fail):     {gcs_check_fail}")
+        print(f"  Missing pairs:         {len(missing_pairs)}")
     print(f"  Categories present:    same_person_normal, different_person_random")
     print(f"  Categories missing:    same_person_age_gap, same_person_lighting_pose,")
     print(f"                         different_person_lookalike, mark_heavy_same_person,")
     print(f"                         mark_heavy_different_person, twins_or_high_similarity_imposters")
     print(f"{'='*60}")
 
-    if args.dry_run:
-        print(f"\n  DRY RUN — No output file written.")
-        print(f"  Would write {total} rows to: {args.output}")
+    # ── 7. Build summary JSON ──
+    summary = {
+        "pairs_source": pairs_source,
+        "gcs_prefix": gcs_prefix,
+        "selected_matched": len(selected_matched),
+        "selected_mismatched": len(selected_mismatched),
+        "selected_total": len(selected_matched) + len(selected_mismatched),
+        "written_total": total,
+        "written_same_person": same_count,
+        "written_different_person": diff_count,
+        "check_gcs_exists": args.check_gcs_exists,
+        "fail_on_missing": args.fail_on_missing,
+        "gcs_check_pass": gcs_check_pass,
+        "gcs_check_fail": gcs_check_fail,
+        "missing_pairs": missing_pairs,
+        "output_path": args.output,
+        "dry_run": args.dry_run,
+        "first_5_rows": rows[:5] if rows else [],
+    }
 
-        # Write a dry-run summary JSON instead
-        summary = {
-            "dry_run": True,
-            "total_pairs": total,
-            "same_person": same_count,
-            "different_person": diff_count,
-            "output_path": args.output,
-            "gcs_prefix": gcs_prefix,
-            "pairs_source": args.pairs_file or args.pairs_url,
-            "max_matched": args.max_matched,
-            "max_mismatched": args.max_mismatched,
-            "check_gcs_exists": args.check_gcs_exists,
-            "first_5_rows": rows[:5] if rows else [],
-        }
-        # Write summary to output dir
-        output_dir = os.path.dirname(args.output) or "."
-        os.makedirs(output_dir, exist_ok=True)
-        summary_path = os.path.join(output_dir, "lfw_manifest_dry_run_summary.json")
-        with open(summary_path, "w") as f:
-            json.dump(summary, f, indent=2)
-        print(f"  Dry-run summary saved to: {summary_path}")
+    # Always write summary JSON next to output
+    output_dir = os.path.dirname(args.output) or "."
+    os.makedirs(output_dir, exist_ok=True)
+    summary_path = os.path.join(output_dir, "lfw_manifest_generation_summary.json")
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
+    print(f"\n  Summary saved to: {summary_path}")
+
+    # ── 8. Check for zero rows ──
+    if total == 0:
+        print("  ERROR: Zero rows would be written. Cannot produce an empty manifest.")
+        if missing_pairs:
+            print(f"         {len(missing_pairs)} pairs were skipped due to missing GCS blobs.")
+            print(f"         Check that mass_ingest.py has been run against the LFW dataset.")
+        sys.exit(1)
+
+    # ── 9. Check fail-on-missing ──
+    if args.fail_on_missing and missing_pairs:
+        print(f"\n  FAIL: {len(missing_pairs)} pairs have missing GCS images and --fail-on-missing is set.")
+        print(f"        See {summary_path} for the full list of missing pairs.")
+        # Still write the CSV with the valid rows so results are inspectable
+        if not args.dry_run:
+            _write_csv(args.output, rows)
+            print(f"  Partial manifest written to: {args.output} ({total} valid rows)")
+        sys.exit(1)
+
+    # ── 10. Dry run or write ──
+    if args.dry_run:
+        print(f"\n  DRY RUN — No CSV written.")
+        print(f"  Would write {total} rows to: {args.output}")
         return
 
-    # ── 6. Write CSV ──
-    output_dir = os.path.dirname(args.output) or "."
+    _write_csv(args.output, rows)
+    print(f"\n  ✓ Manifest written to: {args.output}")
+    print(f"    {total} pairs ({same_count} same, {diff_count} different)")
+
+
+def _write_csv(output_path: str, rows: List[dict]):
+    """Write manifest rows to CSV."""
+    output_dir = os.path.dirname(output_path) or "."
     os.makedirs(output_dir, exist_ok=True)
 
     fieldnames = [
@@ -373,13 +466,10 @@ def main():
         "expected_challenge_type",
     ]
 
-    with open(args.output, "w", newline="") as f:
+    with open(output_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
-
-    print(f"\n  ✓ Manifest written to: {args.output}")
-    print(f"    {total} pairs ({same_count} same, {diff_count} different)")
 
 
 if __name__ == "__main__":
