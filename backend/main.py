@@ -3149,8 +3149,11 @@ def _run_mark_evidence_pipeline(
     probe_detector_input = probe_pp["images"]["mark_detector_input_bgr"]
     det_h, det_w = probe_detector_input.shape[:2]
     
+    probe_structural_source = probe_pp["images"]["aligned_bgr"]
+    
     marks_probe, rejected_probe_raw, occ_probe, trace_probe, overlays_probe = detect_facial_marks(
-        probe_detector_input, probe_landmarks, input_is_preprocessed=True
+        probe_detector_input, probe_landmarks, input_is_preprocessed=True,
+        structural_source_bgr=probe_structural_source
     )
     _mp_log("probe_detect_done")
     
@@ -3179,8 +3182,11 @@ def _run_mark_evidence_pipeline(
         gallery_detector_input = gallery_pp["images"]["mark_detector_input_bgr"]
         gal_h, gal_w = gallery_detector_input.shape[:2]
         
+        gallery_structural_source = gallery_pp["images"]["aligned_bgr"]
+        
         marks_gallery, rejected_gallery_raw, occ_gallery, trace_gallery, overlays_gallery = detect_facial_marks(
-            gallery_detector_input, gallery_landmarks, input_is_preprocessed=True
+            gallery_detector_input, gallery_landmarks, input_is_preprocessed=True,
+            structural_source_bgr=gallery_structural_source
         )
         _mp_log("gallery_detect_done")
         for m in marks_gallery:

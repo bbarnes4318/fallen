@@ -285,13 +285,18 @@ def _generate_contours(binary_mask, valid_mask, kernel):
     return cnts
 
 
-def _run_channels(aligned_crop, gray, valid_mask, kernel, h, w, input_is_preprocessed=False):
+def _run_channels(aligned_crop, gray, valid_mask, kernel, h, w, input_is_preprocessed=False,
+                  structural_source_bgr=None):
     """Run all detection channels. Returns dict of channel_name -> contour_list.
 
     Args:
         input_is_preprocessed: If True, the input has already been CLAHE-enhanced
             by image_preprocessor.py. Internal CLAHE is skipped to avoid double-CLAHE.
             If False (default), internal CLAHE is applied for backward compatibility.
+        structural_source_bgr: Optional separate BGR image for the structural_depression
+            channel. When provided with input_is_preprocessed=True, structural_depression
+            operates on this image (pre-CLAHE aligned crop) instead of the CLAHE input,
+            preserving broad shadow/depth information that CLAHE flattens.
     """
     channels = {}
 
@@ -366,19 +371,50 @@ def _run_channels(aligned_crop, gray, valid_mask, kernel, h, w, input_is_preproc
     channels["linear_scar_v2"] = _generate_contours(combined_lines, valid_mask, kernel)
 
     # Structural depression (broad low-contrast shadows)
+    sd_diag = {"structural_source_used": "none", "structural_source_dimensions": None,
+               "structural_depression_mask_nonzero_pixels": 0,
+               "structural_depression_depth_max": 0.0, "structural_depression_depth_mean": 0.0,
+               "structural_depression_threshold_used": 0}
     if input_is_preprocessed:
-        # V2 only: Use LAB L channel
-        L_blur = cv2.medianBlur(L_enhanced, 7)
-        # Use a large median blur to establish local background for broad features
-        bg_sd = cv2.medianBlur(L_enhanced, 61)
-        dark_delta_sd = cv2.subtract(bg_sd, L_blur)
-        
-        # Broad structural depressions have low contrast. Threshold > 4 units depth.
-        _, sd_thresh = cv2.threshold(dark_delta_sd, 4, 255, cv2.THRESH_BINARY)
-        
-        # Clean up noise
-        k_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        # Determine source image for structural channel
+        if structural_source_bgr is not None:
+            # Use pre-CLAHE aligned image to preserve broad shadow/depth
+            sd_src = structural_source_bgr
+            sd_diag["structural_source_used"] = "aligned_bgr"
+        else:
+            sd_src = aligned_crop
+            sd_diag["structural_source_used"] = "mark_detector_input_bgr"
+        sd_diag["structural_source_dimensions"] = list(sd_src.shape[:2])
+
+        # Extract L channel from the structural source (NOT the CLAHE input)
+        sd_lab = cv2.cvtColor(sd_src, cv2.COLOR_BGR2LAB)
+        sd_L = sd_lab[:, :, 0]
+
+        # Small blur to reduce sensor noise
+        sd_L_blur = cv2.medianBlur(sd_L, 7)
+        # Large background estimate to capture broad features
+        sd_bg = cv2.medianBlur(sd_L, 61)
+        # Depth map: how much darker each pixel is vs local background
+        dark_delta_sd = cv2.subtract(sd_bg, sd_L_blur)
+
+        # Depth stats for diagnostics
+        depth_in_face = dark_delta_sd[valid_mask > 0] if np.any(valid_mask > 0) else dark_delta_sd.ravel()
+        sd_diag["structural_depression_depth_max"] = float(np.max(depth_in_face)) if depth_in_face.size > 0 else 0.0
+        sd_diag["structural_depression_depth_mean"] = float(np.mean(depth_in_face)) if depth_in_face.size > 0 else 0.0
+
+        # Adaptive threshold: use fixed 3 or p95-based if depth range is very low
+        sd_thresh_val = 3
+        sd_diag["structural_depression_threshold_used"] = sd_thresh_val
+        _, sd_thresh = cv2.threshold(dark_delta_sd, sd_thresh_val, 255, cv2.THRESH_BINARY)
+
+        # Clean up noise with small morphological open
+        k_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         sd_cleaned = cv2.morphologyEx(sd_thresh, cv2.MORPH_OPEN, k_clean)
+
+        # Apply face mask
+        sd_final = cv2.bitwise_and(sd_cleaned, valid_mask)
+        sd_diag["structural_depression_mask_nonzero_pixels"] = int(np.count_nonzero(sd_final))
+
         channels["structural_depression"] = _generate_contours(sd_cleaned, valid_mask, kernel)
     else:
         channels["structural_depression"] = []
@@ -396,8 +432,12 @@ def _run_channels(aligned_crop, gray, valid_mask, kernel, h, w, input_is_preproc
     anom = (zscore > 2.5).astype(np.uint8) * 255
     channels["texture_anomaly"] = _generate_contours(anom, valid_mask, kernel)
 
-    return channels, {"dark_thresh": dt, "light_thresh": lt, "dd_thresh": dd_thresh,
-                      "bd_thresh": bd_thresh, "line_mask": combined_lines, "anom_mask": anom}
+    raw_masks = {"dark_thresh": dt, "light_thresh": lt, "dd_thresh": dd_thresh,
+                 "bd_thresh": bd_thresh, "line_mask": combined_lines, "anom_mask": anom}
+    if input_is_preprocessed:
+        raw_masks["sd_final"] = sd_final
+    raw_masks["_sd_diag"] = sd_diag
+    return channels, raw_masks
 
 
 def _filter_contours(channels, gray, skin_mask, valid_mask, h, w, landmarks,
@@ -475,7 +515,8 @@ def _filter_contours(channels, gray, skin_mask, valid_mask, h, w, landmarks,
 
 
 def detect_facial_marks(aligned_crop: np.ndarray, landmarks,
-                        input_is_preprocessed: bool = False) -> tuple:
+                        input_is_preprocessed: bool = False,
+                        structural_source_bgr: np.ndarray = None) -> tuple:
     """Multi-channel facial mark detector v2.1.0.
 
     Args:
@@ -504,7 +545,8 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks,
 
     internal_clahe_applied = not input_is_preprocessed
     channels, raw_masks = _run_channels(aligned_crop, gray, valid_mask, kernel, h, w,
-                                        input_is_preprocessed=input_is_preprocessed)
+                                        input_is_preprocessed=input_is_preprocessed,
+                                        structural_source_bgr=structural_source_bgr)
 
     trace = {
         "input_is_preprocessed": input_is_preprocessed,
@@ -527,7 +569,17 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks,
         "structural_depression_thresholds": {
             "min_contrast": max(0.4, _MIN_CONTRAST * 0.3),
             "min_area": max(10, _MIN_AREA * 2.0)
-        }
+        },
+    }
+    # Merge structural diagnostics from channel runner
+    sd_diag = raw_masks.get("_sd_diag", {})
+    trace.update({
+        "structural_source_used": sd_diag.get("structural_source_used", "none"),
+        "structural_source_dimensions": sd_diag.get("structural_source_dimensions"),
+        "structural_depression_mask_nonzero_pixels": sd_diag.get("structural_depression_mask_nonzero_pixels", 0),
+        "structural_depression_depth_max": sd_diag.get("structural_depression_depth_max", 0.0),
+        "structural_depression_depth_mean": sd_diag.get("structural_depression_depth_mean", 0.0),
+        "structural_depression_threshold_used": sd_diag.get("structural_depression_threshold_used", 0),
     }
 
     # Strict pass
@@ -595,7 +647,8 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks,
         for key, mask_key in [("dark_candidate_mask_b64", "dark_thresh"),
                               ("bright_candidate_mask_b64", "bd_thresh"),
                               ("linear_candidate_mask_b64", "line_mask"),
-                              ("texture_candidate_mask_b64", "anom_mask")]:
+                              ("texture_candidate_mask_b64", "anom_mask"),
+                              ("structural_depression_candidate_mask_b64", "sd_final")]:
             if mask_key in raw_masks:
                 m = cv2.bitwise_and(raw_masks[mask_key], valid_mask)
                 overlays[key] = _enc(m)
