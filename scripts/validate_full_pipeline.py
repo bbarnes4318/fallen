@@ -208,9 +208,9 @@ def run_single_pair(pair, pipeline_modules):
     
     probe_summary = [
         {
-            "mark_type": m.get("type"),
+            "mark_type": m.get("mark_type"),
             "channel": m.get("channel"),
-            "face_region": m.get("region"),
+            "face_region": m.get("face_region"),
             "centroid": m.get("centroid"),
             "area": m.get("area"),
             "confidence": m.get("confidence"),
@@ -220,9 +220,9 @@ def run_single_pair(pair, pipeline_modules):
     
     gallery_summary = [
         {
-            "mark_type": m.get("type"),
+            "mark_type": m.get("mark_type"),
             "channel": m.get("channel"),
-            "face_region": m.get("region"),
+            "face_region": m.get("face_region"),
             "centroid": m.get("centroid"),
             "area": m.get("area"),
             "confidence": m.get("confidence"),
@@ -234,15 +234,15 @@ def run_single_pair(pair, pipeline_modules):
         {
             "gallery_idx": c.get("gallery_idx"),
             "probe_idx": c.get("probe_idx"),
-            "mark_type": c.get("type"),
+            "mark_type": c.get("mark_type") or c.get("type"),
             "channel": c.get("channel"),
-            "face_region": c.get("region"),
+            "face_region": c.get("face_region") or c.get("region"),
             "gallery_centroid": c.get("gallery_centroid"),
             "probe_centroid": c.get("probe_centroid"),
             "position_distance": c.get("position_distance"),
             "area_ratio": c.get("area_ratio"),
             "match_quality": c.get("match_quality"),
-            "match_cost": c.get("cost"),
+            "match_cost": c.get("match_cost") or c.get("cost"),
             "lr": finite_or_none(c.get("lr", 1.0))
         } for c in accepted
     ]
@@ -281,11 +281,25 @@ def run_single_pair(pair, pipeline_modules):
         else:
             return float((s[n//2 - 1] + s[n//2]) / 2.0)
             
+    distinctive_types_set = {"dark_mole", "mole", "light_scar", "scar", "linear_scar", "structural_crater", "depression_scar"}
+    distinctive_types_found = [t for t in types if t in distinctive_types_set]
+    generic_types_found = [t for t in types if t not in distinctive_types_set]
+    distinctive_regions_found = [r for r, t in zip(regions, types) if t in distinctive_types_set]
+    generic_regions_found = [r for r, t in zip(regions, types) if t not in distinctive_types_set]
+
     evidence_aggregate = {
         "accepted_correspondences_count": len(accepted),
         "distinct_face_regions_count": len(set(regions)),
         "distinct_mark_types_count": len(set(types)),
         "distinct_channels_count": len(set(channels)),
+        "distinctive_mark_count": len(distinctive_types_found),
+        "generic_mark_count": len(generic_types_found),
+        "distinctive_mark_types": list(set(distinctive_types_found)),
+        "generic_mark_types": list(set(generic_types_found)),
+        "distinctive_region_count": len(set(distinctive_regions_found)),
+        "generic_region_count": len(set(generic_regions_found)),
+        "generic_only_match": len(distinctive_types_found) == 0 and len(generic_types_found) > 0,
+        "largest_single_mark_type_correspondence_count": max(type_counts.values()) if type_counts else 0,
         "average_position_distance": round(sum(distances) / len(distances), 4) if distances else 0.0,
         "median_position_distance": round(safe_median(distances), 4),
         "max_position_distance": round(max(distances), 4) if distances else 0.0,
@@ -329,6 +343,7 @@ def run_single_pair(pair, pipeline_modules):
         "raw_gallery_marks_summary": gallery_summary,
         "rejected_correspondences_summary": rejected_summary,
         "evidence_aggregate": evidence_aggregate,
+        "validation_gates": mark_payload.get("validation_gates", {}),
     }
 
 

@@ -656,6 +656,17 @@ def _run_mark_evidence_pipeline(
         }
 
     _mp_log("response_assembly_start")
+    
+    # Validation telemetry (Gate C)
+    gate_c_distinctive_types = {"dark_mole", "mole", "light_scar", "scar", "linear_scar", "structural_crater", "depression_scar"}
+    gate_c_types_found = [c.get("mark_type") for c in correspondences if c.get("mark_type") in gate_c_distinctive_types]
+    
+    validation_gates = {
+        "gate_c_distinctive_mark_present": len(gate_c_types_found) > 0,
+        "gate_c_distinctive_mark_types": gate_c_types_found,
+        "gate_c_note": "Validation telemetry only. Does not affect lr_marks or final decision."
+    }
+    
     return {
         "mode": "probe_only" if not has_gallery else "paired",
         "aligned_probe_b64": probe_pp["debug_b64"]["aligned_b64"] if probe_pp else None,
@@ -669,6 +680,7 @@ def _run_mark_evidence_pipeline(
         "mark_match_status": mark_match_status,
         "matcher_status": matcher_status,
         "mark_diagnostics": mark_diagnostics_payload,
+        "validation_gates": validation_gates,
         "lr_marks": finite_or_none(lr_marks) if has_gallery else None,
         "individual_mark_lrs": [finite_or_none(lr) for lr in individual_mark_lrs],
         "lr_calculation_trace": lr_calculation_trace,
