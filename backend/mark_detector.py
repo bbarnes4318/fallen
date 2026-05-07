@@ -380,7 +380,7 @@ def _run_channels(aligned_crop, gray, valid_mask, kernel, h, w, input_is_preproc
         if structural_source_bgr is not None:
             # Use pre-CLAHE aligned image to preserve broad shadow/depth
             sd_src = structural_source_bgr
-            sd_diag["structural_source_used"] = "aligned_bgr"
+            sd_diag["structural_source_used"] = "illumination_normalized_bgr"
         else:
             sd_src = aligned_crop
             sd_diag["structural_source_used"] = "mark_detector_input_bgr"
