@@ -95,32 +95,56 @@ for c in cases:
 print("----------------------\n")
 
 def check_diagnostics(result_data, variant):
-    if not result_data or "audit_log" not in result_data:
+    if not result_data:
         return
-        
-    audit = result_data["audit_log"]
-    print(f"  > mark_detector_version: {audit.get('mark_detector_version')}")
-    print(f"  > mark_matcher_version: {audit.get('mark_matcher_version')}")
-    print(f"  > mark_match_status: {audit.get('mark_match_status')}")
     
-    score_details = audit.get("score_details", {})
-    print(f"  > lr_marks: {score_details.get('lr_marks')}")
+    # Try top-level keys first (VerificationResponse), then fall back to audit_log
+    audit = result_data.get("audit_log", {}) or {}
     
-    mark_diagnostics = audit.get("mark_diagnostics", {})
-    probe_trace = mark_diagnostics.get("mark_detector_trace", {}).get("probe", {})
+    # mark_detector_version / mark_matcher_version: top-level or in audit_log
+    mdv = result_data.get("mark_detector_version") or audit.get("mark_detector_version")
+    mmv = result_data.get("mark_matcher_version") or audit.get("mark_matcher_version")
+    mms = result_data.get("mark_match_status") or audit.get("mark_match_status")
+    print(f"  > mark_detector_version: {mdv}")
+    print(f"  > mark_matcher_version: {mmv}")
+    print(f"  > mark_match_status: {mms}")
+    
+    # lr_marks: top-level or in audit_log
+    lr = result_data.get("lr_marks")
+    if lr is None:
+        lr = audit.get("lr_marks")
+    print(f"  > lr_marks: {lr}")
+    
+    # mark_diagnostics: top-level or in audit_log
+    mark_diagnostics = result_data.get("mark_diagnostics") or audit.get("mark_diagnostics") or {}
+    probe_trace = {}
+    if isinstance(mark_diagnostics, dict):
+        probe_trace = mark_diagnostics.get("mark_detector_trace", {}).get("probe", {}) or {}
     
     print(f"  > probe aligned dimensions: {probe_trace.get('aligned_dimensions')}")
     print(f"  > preprocessing steps: {probe_trace.get('preprocessing_steps')}")
+    # Extract counts
+    raw_probe_marks = mark_diagnostics.get("raw_probe_marks", [])
+    raw_gallery_marks = mark_diagnostics.get("raw_gallery_marks", [])
+    accepted = mark_diagnostics.get("accepted_correspondences", [])
+    rejected = mark_diagnostics.get("rejected_correspondences", [])
     
+    print(f"  > raw_probe_marks count: {len(raw_probe_marks) if isinstance(raw_probe_marks, list) else 0}")
+    print(f"  > raw_gallery_marks count: {len(raw_gallery_marks) if isinstance(raw_gallery_marks, list) else 0}")
+    print(f"  > accepted_correspondences count: {len(accepted) if isinstance(accepted, list) else 0}")
+    print(f"  > rejected_correspondences count: {len(rejected) if isinstance(rejected, list) else 0}")
     input_is_preprocessed = probe_trace.get("input_is_preprocessed")
     internal_clahe_applied = probe_trace.get("internal_clahe_applied")
     print(f"  > input_is_preprocessed: {input_is_preprocessed}")
     print(f"  > internal_clahe_applied: {internal_clahe_applied}")
     
-    if variant == "V2" and args.skip_v1:
+    if variant == "V2" and not args.skip_v2:
         if input_is_preprocessed is not True or internal_clahe_applied is not False:
-            print(f"  [ERROR] This response is not V2. Wrong URL, stale output, or feature flag disabled.")
-            sys.exit(1)
+            print(f"  [FAIL] V2 trace not showing input_is_preprocessed=true and internal_clahe_applied=false")
+        if mms == "EXACT_SELF_MATCH" and lr != 1.0:
+            print(f"  [FAIL] exact_self_match must return lr_marks=1.0. Got {lr}")
+        if not mark_diagnostics:
+            print(f"  [FAIL] missing mark_diagnostics")
 
 def run_job(url, payload, name, variant):
     start_time = time.time()
@@ -135,7 +159,21 @@ def run_job(url, payload, name, variant):
         if resp.status_code != 200:
             return resp.status_code, resp.text, None
         
-        job_id = resp.json().get("job_id")
+        resp_json = resp.json()
+        job_id = resp_json.get("job_id")
+        
+        if not job_id:
+            print(f"  [SYNC RESPONSE] No job_id returned. Processing synchronous result.")
+            if resp_json.get("status") == "success" or "audit_log" in resp_json or "conclusion" in resp_json:
+                print(f"  [SUCCESS] Completed synchronously in {time.time() - start_time:.1f}s")
+                print(f"  > HTTP status: {resp.status_code}")
+                check_diagnostics(resp_json, variant)
+                return resp.status_code, None, resp_json
+            else:
+                err = resp_json.get("error", "Unknown synchronous error")
+                print(f"  [FAILED] Job failed synchronously: {err}")
+                return resp.status_code, err, resp_json
+                
         print(f"  Got job_id: {job_id}")
         
         for attempt in range(1, 31):

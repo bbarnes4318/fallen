@@ -592,12 +592,15 @@ def detect_facial_marks(aligned_crop: np.ndarray, landmarks,
     skin_mask, roi_mode = _build_skin_mask(aligned_crop.shape, landmarks)
 
     occ_mask = np.zeros((h, w), dtype=np.uint8)
-    if landmarks is not None:
-        for lm in landmarks:
-            if getattr(lm, "visibility", 1.0) < 0.85:
-                px = int(lm.x * w)
-                py = int(lm.y * h)
-                cv2.circle(occ_mask, (px, py), int(min(h, w) * 0.05), 255, -1)
+    # Disabled occlusion masking: MediaPipe Face Mesh often reports visibility < 0.85 
+    # for valid landmarks on 2D static images, which causes massive 5% radius circles
+    # to blot out the entire valid_mask (resulting in 0 face pixels).
+    # if landmarks is not None:
+    #     for lm in landmarks:
+    #         if getattr(lm, "visibility", 1.0) < 0.85:
+    #             px = int(lm.x * w)
+    #             py = int(lm.y * h)
+    #             cv2.circle(occ_mask, (px, py), int(min(h, w) * 0.05), 255, -1)
 
     valid_mask = cv2.bitwise_and(skin_mask, cv2.bitwise_not(occ_mask))
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
