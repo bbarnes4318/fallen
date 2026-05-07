@@ -242,7 +242,7 @@ def main():
     # These are the exact same functions used by the /verify/fuse endpoint.
     # Importing here so dry-run works without the full backend environment.
     try:
-        from main import (
+        from pipeline_core import (
             fetch_image_from_url,
             apply_clahe,
             align_face_crop,
