@@ -1,4 +1,6 @@
 import os
+from typing import Optional, List, Dict, Tuple, Any
+import json
 os.environ["TF_USE_LEGACY_KERAS"] = "1"
 if os.path.exists("/app") or os.access("/", os.W_OK):
     os.environ["DEEPFACE_HOME"] = "/app"
