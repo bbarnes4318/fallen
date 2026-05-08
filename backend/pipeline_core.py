@@ -674,7 +674,7 @@ def _run_mark_evidence_pipeline(
         "gate_c_note": "Validation telemetry only. Does not affect lr_marks or final decision."
     }
     
-    return {
+    result = {
         "mode": "probe_only" if not has_gallery else "paired",
         "aligned_probe_b64": probe_pp["debug_b64"]["aligned_b64"] if probe_pp else None,
         "aligned_gallery_b64": gallery_pp["debug_b64"]["aligned_b64"] if gallery_pp else None,
@@ -699,6 +699,24 @@ def _run_mark_evidence_pipeline(
         "probe_preprocessing": _pp_summary(probe_pp),
         "gallery_preprocessing": _pp_summary(gallery_pp),
     }
+
+    # Forward strict V2 telemetry when active
+    if matcher_result and matcher_result.get("strict_mode"):
+        result["strict_mode"] = True
+        result["displayed_marks_count"] = matcher_result.get("displayed_marks_count", 0)
+        result["scoring_eligible_marks_count"] = matcher_result.get("scoring_eligible_marks_count", 0)
+        result["display_correspondences"] = matcher_result.get("display_correspondences", [])
+        result["scoring_correspondences"] = matcher_result.get("scoring_correspondences", [])
+        result["suppressed_correspondences"] = matcher_result.get("suppressed_correspondences", [])
+        result["generic_marks_suppressed_count"] = matcher_result.get("generic_marks_suppressed_count", 0)
+        result["distinctive_marks_preserved_count"] = matcher_result.get("distinctive_marks_preserved_count", 0)
+        result["lr_before_caps"] = matcher_result.get("lr_before_caps", 1.0)
+        result["lr_after_all_caps"] = matcher_result.get("lr_after_all_caps", 1.0)
+        result["caps_applied"] = matcher_result.get("caps_applied", [])
+        result["cluster_penalty_applied"] = matcher_result.get("cluster_penalty_applied", False)
+        result["cluster_penalty_factor"] = matcher_result.get("cluster_penalty_factor", 1.0)
+
+    return result
 
 
 import pickle
