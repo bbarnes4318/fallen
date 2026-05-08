@@ -282,6 +282,41 @@ export type MarkMatchStatus =
   | "LEGACY_MARK_PIPELINE_NEUTRALIZED"
   | "UNKNOWN";
 
+/** Constellation quality telemetry — research/telemetry only, does not affect scoring */
+export interface ConstellationTelemetry {
+  distinctive_node_count: number;
+  generic_node_count: number;
+  scoring_eligible_node_count: number;
+  region_diversity_count: number;
+  mark_type_diversity_count: number;
+  graph_edge_count: number;
+  average_pairwise_distance_error: number;
+  median_pairwise_distance_error: number;
+  max_pairwise_distance_error: number;
+  graph_edge_consistency_score: number;
+  cluster_domination_score: number;
+  constellation_quality_score: number;
+  constellation_quality_label: string;
+  telemetry_only: boolean;
+  does_not_affect_scoring: boolean;
+}
+
+/** Strict matcher telemetry returned with verification results */
+export interface StrictMatcherTelemetry {
+  strict_matcher_active: boolean;
+  strict_matcher_version?: string;
+  displayed_marks_count: number;
+  scoring_eligible_marks_count: number;
+  generic_marks_suppressed_count: number;
+  distinctive_marks_preserved_count: number;
+  lr_before_caps?: number | null;
+  lr_after_all_caps?: number | null;
+  caps_applied?: string[];
+  cluster_penalty_applied?: boolean;
+  cluster_penalty_factor?: number | null;
+  constellation_telemetry?: ConstellationTelemetry | null;
+}
+
 export interface VerificationResult {
   structural_score: number;
   soft_biometrics_score: number;
@@ -340,6 +375,14 @@ export interface VerificationResult {
   lr_face_model?: number | null;
   // v2.1 debug overlays (DEBUG_FORENSIC only)
   mark_debug_overlays?: MarkDebugOverlays | null;
+  // Strict matcher telemetry (v2.1+)
+  strict_mode?: boolean;
+  scoring_eligible_marks_count?: number;
+  generic_marks_suppressed_count?: number;
+  distinctive_marks_preserved_count?: number;
+  lr_after_all_caps?: number | null;
+  suppressed_correspondences?: Correspondence[];
+  strict_matcher_telemetry?: StrictMatcherTelemetry | null;
 }
 
 export interface ForensicPoint {

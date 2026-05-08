@@ -469,10 +469,7 @@ export default function Home() {
   };
 
   // --- DERIVED MARK REVIEW SIGNAL STATE ---
-  const markEvidenceDisplayRole = "review_support_only";
-  
   let markReviewSignal: "SUPPORTING" | "CONFLICTING" | "INCONCLUSIVE" | "NOT_DETECTED" = "NOT_DETECTED";
-  let evidenceConflictDetected = false;
   let humanReviewRecommended = false;
   let markDisplayWording = "Not Enough Evidence to Confirm Same Person.";
 
@@ -497,7 +494,6 @@ export default function Home() {
     } else if (!isStrongFace && hasStrongMarks) {
       markDisplayWording = "Conflicting Evidence — Human Review Needed.";
       markReviewSignal = "CONFLICTING";
-      evidenceConflictDetected = true;
       humanReviewRecommended = true;
     } else {
       markDisplayWording = "Not Enough Evidence to Confirm Same Person.";

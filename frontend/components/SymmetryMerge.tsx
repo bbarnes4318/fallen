@@ -7,7 +7,6 @@ import {
   Correspondence,
   MarkDebugCorrespondence,
   MarkDescriptor,
-  MarkDetectorTrace,
   MarkDiagnostics,
   ScoringTrace
 } from '@/types/verification';
@@ -892,24 +891,6 @@ export default function SymmetryMerge({
                   return `${count} usable mark${count > 1 ? 's' : ''} detected`;
                 };
 
-                // ── Helper: matcher description ──
-                const matcherDescription = () => {
-                  if (probeCount === 0 && galCount === 0) return 'Cannot compare marks — no usable marks on either image';
-                  if (galCount === 0) return 'Cannot compare marks because gallery has no usable marks';
-                  if (probeCount === 0) return 'Cannot compare marks because probe has no usable marks';
-                  if (matchCount === 0) return `0 visual mark correspondences from ${probeCount} probe candidate${probeCount > 1 ? 's' : ''} and ${galCount} gallery candidate${galCount > 1 ? 's' : ''}`;
-                  return `${matchCount} visual mark correspondence${matchCount > 1 ? 's' : ''} from ${probeCount} probe and ${galCount} gallery candidates`;
-                };
-
-                // ── Helper: LR explanation ──
-                const lrExplanation = () => {
-                  if (lrMarks == null || lrMarks === 1.0) {
-                    if (matchCount === 0) return 'Neutral mark evidence: no accepted mark correspondences';
-                    return 'Neutral — marks did not affect the result';
-                  }
-                  if (lrMarks > 1.0) return 'Mark evidence supports common source';
-                  return 'Mark evidence weakly supports different source';
-                };
 
                 // ── Per-channel badge data ──
                 const channels = [
@@ -940,7 +921,7 @@ export default function SymmetryMerge({
                       return { label: 'Moderate review support', color: 'text-emerald-400 border-emerald-800 bg-emerald-950/30' };
                     }
                     if (scoringEligibleCount >= 3 && lrAfterAllCaps > 25 && lrAfterAllCaps <= 100) {
-                      const regions = new Set(safeCorrespondences.filter((c: any) => c.face_region).map((c: any) => c.face_region));
+                      const regions = new Set(safeCorrespondences.filter((c: Correspondence) => c.face_region).map((c: Correspondence) => c.face_region));
                       if (regions.size >= 2) {
                         return { label: 'Stronger review support', color: 'text-emerald-300 border-emerald-700 bg-emerald-900/40 font-bold' };
                       }
