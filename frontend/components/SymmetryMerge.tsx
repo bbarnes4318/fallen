@@ -897,8 +897,8 @@ export default function SymmetryMerge({
                   if (probeCount === 0 && galCount === 0) return 'Cannot compare marks — no usable marks on either image';
                   if (galCount === 0) return 'Cannot compare marks because gallery has no usable marks';
                   if (probeCount === 0) return 'Cannot compare marks because probe has no usable marks';
-                  if (matchCount === 0) return `0 accepted correspondences from ${probeCount} probe candidate${probeCount > 1 ? 's' : ''} and ${galCount} gallery candidate${galCount > 1 ? 's' : ''}`;
-                  return `${matchCount} accepted correspondence${matchCount > 1 ? 's' : ''} from ${probeCount} probe and ${galCount} gallery candidates`;
+                  if (matchCount === 0) return `0 visual mark correspondences from ${probeCount} probe candidate${probeCount > 1 ? 's' : ''} and ${galCount} gallery candidate${galCount > 1 ? 's' : ''}`;
+                  return `${matchCount} visual mark correspondence${matchCount > 1 ? 's' : ''} from ${probeCount} probe and ${galCount} gallery candidates`;
                 };
 
                 // ── Helper: LR explanation ──
@@ -920,6 +920,36 @@ export default function SymmetryMerge({
                 ].filter(c => c.pCount > 0 || c.gCount > 0);
 
                 const safeCorrespondences = Array.isArray(results?.correspondences) ? results.correspondences : [];
+
+                const strictModeActive = results?.strict_mode === true;
+                const scoringEligibleCount = results?.scoring_eligible_marks_count ?? 0;
+                const genericMarksSuppressedCount = results?.generic_marks_suppressed_count ?? 0;
+                const distinctiveMarksPreservedCount = results?.distinctive_marks_preserved_count ?? 0;
+                const lrAfterAllCaps = results?.lr_after_all_caps ?? lrMarks;
+                const suppressedCorrespondencesCount = results?.suppressed_correspondences?.length ?? 0;
+
+                const getStrengthInfo = () => {
+                  if (matchCount === 0 || lrMarks === 1.0) {
+                    return { label: 'No useful mark evidence', color: 'text-gray-400 border-gray-700 bg-[#0a0a0a]' };
+                  }
+                  if (strictModeActive) {
+                    if (scoringEligibleCount === 0 && lrAfterAllCaps <= 1.5) {
+                      return { label: 'Weak / review only', color: 'text-yellow-400 border-yellow-800 bg-yellow-950/30' };
+                    }
+                    if (scoringEligibleCount >= 1 && scoringEligibleCount <= 2 && lrAfterAllCaps > 1 && lrAfterAllCaps <= 25) {
+                      return { label: 'Moderate review support', color: 'text-emerald-400 border-emerald-800 bg-emerald-950/30' };
+                    }
+                    if (scoringEligibleCount >= 3 && lrAfterAllCaps > 25 && lrAfterAllCaps <= 100) {
+                      const regions = new Set(safeCorrespondences.filter((c: any) => c.face_region).map((c: any) => c.face_region));
+                      if (regions.size >= 2) {
+                        return { label: 'Stronger review support', color: 'text-emerald-300 border-emerald-700 bg-emerald-900/40 font-bold' };
+                      }
+                      return { label: 'Moderate review support', color: 'text-emerald-400 border-emerald-800 bg-emerald-950/30' };
+                    }
+                  }
+                  return { label: 'Review support', color: 'text-emerald-400 border-emerald-800 bg-emerald-950/30' };
+                };
+                const strengthInfo = getStrengthInfo();
 
                 return (
                   <>
@@ -944,27 +974,45 @@ export default function SymmetryMerge({
                       </div>
                     </div>
 
-                    {/* ── D. Matcher Result ── */}
-                    <div className="px-2 py-1 border border-[#222] rounded bg-[#080808] font-mono text-[9px]">
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-500 tracking-widest text-[8px]">MATCHER</span>
-                        <span className="text-[7px] text-gray-600">{diag.matcher_status || '?'}</span>
-                      </div>
-                      <div className="text-gray-300 mt-0.5">{matcherDescription()}</div>
+                    {/* ── D. Matcher Result & Strength Label ── */}
+                    <div className={`px-2 py-1.5 border rounded font-mono text-[10px] flex justify-between items-center ${strengthInfo.color}`}>
+                      <span className="font-bold tracking-wider uppercase">{strengthInfo.label}</span>
+                      {strictModeActive && <span className="text-[8px] bg-emerald-900/50 text-emerald-300 px-1 py-0.5 rounded border border-emerald-700/50">STRICT MATCHER: ACTIVE</span>}
                     </div>
 
-                    {/* ── E. LR Marks Contribution ── */}
-                    <div className="px-2 py-1 border border-[#222] rounded bg-[#080808] font-mono text-[9px] flex justify-between items-center">
-                      <div>
-                        <span className="text-gray-500 tracking-widest text-[8px]">LR</span>
-                        <span className="text-gray-400 ml-2">MARKS</span>
-                        <span className="text-white font-bold ml-2">{lrMarks != null ? lrMarks.toFixed(4) : '—'}</span>
-                        <span className={`ml-2 text-[8px] ${lrMarks != null && lrMarks > 1.0 ? 'text-emerald-400' : 'text-gray-500'}`}>
-                          {lrMarks != null && lrMarks === 1.0 ? 'neutral' : (lrMarks != null && lrMarks > 1.0 ? 'supportive' : '')}
-                        </span>
+                    {/* ── E. Detailed Breakdown ── */}
+                    <div className="px-2 py-1.5 border border-[#222] rounded bg-[#080808] font-mono text-[9px] flex flex-col gap-1.5">
+                      <div className="flex justify-between items-center border-b border-[#222] pb-1 mb-0.5">
+                        <span className="text-gray-500 tracking-widest text-[8px]">EVIDENCE BREAKDOWN</span>
+                        <span className="text-[7px] text-gray-600">{diag.matcher_status || '?'}</span>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-gray-300">
+                        <div className="flex justify-between"><span>Raw Probe Candidates:</span> <span>{probeCount}</span></div>
+                        <div className="flex justify-between"><span>Raw Gallery Candidates:</span> <span>{galCount}</span></div>
+                        <div className="flex justify-between text-emerald-400/80"><span>Visual Correspondences:</span> <span>{matchCount}</span></div>
+                        {strictModeActive ? (
+                          <>
+                            <div className="flex justify-between text-emerald-300"><span>Scoring-Eligible Marks:</span> <span>{scoringEligibleCount}</span></div>
+                            <div className="flex justify-between text-yellow-500/70"><span>Suppressed Correspondences:</span> <span>{suppressedCorrespondencesCount}</span></div>
+                            <div className="flex justify-between text-yellow-500/70"><span>Generic Marks Suppressed:</span> <span>{genericMarksSuppressedCount}</span></div>
+                            <div className="flex justify-between text-emerald-300"><span>Distinctive Marks Preserved:</span> <span>{distinctiveMarksPreservedCount}</span></div>
+                            <div className="flex justify-between text-emerald-400 font-bold"><span>Mark LR (After Caps):</span> <span>{lrAfterAllCaps != null ? lrAfterAllCaps.toFixed(4) : '—'}</span></div>
+                          </>
+                        ) : (
+                          <div className="flex justify-between text-white font-bold"><span>Mark LR:</span> <span>{lrMarks != null ? lrMarks.toFixed(4) : '—'}</span></div>
+                        )}
+                      </div>
+                      
+                      <div className="text-[8px] text-gray-400 mt-1 pt-1 border-t border-[#222] italic">
+                        These are possible mark pairings found for visual review. They are not automatically proof of identity.
                       </div>
                     </div>
-                    <div className="px-2 text-[8px] font-mono text-gray-600 -mt-1">{lrExplanation()}</div>
+
+                    {/* ── F. Explanation ── */}
+                    <div className="px-2 py-1.5 text-[8px] font-mono text-gray-500 bg-[#050505] border border-[#1a1a1a] rounded leading-relaxed mt-1 mb-1">
+                      More marks does not always mean stronger evidence. Many marks may be freckles, pores, texture, shadows, or camera artifacts. The system gives more weight to stable distinctive marks such as moles, scars, and structural craters, especially when they appear in the same anatomical region with similar size, shape, and orientation.
+                    </div>
 
                     {/* ── F. Raw Detector Channel Details ── */}
                     {channels.length > 0 && (
