@@ -906,7 +906,11 @@ export default function SymmetryMerge({
                 const scoringEligibleCount = results?.scoring_eligible_marks_count ?? 0;
                 const genericMarksSuppressedCount = results?.generic_marks_suppressed_count ?? 0;
                 const distinctiveMarksPreservedCount = results?.distinctive_marks_preserved_count ?? 0;
-                const lrAfterAllCaps = results?.lr_after_all_caps ?? lrMarks;
+                const lrAfterAllCaps: number = typeof results?.lr_after_all_caps === 'number' && Number.isFinite(results.lr_after_all_caps)
+                  ? results.lr_after_all_caps
+                  : typeof lrMarks === 'number' && Number.isFinite(lrMarks)
+                  ? lrMarks
+                  : 1.0;
                 const suppressedCorrespondencesCount = results?.suppressed_correspondences?.length ?? 0;
 
                 const getStrengthInfo = () => {
@@ -978,7 +982,7 @@ export default function SymmetryMerge({
                             <div className="flex justify-between text-yellow-500/70"><span>Suppressed Correspondences:</span> <span>{suppressedCorrespondencesCount}</span></div>
                             <div className="flex justify-between text-yellow-500/70"><span>Generic Marks Suppressed:</span> <span>{genericMarksSuppressedCount}</span></div>
                             <div className="flex justify-between text-emerald-300"><span>Distinctive Marks Preserved:</span> <span>{distinctiveMarksPreservedCount}</span></div>
-                            <div className="flex justify-between text-emerald-400 font-bold"><span>Mark LR (After Caps):</span> <span>{lrAfterAllCaps != null ? lrAfterAllCaps.toFixed(4) : '—'}</span></div>
+                            <div className="flex justify-between text-emerald-400 font-bold"><span>Mark LR (After Caps):</span> <span>{lrAfterAllCaps.toFixed(4)}</span></div>
                           </>
                         ) : (
                           <div className="flex justify-between text-white font-bold"><span>Mark LR:</span> <span>{lrMarks != null ? lrMarks.toFixed(4) : '—'}</span></div>
