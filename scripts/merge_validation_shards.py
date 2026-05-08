@@ -16,8 +16,14 @@ def _write_csv(path, rows):
             f.write("(no results)\n")
         return
     import csv
+    
+    # Collect all possible keys
+    all_keys = set()
+    for r in rows:
+        all_keys.update(r.keys())
+        
     with open(path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+        writer = csv.DictWriter(f, fieldnames=list(all_keys))
         writer.writeheader()
         writer.writerows(rows)
 

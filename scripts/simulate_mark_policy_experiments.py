@@ -11,11 +11,16 @@ def safe_float(v, default=0.0):
         return default
 
 def simulate():
-    artifact_path = 'dl_artifact/validation_results.jsonl'
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--artifacts-dir", default="dl_artifact", help="Directory containing validation_results.jsonl")
+    args = parser.parse_args()
+    
+    artifact_path = os.path.join(args.artifacts_dir, 'validation_results.jsonl')
     
     if not os.path.exists(artifact_path):
         import glob
-        matches = glob.glob('dl_artifact/validation-results-*/validation_results.jsonl')
+        matches = glob.glob(f'{args.artifacts_dir}/validation-results-*/validation_results.jsonl')
         if matches:
             matches.sort(key=os.path.getmtime, reverse=True)
             artifact_path = matches[0]
@@ -25,11 +30,14 @@ def simulate():
         return
         
     pairs = []
+    error_count = 0
     with open(artifact_path, 'r', encoding='utf-8') as f:
         for line in f:
             row = json.loads(line)
             if not row.get('error'):
                 pairs.append(row)
+            else:
+                error_count += 1
 
     same_person_corrs = []
     diff_person_corrs = []
@@ -62,7 +70,7 @@ def simulate():
                 gate_c_diff_count += 1
 
     print(f"Total Evaluated: {len(pairs)}")
-    print(f"FACE_NOT_DETECTED: {100 - len(pairs)}")
+    print(f"FACE_NOT_DETECTED: {error_count}")
     print(f"Avg Corrs (Same): {avg(same_person_corrs):.2f}")
     print(f"Avg Corrs (Diff): {avg(diff_person_corrs):.2f}")
     print(f"Avg Distinctive Marks (Same): {avg(same_person_dist_marks):.2f}")
