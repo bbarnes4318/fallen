@@ -212,7 +212,7 @@ export default function Home() {
   const [results, setResults] = useState<VerificationResult | null>(null);
   const [lockedJob, setLockedJob] = useState<{job_id: string, preview: Record<string, unknown>, resultBaseUrl?: string} | null>(null);
   const [useV2Marks, setUseV2Marks] = useState(false);
-  const V2_MARKS_BASE_URL = process.env.NEXT_PUBLIC_V2_ISOLATED_URL || "https://facial-backend-v2-marks-196207148120.us-east4.run.app";
+  const V2_MARKS_BASE_URL = process.env.NEXT_PUBLIC_V2_ISOLATED_URL || "https://facial-backend-v2-strict-marks-196207148120.us-east4.run.app";
   const [isXrayMode, setIsXrayMode] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [auditExpanded, setAuditExpanded] = useState(false);
@@ -1272,7 +1272,7 @@ export default function Home() {
                 <button
                   onClick={async () => {
                     try {
-                      const res = await fetch(`${getApiUrl()}/verify/result/${lockedJob.job_id}?bypass_code=${bypassCode}`);
+                      const res = await fetch(`${lockedJob.resultBaseUrl || getApiUrl()}/verify/result/${lockedJob.job_id}?bypass_code=${bypassCode}`);
                       if (!res.ok) throw new Error('Bypass failed');
                       const data = await res.json();
                       setResults(data);
