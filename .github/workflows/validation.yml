@@ -50,6 +50,11 @@ on:
         description: 'Number of parallel validation shards'
         required: false
         default: '1'
+      strict_mark_matcher:
+        description: 'Enable experimental strict V2 mark matcher'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   validate:
@@ -163,6 +168,7 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           OPERATOR_PASSWORD: ${{ secrets.OPERATOR_PASSWORD }}
           USE_MARK_PIPELINE_V2: "true"
+          USE_STRICT_MARK_MATCHER_V2: ${{ inputs.strict_mark_matcher && 'true' || 'false' }}
         run: |
           python scripts/validate_full_pipeline.py \
             --manifest validation/results/${{ steps.run_id.outputs.id }}/validation_pairs_lfw_baseline.csv \
@@ -193,6 +199,7 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           OPERATOR_PASSWORD: ${{ secrets.OPERATOR_PASSWORD }}
           USE_MARK_PIPELINE_V2: "true"
+          USE_STRICT_MARK_MATCHER_V2: ${{ inputs.strict_mark_matcher && 'true' || 'false' }}
         run: |
           echo "WARNING: Full pipeline validation. This will process real images."
           python scripts/validate_full_pipeline.py \
@@ -303,6 +310,7 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           OPERATOR_PASSWORD: ${{ secrets.OPERATOR_PASSWORD }}
           USE_MARK_PIPELINE_V2: "true"
+          USE_STRICT_MARK_MATCHER_V2: ${{ inputs.strict_mark_matcher && 'true' || 'false' }}
         run: |
           echo "WARNING: Full pipeline validation sharded. This will process real images."
           python scripts/validate_full_pipeline.py \
@@ -356,6 +364,13 @@ jobs:
           python scripts/evaluate_mark_lr_correlation.py \
             --input validation/results/${{ steps.run_id.outputs.id }}/merged/validation_results.jsonl \
             --output-dir validation/results/${{ steps.run_id.outputs.id }}/merged/mark_analysis
+
+      - name: Evaluate Strict Mark Matcher
+        if: inputs.strict_mark_matcher
+        run: |
+          python scripts/evaluate_strict_mark_matcher.py \
+            --input validation/results/${{ steps.run_id.outputs.id }}/merged/validation_results.jsonl \
+            --output-dir validation/results/${{ steps.run_id.outputs.id }}/merged/strict_mark_analysis
 
       - name: Upload Final Merged Artifact
         uses: actions/upload-artifact@v4

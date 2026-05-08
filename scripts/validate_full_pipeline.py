@@ -346,6 +346,22 @@ def run_single_pair(pair, pipeline_modules):
         "validation_gates": mark_payload.get("validation_gates", {}),
     }
 
+    # ── Strict V2 telemetry (only when USE_STRICT_MARK_MATCHER_V2=true) ──
+    if mark_payload.get("strict_mode"):
+        result["strict_mark_data"] = {
+            "display_correspondences_count": mark_payload.get("displayed_marks_count", 0),
+            "scoring_correspondences_count": mark_payload.get("scoring_eligible_marks_count", 0),
+            "suppressed_count": len(mark_payload.get("suppressed_correspondences", [])),
+            "generic_suppressed": mark_payload.get("generic_marks_suppressed_count", 0),
+            "distinctive_preserved": mark_payload.get("distinctive_marks_preserved_count", 0),
+            "lr_before_caps": finite_or_none(mark_payload.get("lr_before_caps")),
+            "lr_after_all_caps": finite_or_none(mark_payload.get("lr_after_all_caps")),
+            "caps_applied": mark_payload.get("caps_applied", []),
+            "cluster_penalty_applied": mark_payload.get("cluster_penalty_applied", False),
+        }
+
+    return result
+
 
 def main():
     args = parse_args()

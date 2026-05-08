@@ -569,10 +569,17 @@ def _run_mark_evidence_pipeline(
                 "matcher_version": MARK_MATCHER_V2_VERSION,
             }
         else:
-            matcher_result = match_marks_v2(
-                valid_gallery_marks, valid_probe_marks,
-                calibration=TIER4_CALIBRATION
-            )
+            if os.getenv("USE_STRICT_MARK_MATCHER_V2", "").lower() == "true":
+                from mark_matcher_strict import match_facial_marks_strict
+                matcher_result = match_facial_marks_strict(
+                    valid_gallery_marks, valid_probe_marks,
+                    calibration=TIER4_CALIBRATION
+                )
+            else:
+                matcher_result = match_marks_v2(
+                    valid_gallery_marks, valid_probe_marks,
+                    calibration=TIER4_CALIBRATION
+                )
             matcher_status = matcher_result["matcher_status"]
             calibration_status = matcher_result.get("calibration_status", "UNKNOWN")
             lr_marks = matcher_result["lr_marks"]
