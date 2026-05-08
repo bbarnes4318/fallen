@@ -226,67 +226,105 @@ class TestMeshConfidence(unittest.TestCase):
 
 
 class TestBarycentricDistance(unittest.TestCase):
-    """Test compute_barycentric_distance."""
+    """Test compute_barycentric_distance — triangle-aware."""
 
-    def test_same_point_zero_distance(self):
-        anat = {
-            "barycentric_u": 0.3, "barycentric_v": 0.3, "barycentric_w": 0.4,
+    def _make_anat(self, u, v, w, tri_id, anchors, conf=0.9):
+        return {
+            "barycentric_u": u, "barycentric_v": v, "barycentric_w": w,
             "barycentric_mode": "2d_mesh_approximation",
-            "mesh_confidence": 0.9,
+            "mesh_confidence": conf,
+            "mesh_triangle_id": tri_id,
+            "nearest_landmark_indices": anchors,
         }
-        dist, available = mark_anatomy.compute_barycentric_distance(anat, anat)
+
+    def test_same_triangle_zero_distance(self):
+        anat = self._make_anat(0.3, 0.3, 0.4, "tri_10_20_30", [10, 20, 30])
+        dist, available, mode, telem = mark_anatomy.compute_barycentric_distance(anat, anat)
         self.assertTrue(available)
         self.assertAlmostEqual(dist, 0.0, places=6)
+        self.assertEqual(mode, "same_triangle")
+        self.assertTrue(telem["barycentric_triangle_match"])
+        self.assertTrue(telem["barycentric_distance_available"])
 
-    def test_different_points(self):
-        anat_a = {
-            "barycentric_u": 0.3, "barycentric_v": 0.3, "barycentric_w": 0.4,
-            "barycentric_mode": "2d_mesh_approximation",
-            "mesh_confidence": 0.9,
-        }
-        anat_b = {
-            "barycentric_u": 0.5, "barycentric_v": 0.3, "barycentric_w": 0.2,
-            "barycentric_mode": "2d_mesh_approximation",
-            "mesh_confidence": 0.9,
-        }
-        dist, available = mark_anatomy.compute_barycentric_distance(anat_a, anat_b)
+    def test_same_triangle_nonzero_distance(self):
+        a = self._make_anat(0.3, 0.3, 0.4, "tri_10_20_30", [10, 20, 30])
+        b = self._make_anat(0.5, 0.3, 0.2, "tri_10_20_30", [10, 20, 30])
+        dist, available, mode, telem = mark_anatomy.compute_barycentric_distance(a, b)
         self.assertTrue(available)
         self.assertGreater(dist, 0.0)
+        self.assertEqual(mode, "same_triangle")
 
-    def test_fallback_mode_not_available(self):
-        anat_a = {
-            "barycentric_u": 0.3, "barycentric_v": 0.3, "barycentric_w": 0.4,
-            "barycentric_mode": "2d_mesh_approximation",
-            "mesh_confidence": 0.9,
-        }
-        anat_b = {
-            "barycentric_u": None, "barycentric_v": None, "barycentric_w": None,
-            "barycentric_mode": "nearest_landmark_fallback",
-            "mesh_confidence": 0.0,
-        }
-        dist, available = mark_anatomy.compute_barycentric_distance(anat_a, anat_b)
+    def test_same_anchor_set_different_order(self):
+        """Same landmarks in different order → aligned comparison."""
+        a = self._make_anat(0.3, 0.4, 0.3, "tri_10_20_30", [10, 20, 30])
+        b = self._make_anat(0.4, 0.3, 0.3, "tri_20_10_30", [20, 10, 30])
+        dist, available, mode, telem = mark_anatomy.compute_barycentric_distance(a, b)
+        self.assertTrue(available)
+        self.assertEqual(mode, "same_anchor_set")
+        # After alignment to sorted [10,20,30], coords should match → distance ≈ 0
+        self.assertAlmostEqual(dist, 0.0, places=6)
+
+    def test_same_anchor_set_real_distance(self):
+        """Same anchors, different order, genuinely different coords."""
+        # anchor [10,20,30] sorted → [10,20,30]
+        # a: anchors=[10,20,30], bary=(0.5, 0.3, 0.2) → aligned to [10,20,30] = (0.5, 0.3, 0.2)
+        # b: anchors=[30,10,20], bary=(0.1, 0.6, 0.3) → aligned: idx30→0.1, idx10→0.6, idx20→0.3 → (0.6, 0.3, 0.1)
+        a = self._make_anat(0.5, 0.3, 0.2, "tri_10_20_30", [10, 20, 30])
+        b = self._make_anat(0.1, 0.6, 0.3, "tri_30_10_20", [30, 10, 20])
+        dist, available, mode, telem = mark_anatomy.compute_barycentric_distance(a, b)
+        self.assertTrue(available)
+        self.assertEqual(mode, "same_anchor_set")
+        # Expected: sqrt((0.5-0.6)^2 + (0.3-0.3)^2 + (0.2-0.1)^2) = sqrt(0.01+0+0.01) = sqrt(0.02)
+        expected = math.sqrt(0.02)
+        self.assertAlmostEqual(dist, expected, places=6)
+
+    def test_different_triangle_not_available(self):
+        """Different triangles → distance NOT available."""
+        a = self._make_anat(0.3, 0.3, 0.4, "tri_10_20_30", [10, 20, 30])
+        b = self._make_anat(0.3, 0.3, 0.4, "tri_40_50_60", [40, 50, 60])
+        dist, available, mode, telem = mark_anatomy.compute_barycentric_distance(a, b)
         self.assertFalse(available)
         self.assertIsNone(dist)
+        self.assertEqual(mode, "different_triangle_fallback")
+        self.assertFalse(telem["barycentric_distance_available"])
 
-    def test_low_confidence_not_available(self):
-        anat_a = {
-            "barycentric_u": 0.3, "barycentric_v": 0.3, "barycentric_w": 0.4,
-            "barycentric_mode": "2d_mesh_approximation",
-            "mesh_confidence": 0.5,  # Below 0.70 threshold
-        }
-        anat_b = {
-            "barycentric_u": 0.5, "barycentric_v": 0.3, "barycentric_w": 0.2,
-            "barycentric_mode": "2d_mesh_approximation",
-            "mesh_confidence": 0.9,
-        }
-        dist, available = mark_anatomy.compute_barycentric_distance(anat_a, anat_b)
+    def test_different_triangle_anchor_overlap_count(self):
+        """Partial overlap still counts as different triangle."""
+        a = self._make_anat(0.3, 0.3, 0.4, "tri_10_20_30", [10, 20, 30])
+        b = self._make_anat(0.3, 0.3, 0.4, "tri_10_20_99", [10, 20, 99])
+        dist, available, mode, telem = mark_anatomy.compute_barycentric_distance(a, b)
         self.assertFalse(available)
-        self.assertIsNone(dist)
+        self.assertEqual(mode, "different_triangle_fallback")
+        self.assertEqual(telem["barycentric_anchor_overlap_count"], 2)
 
-    def test_none_inputs_not_available(self):
-        dist, available = mark_anatomy.compute_barycentric_distance(None, None)
+    def test_fallback_mode_unavailable(self):
+        a = self._make_anat(0.3, 0.3, 0.4, "tri_10_20_30", [10, 20, 30])
+        b = {"barycentric_u": None, "barycentric_v": None, "barycentric_w": None,
+             "barycentric_mode": "nearest_landmark_fallback", "mesh_confidence": 0.0}
+        dist, available, mode, telem = mark_anatomy.compute_barycentric_distance(a, b)
         self.assertFalse(available)
-        self.assertIsNone(dist)
+        self.assertEqual(mode, "unavailable")
+
+    def test_low_confidence_unavailable(self):
+        a = self._make_anat(0.3, 0.3, 0.4, "tri_10_20_30", [10, 20, 30], conf=0.5)
+        b = self._make_anat(0.5, 0.3, 0.2, "tri_10_20_30", [10, 20, 30])
+        dist, available, mode, telem = mark_anatomy.compute_barycentric_distance(a, b)
+        self.assertFalse(available)
+        self.assertEqual(mode, "unavailable")
+
+    def test_none_inputs_unavailable(self):
+        dist, available, mode, telem = mark_anatomy.compute_barycentric_distance(None, None)
+        self.assertFalse(available)
+        self.assertEqual(mode, "unavailable")
+
+    def test_telemetry_has_required_fields(self):
+        a = self._make_anat(0.3, 0.3, 0.4, "tri_10_20_30", [10, 20, 30])
+        b = self._make_anat(0.5, 0.3, 0.2, "tri_40_50_60", [40, 50, 60])
+        _, _, _, telem = mark_anatomy.compute_barycentric_distance(a, b)
+        for key in ["barycentric_comparison_mode", "barycentric_triangle_match",
+                     "barycentric_anchor_overlap_count", "barycentric_distance_available",
+                     "mesh_triangle_gallery", "mesh_triangle_probe"]:
+            self.assertIn(key, telem, f"Missing telemetry key: {key}")
 
 
 class TestConstellationTelemetry(unittest.TestCase):
@@ -389,19 +427,21 @@ class TestSafetyInvariants(unittest.TestCase):
 
         # Case 1: No anatomical data — cost = 0
         mark_no_anat = {"mark_type": "dark_mole"}
-        cost, dist, avail = _barycentric_cost(mark_no_anat, mark_no_anat)
+        cost, dist, avail, mode, telem = _barycentric_cost(mark_no_anat, mark_no_anat)
         self.assertEqual(cost, 0.0)
         self.assertFalse(avail)
 
-        # Case 2: Valid anatomical data — cost >= 0
+        # Case 2: Valid anatomical data with same triangle — cost >= 0
         mark_with_anat = {
             "anatomical_position": {
                 "barycentric_u": 0.3, "barycentric_v": 0.3, "barycentric_w": 0.4,
                 "barycentric_mode": "2d_mesh_approximation",
                 "mesh_confidence": 0.9,
+                "mesh_triangle_id": "tri_10_20_30",
+                "nearest_landmark_indices": [10, 20, 30],
             }
         }
-        cost, dist, avail = _barycentric_cost(mark_with_anat, mark_with_anat)
+        cost, dist, avail, mode, telem = _barycentric_cost(mark_with_anat, mark_with_anat)
         self.assertGreaterEqual(cost, 0.0)
 
     def test_invalid_bary_does_not_affect_cost(self):
@@ -415,7 +455,7 @@ class TestSafetyInvariants(unittest.TestCase):
                 "mesh_confidence": 0.3,  # Below threshold
             }
         }
-        cost, dist, avail = _barycentric_cost(mark_low_conf, mark_low_conf)
+        cost, dist, avail, mode, telem = _barycentric_cost(mark_low_conf, mark_low_conf)
         self.assertEqual(cost, 0.0)
         self.assertFalse(avail)
 
@@ -428,9 +468,36 @@ class TestSafetyInvariants(unittest.TestCase):
                 "mesh_confidence": 0.0,
             }
         }
-        cost, dist, avail = _barycentric_cost(mark_fallback, mark_fallback)
+        cost, dist, avail, mode, telem = _barycentric_cost(mark_fallback, mark_fallback)
         self.assertEqual(cost, 0.0)
         self.assertFalse(avail)
+
+    def test_different_triangle_falls_back_to_zero_cost(self):
+        """Different triangles must produce zero bary cost — falls back to spatial matcher."""
+        from mark_matcher_strict import _barycentric_cost
+        mark_a = {
+            "anatomical_position": {
+                "barycentric_u": 0.3, "barycentric_v": 0.3, "barycentric_w": 0.4,
+                "barycentric_mode": "2d_mesh_approximation",
+                "mesh_confidence": 0.9,
+                "mesh_triangle_id": "tri_10_20_30",
+                "nearest_landmark_indices": [10, 20, 30],
+            }
+        }
+        mark_b = {
+            "anatomical_position": {
+                "barycentric_u": 0.5, "barycentric_v": 0.3, "barycentric_w": 0.2,
+                "barycentric_mode": "2d_mesh_approximation",
+                "mesh_confidence": 0.9,
+                "mesh_triangle_id": "tri_40_50_60",
+                "nearest_landmark_indices": [40, 50, 60],
+            }
+        }
+        cost, dist, avail, mode, telem = _barycentric_cost(mark_a, mark_b)
+        self.assertEqual(cost, 0.0)
+        self.assertFalse(avail)
+        self.assertIsNone(dist)
+        self.assertEqual(mode, "different_triangle_fallback")
 
     def test_constellation_telemetry_does_not_alter_lr(self):
         """Constellation telemetry must not change lr_marks."""

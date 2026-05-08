@@ -365,12 +365,25 @@ def run_single_pair(pair, pipeline_modules):
         if constellation_telem is not None:
             result["constellation_telemetry"] = constellation_telem
 
-            # Attach per-correspondence barycentric distance stats
+            # Collect per-correspondence barycentric comparison mode stats
             bary_dists = []
+            comparison_mode_counts = {
+                "same_triangle": 0,
+                "same_anchor_set": 0,
+                "different_triangle_fallback": 0,
+                "unavailable": 0,
+            }
             for c in mark_payload.get("scoring_correspondences", []):
-                bd = c.get("barycentric_distance")
-                if bd is not None:
-                    bary_dists.append(bd)
+                mode = c.get("barycentric_comparison_mode", "unavailable")
+                if mode in comparison_mode_counts:
+                    comparison_mode_counts[mode] += 1
+                # Only include valid comparisons (same_triangle or same_anchor_set)
+                if c.get("barycentric_distance_available", False):
+                    bd = c.get("barycentric_distance")
+                    if bd is not None:
+                        bary_dists.append(bd)
+
+            result["strict_mark_data"]["barycentric_comparison_mode_counts"] = comparison_mode_counts
             if bary_dists:
                 result["strict_mark_data"]["barycentric_distance_count"] = len(bary_dists)
                 result["strict_mark_data"]["avg_barycentric_distance"] = round(

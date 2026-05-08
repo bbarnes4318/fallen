@@ -142,43 +142,54 @@ def _orientation_penalty(mark_g: dict, mark_p: dict) -> float:
 def _barycentric_cost(mark_g: dict, mark_p: dict) -> tuple:
     """Compute barycentric distance cost contribution for a mark pair.
 
-    Returns (bary_cost, bary_distance, bary_available).
+    Returns (bary_cost, bary_distance, bary_available, bary_comparison_mode, bary_telemetry).
     bary_cost is the cost contribution (>= 0). It can ONLY increase total cost.
-    bary_available is True only if both marks have valid 2D mesh approximation
-    with confidence >= _BARY_MIN_CONFIDENCE.
+    bary_available is True only when the comparison is mathematically valid
+    (same triangle or same anchor set).
+    bary_comparison_mode: "same_triangle", "same_anchor_set", "different_triangle_fallback", "unavailable".
+    bary_telemetry: dict with diagnostic fields.
     """
+    from mark_anatomy import compute_barycentric_distance, BARY_COMPARE_UNAVAILABLE
+
     anat_g = mark_g.get("anatomical_position")
     anat_p = mark_p.get("anatomical_position")
 
+    empty_telemetry = {
+        "barycentric_comparison_mode": "unavailable",
+        "barycentric_triangle_match": False,
+        "barycentric_anchor_overlap_count": 0,
+        "barycentric_distance_available": False,
+        "mesh_triangle_gallery": None,
+        "mesh_triangle_probe": None,
+    }
+
     if anat_g is None or anat_p is None:
-        return 0.0, None, False
+        return 0.0, None, False, "unavailable", empty_telemetry
 
     mode_g = anat_g.get("barycentric_mode")
     mode_p = anat_p.get("barycentric_mode")
 
     # Must be 2D mesh approximation, not fallback
     if mode_g != "2d_mesh_approximation" or mode_p != "2d_mesh_approximation":
-        return 0.0, None, False
+        return 0.0, None, False, "unavailable", empty_telemetry
 
     conf_g = anat_g.get("mesh_confidence", 0.0)
     conf_p = anat_p.get("mesh_confidence", 0.0)
 
     if conf_g < _BARY_MIN_CONFIDENCE or conf_p < _BARY_MIN_CONFIDENCE:
-        return 0.0, None, False
+        return 0.0, None, False, "unavailable", empty_telemetry
 
-    ua = anat_g.get("barycentric_u")
-    va = anat_g.get("barycentric_v")
-    wa = anat_g.get("barycentric_w")
-    ub = anat_p.get("barycentric_u")
-    vb = anat_p.get("barycentric_v")
-    wb = anat_p.get("barycentric_w")
+    # Delegate to triangle-aware distance computation
+    bary_dist, available, comparison_mode, telemetry = compute_barycentric_distance(anat_g, anat_p)
 
-    if any(x is None for x in [ua, va, wa, ub, vb, wb]):
-        return 0.0, None, False
+    if not available or bary_dist is None:
+        # Different triangle or unavailable — cost contribution is 0
+        # Falls back to existing strict spatial distance for matching
+        return 0.0, None, False, comparison_mode, telemetry
 
-    bary_dist = math.sqrt((ua - ub) ** 2 + (va - vb) ** 2 + (wa - wb) ** 2)
+    # Only apply cost when comparison is valid (same_triangle or same_anchor_set)
     bary_cost = bary_dist * _BARY_WEIGHT
-    return bary_cost, bary_dist, True
+    return bary_cost, bary_dist, True, comparison_mode, telemetry
 
 
 def _compute_cost_strict(mark_g: dict, mark_p: dict, pos_g: tuple, pos_p: tuple) -> tuple:
@@ -241,8 +252,8 @@ def _compute_cost_strict(mark_g: dict, mark_p: dict, pos_g: tuple, pos_p: tuple)
 
     # ── Phase 1: Barycentric cost contribution (additive, stricter-only) ──
     # This can ONLY INCREASE cost, never decrease it.
-    # If unavailable, bary_cost is 0.0 — existing path unchanged.
-    bary_cost, bary_dist, bary_available = _barycentric_cost(mark_g, mark_p)
+    # If unavailable or different triangle, bary_cost is 0.0 — existing path unchanged.
+    bary_cost, bary_dist, bary_available, bary_mode, bary_telemetry = _barycentric_cost(mark_g, mark_p)
     cost += bary_cost  # Always >= 0, so cost can only go up
 
     if cost > max_cost:
@@ -265,10 +276,16 @@ def _compute_cost_strict(mark_g: dict, mark_p: dict, pos_g: tuple, pos_p: tuple)
         "mark_class_gallery": class_g,
         "mark_class_probe": class_p,
         "is_generic_pair": is_generic_pair,
-        # Phase 1 barycentric telemetry
+        # Phase 1 barycentric telemetry (triangle-aware)
         "barycentric_distance": bary_dist,
         "barycentric_available": bary_available,
         "barycentric_cost_contribution": bary_cost,
+        "barycentric_comparison_mode": bary_telemetry.get("barycentric_comparison_mode", "unavailable"),
+        "barycentric_triangle_match": bary_telemetry.get("barycentric_triangle_match", False),
+        "barycentric_anchor_overlap_count": bary_telemetry.get("barycentric_anchor_overlap_count", 0),
+        "barycentric_distance_available": bary_telemetry.get("barycentric_distance_available", False),
+        "mesh_triangle_gallery": bary_telemetry.get("mesh_triangle_gallery"),
+        "mesh_triangle_probe": bary_telemetry.get("mesh_triangle_probe"),
     }
     return cost, metadata
 
@@ -476,10 +493,16 @@ def match_facial_marks_strict(gallery_marks: list, probe_marks: list,
                 "lr_before_cap": 1.0,
                 "lr_after_cap": 1.0,
                 "lr": 1.0,
-                # Phase 1 barycentric telemetry per correspondence
+                # Phase 1 barycentric telemetry per correspondence (triangle-aware)
                 "barycentric_distance": meta.get("barycentric_distance"),
                 "barycentric_available": meta.get("barycentric_available", False),
                 "barycentric_cost_contribution": meta.get("barycentric_cost_contribution", 0.0),
+                "barycentric_comparison_mode": meta.get("barycentric_comparison_mode", "unavailable"),
+                "barycentric_triangle_match": meta.get("barycentric_triangle_match", False),
+                "barycentric_anchor_overlap_count": meta.get("barycentric_anchor_overlap_count", 0),
+                "barycentric_distance_available": meta.get("barycentric_distance_available", False),
+                "mesh_triangle_gallery": meta.get("mesh_triangle_gallery"),
+                "mesh_triangle_probe": meta.get("mesh_triangle_probe"),
             }
             all_correspondences.append(entry)
             matched_gal.add(int(r))

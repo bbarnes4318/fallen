@@ -100,6 +100,13 @@ def main():
     bary_available_count = 0
     bary_total_count = 0
     constellation_labels = {"NONE": 0, "WEAK": 0, "MODERATE": 0, "STRONG_REVIEW_SUPPORT": 0}
+    # Comparison mode counters
+    total_comparison_modes = {
+        "same_triangle": 0,
+        "same_anchor_set": 0,
+        "different_triangle_fallback": 0,
+        "unavailable": 0,
+    }
 
     for r in results:
         if r.get("error") == "FACE_NOT_DETECTED":
@@ -161,6 +168,12 @@ def main():
         if bary_count > 0:
             bary_available_count += 1
 
+        # Aggregate comparison mode counts
+        mode_counts = strict_data.get("barycentric_comparison_mode_counts", {})
+        for mode_key in total_comparison_modes:
+            total_comparison_modes[mode_key] += mode_counts.get(mode_key, 0)
+
+        # Only include valid bary distances (same_triangle or same_anchor_set)
         if avg_bary_dist is not None:
             if label:
                 same_bary_distances.append(avg_bary_dist)
@@ -228,6 +241,7 @@ def main():
         "same_person_avg_region_diversity": safe_avg(same_region_diversity),
         "different_person_avg_region_diversity": safe_avg(diff_region_diversity),
         "constellation_quality_labels": constellation_labels,
+        "barycentric_comparison_mode_counts": total_comparison_modes,
     }
 
     # Write JSON report
@@ -285,6 +299,9 @@ def main():
     print(f"  Same-person avg region diversity: {safe_avg(same_region_diversity)}")
     print(f"  Diff-person avg region diversity: {safe_avg(diff_region_diversity)}")
     print(f"  Constellation labels: {constellation_labels}")
+    print(f"  ── Comparison Mode Counts ──")
+    for mode_key, mode_val in total_comparison_modes.items():
+        print(f"    {mode_key}: {mode_val}")
     print(f"  Results: {args.output_dir}")
     print(f"{'=' * 60}")
 

@@ -368,34 +368,103 @@ def compute_barycentric_position(mark_centroid, landmarks, image_shape):
     }
 
 
+def _normalize_anchor_set(indices):
+    """Return a frozenset of landmark indices for set-based comparison.
+
+    This normalizes the anchor set so that two triangles with the same
+    landmarks in different order can be recognized as compatible.
+    """
+    if not indices:
+        return frozenset()
+    return frozenset(int(i) for i in indices)
+
+
+def _align_bary_coords_to_sorted_anchors(bary_coords, anchor_indices, target_sorted_indices):
+    """Re-order barycentric coordinates to match a canonical (sorted) vertex order.
+
+    Barycentric coordinates (u, v, w) correspond to vertices (A, B, C) in the
+    order stored in nearest_landmark_indices. If two marks share the same anchor
+    set but different vertex ordering, we must align them before comparison.
+
+    Args:
+        bary_coords: Tuple (u, v, w) as stored.
+        anchor_indices: List [idx_a, idx_b, idx_c] corresponding to (u, v, w).
+        target_sorted_indices: The canonical sorted list of indices.
+
+    Returns:
+        Tuple (u', v', w') aligned to target_sorted_indices order,
+        or None if alignment fails.
+    """
+    if bary_coords is None or len(anchor_indices) != 3 or len(target_sorted_indices) != 3:
+        return None
+
+    # Build mapping from original vertex position to bary coord
+    try:
+        # anchor_indices[i] was vertex i, with bary_coords[i]
+        # We need to reorder so index target_sorted_indices[j] maps to position j
+        index_to_bary = {}
+        for i, idx in enumerate(anchor_indices):
+            index_to_bary[int(idx)] = bary_coords[i]
+
+        aligned = tuple(index_to_bary[int(t)] for t in target_sorted_indices)
+        return aligned
+    except (KeyError, TypeError):
+        return None
+
+
+# Comparison mode constants
+BARY_COMPARE_SAME_TRIANGLE = "same_triangle"
+BARY_COMPARE_SAME_ANCHOR_SET = "same_anchor_set"
+BARY_COMPARE_DIFFERENT_TRIANGLE = "different_triangle_fallback"
+BARY_COMPARE_UNAVAILABLE = "unavailable"
+
+
 def compute_barycentric_distance(anat_a, anat_b):
     """Compute distance between two marks in barycentric space.
 
-    Only valid when both marks have mode = "2d_mesh_approximation"
-    and mesh_confidence >= _MIN_BARY_CONFIDENCE.
+    CRITICAL MATH RULE: Barycentric coordinates are only directly comparable
+    when both marks share the same or compatible mesh triangle (anchor set).
+
+    Comparison modes:
+    - same_triangle: mesh_triangle_id matches exactly → direct u/v/w comparison
+    - same_anchor_set: same landmark indices (possibly different order) → aligned comparison
+    - different_triangle_fallback: different anchors → NOT comparable, returns unavailable
+    - unavailable: missing data, fallback mode, or low confidence
 
     Args:
         anat_a: anatomical_position dict from mark A.
         anat_b: anatomical_position dict from mark B.
 
     Returns:
-        Tuple (distance, available). distance is float or None.
-        available is True only if both marks have valid barycentric coords.
+        Tuple (distance, available, comparison_mode, telemetry_dict).
+        distance is float or None.
+        available is True only when comparison is mathematically valid.
+        comparison_mode is one of the BARY_COMPARE_* constants.
+        telemetry_dict contains diagnostic fields for reporting.
     """
+    empty_telemetry = {
+        "barycentric_comparison_mode": BARY_COMPARE_UNAVAILABLE,
+        "barycentric_triangle_match": False,
+        "barycentric_anchor_overlap_count": 0,
+        "barycentric_distance_available": False,
+        "mesh_triangle_gallery": None,
+        "mesh_triangle_probe": None,
+    }
+
     if anat_a is None or anat_b is None:
-        return None, False
+        return None, False, BARY_COMPARE_UNAVAILABLE, empty_telemetry
 
     mode_a = anat_a.get("barycentric_mode")
     mode_b = anat_b.get("barycentric_mode")
 
     if mode_a != BARYCENTRIC_MODE_2D or mode_b != BARYCENTRIC_MODE_2D:
-        return None, False
+        return None, False, BARY_COMPARE_UNAVAILABLE, empty_telemetry
 
     conf_a = anat_a.get("mesh_confidence", 0.0)
     conf_b = anat_b.get("mesh_confidence", 0.0)
 
     if conf_a < _MIN_BARY_CONFIDENCE or conf_b < _MIN_BARY_CONFIDENCE:
-        return None, False
+        return None, False, BARY_COMPARE_UNAVAILABLE, empty_telemetry
 
     ua = anat_a.get("barycentric_u")
     va = anat_a.get("barycentric_v")
@@ -405,11 +474,64 @@ def compute_barycentric_distance(anat_a, anat_b):
     wb = anat_b.get("barycentric_w")
 
     if any(x is None for x in [ua, va, wa, ub, vb, wb]):
-        return None, False
+        return None, False, BARY_COMPARE_UNAVAILABLE, empty_telemetry
 
-    # Euclidean distance in 3D barycentric space
-    dist = math.sqrt((ua - ub) ** 2 + (va - vb) ** 2 + (wa - wb) ** 2)
-    return dist, True
+    tri_id_a = anat_a.get("mesh_triangle_id")
+    tri_id_b = anat_b.get("mesh_triangle_id")
+    anchors_a = anat_a.get("nearest_landmark_indices", [])
+    anchors_b = anat_b.get("nearest_landmark_indices", [])
+
+    anchor_set_a = _normalize_anchor_set(anchors_a)
+    anchor_set_b = _normalize_anchor_set(anchors_b)
+    anchor_overlap = len(anchor_set_a & anchor_set_b)
+
+    base_telemetry = {
+        "barycentric_triangle_match": False,
+        "barycentric_anchor_overlap_count": anchor_overlap,
+        "barycentric_distance_available": False,
+        "mesh_triangle_gallery": tri_id_a,
+        "mesh_triangle_probe": tri_id_b,
+    }
+
+    # ── Case A: Same triangle (exact match) ──
+    if tri_id_a is not None and tri_id_b is not None and tri_id_a == tri_id_b:
+        dist = math.sqrt((ua - ub) ** 2 + (va - vb) ** 2 + (wa - wb) ** 2)
+        base_telemetry["barycentric_comparison_mode"] = BARY_COMPARE_SAME_TRIANGLE
+        base_telemetry["barycentric_triangle_match"] = True
+        base_telemetry["barycentric_distance_available"] = True
+        return dist, True, BARY_COMPARE_SAME_TRIANGLE, base_telemetry
+
+    # ── Case B: Same anchor set (different order) ──
+    if len(anchor_set_a) == 3 and anchor_set_a == anchor_set_b:
+        # Align both coordinate tuples to the same canonical (sorted) vertex order
+        sorted_anchors = sorted(anchor_set_a)
+        aligned_a = _align_bary_coords_to_sorted_anchors(
+            (ua, va, wa), anchors_a, sorted_anchors
+        )
+        aligned_b = _align_bary_coords_to_sorted_anchors(
+            (ub, vb, wb), anchors_b, sorted_anchors
+        )
+
+        if aligned_a is not None and aligned_b is not None:
+            dist = math.sqrt(
+                (aligned_a[0] - aligned_b[0]) ** 2 +
+                (aligned_a[1] - aligned_b[1]) ** 2 +
+                (aligned_a[2] - aligned_b[2]) ** 2
+            )
+            base_telemetry["barycentric_comparison_mode"] = BARY_COMPARE_SAME_ANCHOR_SET
+            base_telemetry["barycentric_triangle_match"] = False
+            base_telemetry["barycentric_distance_available"] = True
+            return dist, True, BARY_COMPARE_SAME_ANCHOR_SET, base_telemetry
+        else:
+            # Alignment failed — treat as different triangle
+            base_telemetry["barycentric_comparison_mode"] = BARY_COMPARE_DIFFERENT_TRIANGLE
+            base_telemetry["barycentric_distance_available"] = False
+            return None, False, BARY_COMPARE_DIFFERENT_TRIANGLE, base_telemetry
+
+    # ── Case C: Different triangle — NOT comparable ──
+    base_telemetry["barycentric_comparison_mode"] = BARY_COMPARE_DIFFERENT_TRIANGLE
+    base_telemetry["barycentric_distance_available"] = False
+    return None, False, BARY_COMPARE_DIFFERENT_TRIANGLE, base_telemetry
 
 
 def compute_constellation_telemetry(scoring_correspondences, suppressed_correspondences,
