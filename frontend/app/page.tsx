@@ -468,6 +468,44 @@ export default function Home() {
     }
   };
 
+  // --- DERIVED MARK REVIEW SIGNAL STATE ---
+  const markEvidenceDisplayRole = "review_support_only";
+  
+  let markReviewSignal: "SUPPORTING" | "CONFLICTING" | "INCONCLUSIVE" | "NOT_DETECTED" = "NOT_DETECTED";
+  let evidenceConflictDetected = false;
+  let humanReviewRecommended = false;
+  let markDisplayWording = "Not Enough Evidence to Confirm Same Person.";
+
+  if (results) {
+    const isStrongFace = results.fused_identity_score >= 75;
+
+    const hasMarksDetected = !!(results.mark_diagnostics && (
+      results.mark_diagnostics.raw_probe_marks_count > 0 || results.mark_diagnostics.raw_gallery_marks_count > 0
+    ));
+
+    const hasStrongMarks = !!(results.mark_diagnostics && (
+      (results.mark_diagnostics.lr_marks != null && results.mark_diagnostics.lr_marks > 100) ||
+      (results.mark_diagnostics.accepted_correspondences_count > 0)
+    ));
+
+    if (isStrongFace && hasStrongMarks) {
+      markDisplayWording = "Face similarity is strong. Facial marks provide additional supporting detail.";
+      markReviewSignal = "SUPPORTING";
+    } else if (isStrongFace && !hasStrongMarks) {
+      markDisplayWording = "Face similarity is strong. Facial marks were not useful or not detected.";
+      markReviewSignal = hasMarksDetected ? "INCONCLUSIVE" : "NOT_DETECTED";
+    } else if (!isStrongFace && hasStrongMarks) {
+      markDisplayWording = "Conflicting Evidence — Human Review Needed.";
+      markReviewSignal = "CONFLICTING";
+      evidenceConflictDetected = true;
+      humanReviewRecommended = true;
+    } else {
+      markDisplayWording = "Not Enough Evidence to Confirm Same Person.";
+      markReviewSignal = hasMarksDetected ? "INCONCLUSIVE" : "NOT_DETECTED";
+    }
+  }
+  const markSafetySentence = "Facial mark evidence is shown for review support only and does not independently confirm identity.";
+
   const generateForensicReport = async () => {
     if (!results) return;
     setIsExporting(true);
@@ -536,9 +574,22 @@ export default function Home() {
           <!-- SHARED MARK EVIDENCE -->
           ${results.mark_diagnostics ? `
           <div style="border:1px solid #1f1f1f;background:#0d0d0e;margin-bottom:10px;flex-shrink:0;">
-            <div style="padding:4px 8px;border-bottom:1px solid #1a1a1a;background:#111;">
+            <div style="padding:4px 8px;border-bottom:1px solid #1a1a1a;background:#111;display:flex;justify-content:space-between;align-items:center;">
               <span style="font-size:7px;color:#D4AF37;letter-spacing:2px;font-weight:bold;">▸ SHARED MARK EVIDENCE</span>
+              <span style="font-size:6px;color:#666;font-style:italic;">${markSafetySentence}</span>
             </div>
+            
+            <!-- MARK REVIEW SIGNAL -->
+            <div style="padding:4px 8px;border-bottom:1px solid #1a1a1a;background:${markReviewSignal === 'SUPPORTING' ? 'rgba(6,78,59,0.3)' : markReviewSignal === 'CONFLICTING' ? 'rgba(127,29,29,0.3)' : '#151515'};">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:8px;font-weight:bold;color:${markReviewSignal === 'SUPPORTING' ? '#34d399' : markReviewSignal === 'CONFLICTING' ? '#f87171' : '#9ca3af'};">
+                  ${markReviewSignal === 'SUPPORTING' ? '✓ SUPPORTING EVIDENCE' : markReviewSignal === 'CONFLICTING' ? '⚠ CONFLICTING EVIDENCE — REVIEW NEEDED' : 'INCONCLUSIVE / NOT DETECTED'}
+                </span>
+                ${humanReviewRecommended ? `<span style="font-size:6px;font-weight:bold;color:#f87171;background:rgba(127,29,29,0.5);padding:1px 3px;border-radius:2px;text-transform:uppercase;letter-spacing:1px;">Human Review Recommended</span>` : ''}
+              </div>
+              <div style="font-size:7px;color:#ccc;margin-top:2px;">${markDisplayWording}</div>
+            </div>
+
             <div style="padding:6px 8px;">
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
                 <span style="font-size:8px;font-weight:bold;color:${results.mark_diagnostics.mark_match_status === 'MATCHED' ? '#34d399' : results.mark_diagnostics.mark_match_status === 'EXACT_SELF_MATCH' ? '#22d3ee' : '#fbbf24'};background:${results.mark_diagnostics.mark_match_status === 'MATCHED' ? 'rgba(6,78,59,0.4)' : results.mark_diagnostics.mark_match_status === 'EXACT_SELF_MATCH' ? 'rgba(22,78,99,0.4)' : 'rgba(120,53,15,0.3)'};padding:2px 4px;border-radius:2px;letter-spacing:1px;">${escapeHtml(results.mark_diagnostics.mark_match_status || 'UNKNOWN')}</span>
@@ -1661,8 +1712,32 @@ export default function Home() {
                         results.mark_diagnostics.lr_marks != null && results.mark_diagnostics.lr_marks > 1 ? 'text-[#D4AF37]' : 'text-gray-400'
                       }`}>{results.mark_diagnostics.lr_marks != null ? formatLRSci(results.mark_diagnostics.lr_marks) : 'N/A'}</span>
                     </div>
-                    {/* Evidence Contribution Label */}
+                    {/* Evidence Contribution Label (Replaced by Review Signal) */}
                     <div className="mb-2">
+                      {/* MARK REVIEW SIGNAL PANEL */}
+                      <div className={`px-2 py-1.5 rounded mb-2 border ${
+                        markReviewSignal === 'SUPPORTING' ? 'bg-emerald-950/30 border-emerald-900/30 text-emerald-400' :
+                        markReviewSignal === 'CONFLICTING' ? 'bg-red-950/30 border-red-900/30 text-red-400' :
+                        'bg-[#1a1a1a] border-[#2a2a2a] text-gray-400'
+                      }`}>
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className="text-[9px] font-bold tracking-wider">
+                            {markReviewSignal === 'SUPPORTING' ? '✓ SUPPORTING EVIDENCE' :
+                             markReviewSignal === 'CONFLICTING' ? '⚠ CONFLICTING EVIDENCE — REVIEW NEEDED' :
+                             'INCONCLUSIVE / NOT DETECTED'}
+                          </span>
+                          {humanReviewRecommended && (
+                            <span className="text-[7px] font-bold text-red-400 uppercase tracking-widest bg-red-950/50 px-1.5 py-0.5 rounded">
+                              Human Review Recommended
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[8px] leading-relaxed opacity-90">{markDisplayWording}</div>
+                        <div className="text-[6.5px] text-gray-500 mt-1.5 italic border-t border-[#333] pt-1">
+                          {markSafetySentence}
+                        </div>
+                      </div>
+
                       {results.mark_diagnostics.mark_match_status === 'LEGACY_MARK_PIPELINE_NEUTRALIZED' ? (
                         <span className="text-[7px] text-amber-400/70 italic">Legacy mark evidence was neutralized and did not affect the Bayesian score.</span>
                       ) : results.mark_diagnostics.mark_detector_trace?.probe?.input_is_preprocessed === true && results.mark_diagnostics.mark_detector_trace?.probe?.internal_clahe_applied === false ? (
