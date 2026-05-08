@@ -164,7 +164,7 @@ def _barycentric_cost(mark_g: dict, mark_p: dict) -> tuple:
     }
 
     if anat_g is None or anat_p is None:
-        return 0.0, None, False, "unavailable", empty_telemetry
+        return 0.0, None, False, "missing_anatomical_position", empty_telemetry
 
     mode_g = anat_g.get("barycentric_mode")
     mode_p = anat_p.get("barycentric_mode")
@@ -177,7 +177,7 @@ def _barycentric_cost(mark_g: dict, mark_p: dict) -> tuple:
     conf_p = anat_p.get("mesh_confidence", 0.0)
 
     if conf_g < _BARY_MIN_CONFIDENCE or conf_p < _BARY_MIN_CONFIDENCE:
-        return 0.0, None, False, "unavailable", empty_telemetry
+        return 0.0, None, False, "low_confidence", empty_telemetry
 
     # Delegate to triangle-aware distance computation
     bary_dist, available, comparison_mode, telemetry = compute_barycentric_distance(anat_g, anat_p)

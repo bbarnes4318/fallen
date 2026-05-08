@@ -106,6 +106,23 @@ def main():
         "same_anchor_set": 0,
         "different_triangle_fallback": 0,
         "unavailable": 0,
+        "low_confidence": 0,
+        "missing_anatomical_position": 0,
+        "anchor_overlap_3": 0,
+        "anchor_overlap_2": 0,
+        "anchor_overlap_1": 0,
+        "same_mesh_region": 0,
+    }
+
+    # Raw mark presence counters
+    raw_debug_aggregate = {
+        "total_marks": 0,
+        "marks_with_anatomical_position": 0,
+        "marks_with_barycentric_mode_2d": 0,
+        "marks_with_nearest_landmark_fallback": 0,
+        "marks_with_mesh_confidence_ge_070": 0,
+        "marks_with_mesh_triangle_id": 0,
+        "marks_with_nearest_landmark_indices": 0,
     }
 
     for r in results:
@@ -172,6 +189,14 @@ def main():
         mode_counts = strict_data.get("barycentric_comparison_mode_counts", {})
         for mode_key in total_comparison_modes:
             total_comparison_modes[mode_key] += mode_counts.get(mode_key, 0)
+        
+        # Aggregate raw debug counts
+        probe_bary_debug = r.get("barycentric_debug_probe", {})
+        gallery_bary_debug = r.get("barycentric_debug_gallery", {})
+        for debug_payload in [probe_bary_debug, gallery_bary_debug]:
+            for key in raw_debug_aggregate.keys():
+                raw_debug_aggregate[key] += debug_payload.get(key, 0)
+
 
         # Only include valid bary distances (same_triangle or same_anchor_set)
         if avg_bary_dist is not None:
@@ -242,6 +267,7 @@ def main():
         "different_person_avg_region_diversity": safe_avg(diff_region_diversity),
         "constellation_quality_labels": constellation_labels,
         "barycentric_comparison_mode_counts": total_comparison_modes,
+        "raw_mark_presence_totals": raw_debug_aggregate,
     }
 
     # Write JSON report

@@ -206,6 +206,62 @@ def run_single_pair(pair, pipeline_modules):
     accepted = mark_payload.get("accepted_correspondences", [])
     rejected = mark_payload.get("rejected_correspondences", [])
     
+    import collections
+    def _extract_barycentric_debug(marks):
+        total = len(marks)
+        has_anat = 0
+        mode_2d = 0
+        fallback = 0
+        conf_ge_070 = 0
+        has_triangle = 0
+        has_indices = 0
+        mesh_regions = []
+        bary_modes = []
+        confs = []
+
+        for m in marks:
+            anat = m.get("anatomical_position")
+            if anat:
+                has_anat += 1
+                mode = anat.get("barycentric_mode")
+                bary_modes.append(mode)
+                if mode == "2d_mesh_approximation":
+                    mode_2d += 1
+                if mode == "nearest_landmark_fallback":
+                    fallback += 1
+                
+                conf = anat.get("mesh_confidence", 0.0)
+                confs.append(conf)
+                if conf >= 0.70:
+                    conf_ge_070 += 1
+                
+                if anat.get("mesh_triangle_id") is not None:
+                    has_triangle += 1
+                if anat.get("nearest_landmark_indices"):
+                    has_indices += 1
+                
+                mesh_regions.append(anat.get("mesh_region", "unknown"))
+
+        s_confs = sorted(confs)
+        conf_min = s_confs[0] if s_confs else 0.0
+        conf_max = s_confs[-1] if s_confs else 0.0
+        conf_med = s_confs[len(s_confs)//2] if s_confs else 0.0
+
+        return {
+            "total_marks": total,
+            "marks_with_anatomical_position": has_anat,
+            "marks_with_barycentric_mode_2d": mode_2d,
+            "marks_with_nearest_landmark_fallback": fallback,
+            "marks_with_mesh_confidence_ge_070": conf_ge_070,
+            "marks_with_mesh_triangle_id": has_triangle,
+            "marks_with_nearest_landmark_indices": has_indices,
+            "mesh_region_distribution": dict(collections.Counter(mesh_regions)),
+            "barycentric_mode_distribution": dict(collections.Counter(bary_modes)),
+            "mesh_confidence_min": conf_min,
+            "mesh_confidence_median": conf_med,
+            "mesh_confidence_max": conf_max,
+        }
+
     probe_summary = [
         {
             "mark_type": m.get("mark_type"),
@@ -229,6 +285,9 @@ def run_single_pair(pair, pipeline_modules):
             "salience": m.get("salience")
         } for m in raw_gallery
     ]
+    
+    probe_bary_debug = _extract_barycentric_debug(raw_probe)
+    gallery_bary_debug = _extract_barycentric_debug(raw_gallery)
     
     accepted_detail = [
         {
@@ -344,6 +403,8 @@ def run_single_pair(pair, pipeline_modules):
         "rejected_correspondences_summary": rejected_summary,
         "evidence_aggregate": evidence_aggregate,
         "validation_gates": mark_payload.get("validation_gates", {}),
+        "barycentric_debug_probe": probe_bary_debug,
+        "barycentric_debug_gallery": gallery_bary_debug,
     }
 
     # ── Strict V2 telemetry (only when USE_STRICT_MARK_MATCHER_V2=true) ──
@@ -372,11 +433,30 @@ def run_single_pair(pair, pipeline_modules):
                 "same_anchor_set": 0,
                 "different_triangle_fallback": 0,
                 "unavailable": 0,
+                "low_confidence": 0,
+                "missing_anatomical_position": 0,
+                "anchor_overlap_3": 0,
+                "anchor_overlap_2": 0,
+                "anchor_overlap_1": 0,
+                "same_mesh_region": 0,
             }
             for c in mark_payload.get("scoring_correspondences", []):
                 mode = c.get("barycentric_comparison_mode", "unavailable")
                 if mode in comparison_mode_counts:
                     comparison_mode_counts[mode] += 1
+                
+                # Check overlaps
+                overlap = c.get("barycentric_anchor_overlap_count", 0)
+                if overlap == 3: comparison_mode_counts["anchor_overlap_3"] += 1
+                elif overlap == 2: comparison_mode_counts["anchor_overlap_2"] += 1
+                elif overlap == 1: comparison_mode_counts["anchor_overlap_1"] += 1
+                
+                # Check mesh region match
+                reg_g = c.get("mesh_region_gallery")
+                reg_p = c.get("mesh_region_probe")
+                if reg_g and reg_p and reg_g != "unknown" and reg_g == reg_p:
+                    comparison_mode_counts["same_mesh_region"] += 1
+
                 # Only include valid comparisons (same_triangle or same_anchor_set)
                 if c.get("barycentric_distance_available", False):
                     bd = c.get("barycentric_distance")
