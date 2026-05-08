@@ -715,6 +715,10 @@ def _run_mark_evidence_pipeline(
         result["caps_applied"] = matcher_result.get("caps_applied", [])
         result["cluster_penalty_applied"] = matcher_result.get("cluster_penalty_applied", False)
         result["cluster_penalty_factor"] = matcher_result.get("cluster_penalty_factor", 1.0)
+        # Phase 1 constellation telemetry (DOES NOT AFFECT SCORING)
+        constellation_telem = matcher_result.get("constellation_telemetry")
+        if constellation_telem is not None:
+            result["constellation_telemetry"] = constellation_telem
 
     return result
 

@@ -1,4 +1,4 @@
-"""Mark Detector v2.1.0 — Multi-channel facial mark detection module.
+"""Mark Detector v2.2.0 — Multi-channel facial mark detection module.
 Pure module: no FastAPI, no DB, no JWT dependencies.
 """
 import os
@@ -7,7 +7,16 @@ import base64
 import cv2
 import numpy as np
 
-MARK_DETECTOR_VERSION = "2.1.0"
+MARK_DETECTOR_VERSION = "2.2.0"
+
+# Lazy import to avoid circular dependency at module load
+_mark_anatomy = None
+def _get_mark_anatomy():
+    global _mark_anatomy
+    if _mark_anatomy is None:
+        import mark_anatomy
+        _mark_anatomy = mark_anatomy
+    return _mark_anatomy
 
 # MediaPipe landmark index groups for feature exclusion
 _LEFT_EYE_IDX = [33,7,163,144,145,153,154,155,133,173,157,158,159,160,161,246]
@@ -197,6 +206,21 @@ def _contour_to_descriptor(cnt, gray, skin_mask, h, w, channel, landmarks, mark_
     else:
         conf = min(1.0, salience / 30.0) if not is_fallback else min(0.5, salience / 60.0)
 
+    # ── Anatomical position (Phase 1: 2D mesh approximation) ──
+    # Computed from existing landmarks — does not affect existing fields.
+    # face_region (8-region) remains unchanged for production matching/caps/UI.
+    anatomical_position = None
+    try:
+        anatomy = _get_mark_anatomy()
+        anatomical_position = anatomy.compute_barycentric_position(
+            mark_centroid=(cx / w, cy / h),
+            landmarks=landmarks,
+            image_shape=(h, w),
+        )
+    except Exception:
+        # Never crash detection for anatomy — graceful degradation
+        anatomical_position = None
+
     return {
         "index": mark_index,
         "centroid": (cx / w, cy / h),
@@ -223,6 +247,8 @@ def _contour_to_descriptor(cnt, gray, skin_mask, h, w, channel, landmarks, mark_
         "low_confidence": is_fallback,
         "fallback_generated": is_fallback,
         "contrast": float(contrast),
+        # ── Phase 1 anatomical fields (additive only) ──
+        "anatomical_position": anatomical_position,
     }
 
 

@@ -360,6 +360,26 @@ def run_single_pair(pair, pipeline_modules):
             "cluster_penalty_applied": mark_payload.get("cluster_penalty_applied", False),
         }
 
+        # Phase 1 constellation telemetry (DOES NOT AFFECT SCORING)
+        constellation_telem = mark_payload.get("constellation_telemetry")
+        if constellation_telem is not None:
+            result["constellation_telemetry"] = constellation_telem
+
+            # Attach per-correspondence barycentric distance stats
+            bary_dists = []
+            for c in mark_payload.get("scoring_correspondences", []):
+                bd = c.get("barycentric_distance")
+                if bd is not None:
+                    bary_dists.append(bd)
+            if bary_dists:
+                result["strict_mark_data"]["barycentric_distance_count"] = len(bary_dists)
+                result["strict_mark_data"]["avg_barycentric_distance"] = round(
+                    sum(bary_dists) / len(bary_dists), 6
+                )
+            else:
+                result["strict_mark_data"]["barycentric_distance_count"] = 0
+                result["strict_mark_data"]["avg_barycentric_distance"] = None
+
     return result
 
 

@@ -90,6 +90,17 @@ def main():
     total_caps_applied = {}
     total_cluster_penalties = 0
 
+    # Phase 1 constellation telemetry collectors
+    same_bary_distances = []
+    diff_bary_distances = []
+    same_constellation_quality = []
+    diff_constellation_quality = []
+    same_region_diversity = []
+    diff_region_diversity = []
+    bary_available_count = 0
+    bary_total_count = 0
+    constellation_labels = {"NONE": 0, "WEAK": 0, "MODERATE": 0, "STRONG_REVIEW_SUPPORT": 0}
+
     for r in results:
         if r.get("error") == "FACE_NOT_DETECTED":
             face_not_detected += 1
@@ -143,6 +154,39 @@ def main():
         if strict_data.get("cluster_penalty_applied", False):
             total_cluster_penalties += 1
 
+        # Phase 1 constellation telemetry
+        bary_total_count += 1
+        avg_bary_dist = strict_data.get("avg_barycentric_distance")
+        bary_count = strict_data.get("barycentric_distance_count", 0)
+        if bary_count > 0:
+            bary_available_count += 1
+
+        if avg_bary_dist is not None:
+            if label:
+                same_bary_distances.append(avg_bary_dist)
+            else:
+                diff_bary_distances.append(avg_bary_dist)
+
+        constellation = r.get("constellation_telemetry", {})
+        if constellation:
+            cqs = constellation.get("constellation_quality_score")
+            if cqs is not None:
+                if label:
+                    same_constellation_quality.append(cqs)
+                else:
+                    diff_constellation_quality.append(cqs)
+
+            rd = constellation.get("region_diversity_count")
+            if rd is not None:
+                if label:
+                    same_region_diversity.append(rd)
+                else:
+                    diff_region_diversity.append(rd)
+
+            cql = constellation.get("constellation_quality_label", "NONE")
+            if cql in constellation_labels:
+                constellation_labels[cql] += 1
+
     # Build report
     def safe_avg(lst):
         return round(sum(lst) / len(lst), 4) if lst else 0.0
@@ -175,6 +219,15 @@ def main():
         "different_person_avg_lr_marks": safe_avg(diff_lr_marks),
         "same_person_median_lr_marks": round(safe_median(same_lr_marks), 4),
         "different_person_median_lr_marks": round(safe_median(diff_lr_marks), 4),
+        # Phase 1 barycentric / constellation telemetry
+        "barycentric_available_rate": round(bary_available_count / bary_total_count, 4) if bary_total_count > 0 else 0.0,
+        "same_person_avg_barycentric_distance": safe_avg(same_bary_distances),
+        "different_person_avg_barycentric_distance": safe_avg(diff_bary_distances),
+        "same_person_avg_constellation_quality_score": safe_avg(same_constellation_quality),
+        "different_person_avg_constellation_quality_score": safe_avg(diff_constellation_quality),
+        "same_person_avg_region_diversity": safe_avg(same_region_diversity),
+        "different_person_avg_region_diversity": safe_avg(diff_region_diversity),
+        "constellation_quality_labels": constellation_labels,
     }
 
     # Write JSON report
@@ -223,6 +276,15 @@ def main():
     print(f"  Cluster penalties: {total_cluster_penalties}")
     print(f"  False positives: {false_positives}")
     print(f"  False negatives: {false_negatives}")
+    print(f"  ── Phase 1 Constellation Telemetry ──")
+    print(f"  Barycentric available rate: {round(bary_available_count / bary_total_count, 4) if bary_total_count > 0 else 0.0}")
+    print(f"  Same-person avg bary distance: {safe_avg(same_bary_distances)}")
+    print(f"  Diff-person avg bary distance: {safe_avg(diff_bary_distances)}")
+    print(f"  Same-person avg constellation quality: {safe_avg(same_constellation_quality)}")
+    print(f"  Diff-person avg constellation quality: {safe_avg(diff_constellation_quality)}")
+    print(f"  Same-person avg region diversity: {safe_avg(same_region_diversity)}")
+    print(f"  Diff-person avg region diversity: {safe_avg(diff_region_diversity)}")
+    print(f"  Constellation labels: {constellation_labels}")
     print(f"  Results: {args.output_dir}")
     print(f"{'=' * 60}")
 

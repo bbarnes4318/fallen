@@ -1,4 +1,4 @@
-"""Mark Matcher Strict v2.0.0 — Experimental strict forensic mark correspondence engine.
+"""Mark Matcher Strict v2.1.0 — Experimental strict forensic mark correspondence engine.
 
 Activated ONLY when USE_STRICT_MARK_MATCHER_V2=true.
 Reduces random mark correspondences between different people by:
@@ -8,6 +8,8 @@ Reduces random mark correspondences between different people by:
   - Capping distinctive mark LR at 25.0
   - Aggregate caps per region/type/channel/total
   - Cluster penalty when one dimension dominates
+  - Phase 1 barycentric cost contribution (additive, stricter-only)
+  - Constellation quality telemetry (display/research only)
 
 Pure module: no FastAPI, no DB, no JWT, no generative dependencies.
 """
@@ -16,7 +18,7 @@ import os
 from collections import defaultdict
 import numpy as np
 
-MARK_MATCHER_STRICT_VERSION = "2.0.0-strict"
+MARK_MATCHER_STRICT_VERSION = "2.1.0-strict"
 
 # ── Mark Classification ──
 GENERIC_MARK_TYPES = frozenset({
@@ -55,6 +57,12 @@ _TYPE_MISMATCH_PENALTY = 0.5
 _REGION_MISMATCH_PENALTY = 0.3
 _CIRCULARITY_PENALTY_SCALE = 0.3
 _ORIENTATION_PENALTY_SCALE = 0.2
+
+# ── Phase 1 Barycentric ──
+# Conservative weight. Can only INCREASE cost (make matching stricter).
+# Start at 1.0; validate before increasing. Do NOT start at 3.0.
+_BARY_WEIGHT = 1.0
+_BARY_MIN_CONFIDENCE = 0.70  # Require this mesh_confidence for bary distance
 
 # ── LR Caps ──
 _GENERIC_LR_CAP = 1.0
@@ -131,6 +139,48 @@ def _orientation_penalty(mark_g: dict, mark_p: dict) -> float:
     return (angular_delta / 90.0) * _ORIENTATION_PENALTY_SCALE
 
 
+def _barycentric_cost(mark_g: dict, mark_p: dict) -> tuple:
+    """Compute barycentric distance cost contribution for a mark pair.
+
+    Returns (bary_cost, bary_distance, bary_available).
+    bary_cost is the cost contribution (>= 0). It can ONLY increase total cost.
+    bary_available is True only if both marks have valid 2D mesh approximation
+    with confidence >= _BARY_MIN_CONFIDENCE.
+    """
+    anat_g = mark_g.get("anatomical_position")
+    anat_p = mark_p.get("anatomical_position")
+
+    if anat_g is None or anat_p is None:
+        return 0.0, None, False
+
+    mode_g = anat_g.get("barycentric_mode")
+    mode_p = anat_p.get("barycentric_mode")
+
+    # Must be 2D mesh approximation, not fallback
+    if mode_g != "2d_mesh_approximation" or mode_p != "2d_mesh_approximation":
+        return 0.0, None, False
+
+    conf_g = anat_g.get("mesh_confidence", 0.0)
+    conf_p = anat_p.get("mesh_confidence", 0.0)
+
+    if conf_g < _BARY_MIN_CONFIDENCE or conf_p < _BARY_MIN_CONFIDENCE:
+        return 0.0, None, False
+
+    ua = anat_g.get("barycentric_u")
+    va = anat_g.get("barycentric_v")
+    wa = anat_g.get("barycentric_w")
+    ub = anat_p.get("barycentric_u")
+    vb = anat_p.get("barycentric_v")
+    wb = anat_p.get("barycentric_w")
+
+    if any(x is None for x in [ua, va, wa, ub, vb, wb]):
+        return 0.0, None, False
+
+    bary_dist = math.sqrt((ua - ub) ** 2 + (va - vb) ** 2 + (wa - wb) ** 2)
+    bary_cost = bary_dist * _BARY_WEIGHT
+    return bary_cost, bary_dist, True
+
+
 def _compute_cost_strict(mark_g: dict, mark_p: dict, pos_g: tuple, pos_p: tuple) -> tuple:
     """Compute matching cost with strict type-specific thresholds.
     Returns (cost, metadata_dict) or (None, rejection_reason).
@@ -174,7 +224,7 @@ def _compute_cost_strict(mark_g: dict, mark_p: dict, pos_g: tuple, pos_p: tuple)
     region_match = (region_g == region_p)
     type_match = (type_g == type_p)
 
-    # Cost accumulation
+    # Cost accumulation (existing terms — unchanged)
     cost = dist * _SPATIAL_WEIGHT
     cost += (1.0 - ar)
     cost += tp
@@ -188,6 +238,12 @@ def _compute_cost_strict(mark_g: dict, mark_p: dict, pos_g: tuple, pos_p: tuple)
     int_g = mark_g.get("intensity", 128)
     int_p = mark_p.get("intensity", 128)
     cost += abs(int_g - int_p) / 255.0
+
+    # ── Phase 1: Barycentric cost contribution (additive, stricter-only) ──
+    # This can ONLY INCREASE cost, never decrease it.
+    # If unavailable, bary_cost is 0.0 — existing path unchanged.
+    bary_cost, bary_dist, bary_available = _barycentric_cost(mark_g, mark_p)
+    cost += bary_cost  # Always >= 0, so cost can only go up
 
     if cost > max_cost:
         return None, f"strict_cost_exceeded ({cost:.3f} > {max_cost})"
@@ -209,6 +265,10 @@ def _compute_cost_strict(mark_g: dict, mark_p: dict, pos_g: tuple, pos_p: tuple)
         "mark_class_gallery": class_g,
         "mark_class_probe": class_p,
         "is_generic_pair": is_generic_pair,
+        # Phase 1 barycentric telemetry
+        "barycentric_distance": bary_dist,
+        "barycentric_available": bary_available,
+        "barycentric_cost_contribution": bary_cost,
     }
     return cost, metadata
 
@@ -416,6 +476,10 @@ def match_facial_marks_strict(gallery_marks: list, probe_marks: list,
                 "lr_before_cap": 1.0,
                 "lr_after_cap": 1.0,
                 "lr": 1.0,
+                # Phase 1 barycentric telemetry per correspondence
+                "barycentric_distance": meta.get("barycentric_distance"),
+                "barycentric_available": meta.get("barycentric_available", False),
+                "barycentric_cost_contribution": meta.get("barycentric_cost_contribution", 0.0),
             }
             all_correspondences.append(entry)
             matched_gal.add(int(r))
@@ -506,6 +570,29 @@ def match_facial_marks_strict(gallery_marks: list, probe_marks: list,
     else:
         matcher_status = "INSUFFICIENT_INPUT"
 
+    # ── Constellation Telemetry (DISPLAY/RESEARCH ONLY — does NOT affect scoring) ──
+    # Computed AFTER all LR calculations are finalized.
+    lr_marks_before_constellation = lr_final  # snapshot for assertion
+    constellation_telemetry = None
+    try:
+        from mark_anatomy import compute_constellation_telemetry
+        constellation_telemetry = compute_constellation_telemetry(
+            scoring_correspondences=scoring_correspondences,
+            suppressed_correspondences=suppressed_correspondences,
+            gallery_marks=gallery_marks,
+            probe_marks=probe_marks,
+            cluster_domination_score=cluster_factor,
+        )
+    except Exception:
+        # Never crash matching for constellation telemetry
+        constellation_telemetry = None
+
+    # ASSERTION: constellation telemetry MUST NOT alter scoring
+    assert lr_final == lr_marks_before_constellation, (
+        "FATAL: constellation telemetry altered lr_marks. "
+        f"Before={lr_marks_before_constellation}, After={lr_final}"
+    )
+
     return {
         # Standard keys (downstream compatibility)
         "matched": matched_count,
@@ -531,6 +618,8 @@ def match_facial_marks_strict(gallery_marks: list, probe_marks: list,
         "caps_applied": caps_applied,
         "cluster_penalty_applied": cluster_applied,
         "cluster_penalty_factor": cluster_factor,
+        # Phase 1 constellation telemetry (DOES NOT AFFECT SCORING)
+        "constellation_telemetry": constellation_telemetry,
     }
 
 
@@ -619,5 +708,8 @@ def get_strict_matcher_thresholds() -> dict:
         "total_log_lr_cap": _TOTAL_LOG_LR_CAP,
         "cluster_domination_threshold": _CLUSTER_DOMINATION_THRESHOLD,
         "cluster_penalty_factor": _CLUSTER_PENALTY_FACTOR,
+        # Phase 1 barycentric
+        "barycentric_weight": _BARY_WEIGHT,
+        "barycentric_min_confidence": _BARY_MIN_CONFIDENCE,
         "matcher_version": MARK_MATCHER_STRICT_VERSION,
     }
