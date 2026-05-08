@@ -3243,10 +3243,17 @@ def _run_mark_evidence_pipeline(
                 "matcher_version": MARK_MATCHER_V2_VERSION,
             }
         else:
-            matcher_result = match_marks_v2(
-                valid_gallery_marks, valid_probe_marks,
-                calibration=TIER4_CALIBRATION
-            )
+            if os.getenv("USE_STRICT_MARK_MATCHER_V2", "").lower() == "true":
+                from mark_matcher_strict import match_facial_marks_strict
+                matcher_result = match_facial_marks_strict(
+                    valid_gallery_marks, valid_probe_marks,
+                    calibration=TIER4_CALIBRATION
+                )
+            else:
+                matcher_result = match_marks_v2(
+                    valid_gallery_marks, valid_probe_marks,
+                    calibration=TIER4_CALIBRATION
+                )
             matcher_status = matcher_result["matcher_status"]
             calibration_status = matcher_result.get("calibration_status", "UNKNOWN")
             lr_marks = matcher_result["lr_marks"]
@@ -3301,6 +3308,16 @@ def _run_mark_evidence_pipeline(
         "matcher_thresholds": get_matcher_thresholds(),
         "technical_debt": "mark_matcher.py v2 integrated via shared helper.",
     }
+    
+    if matcher_result and matcher_result.get("strict_mode"):
+        mark_diagnostics_payload.update({
+            "strict_matcher_active": True,
+            "strict_matcher_version": matcher_result.get("matcher_version"),
+            "lr_before_caps": matcher_result.get("lr_before_caps"),
+            "lr_after_all_caps": matcher_result.get("lr_after_all_caps"),
+            "generic_marks_suppressed_count": matcher_result.get("generic_marks_suppressed_count"),
+            "scoring_eligible_marks_count": matcher_result.get("scoring_eligible_marks_count"),
+        })
 
     lr_calculation_trace = {
         "individual_lrs": [finite_or_none(lr) for lr in individual_mark_lrs],

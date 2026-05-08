@@ -126,27 +126,27 @@ jobs:
             --region=${{ env.REGION }} \
             --wait
 
-      - name: Deploy Backend to Cloud Run
-        id: deploy-backend
-        uses: google-github-actions/deploy-cloudrun@v2
-        with:
-          service: facial-backend
-          region: us-east4
-          image: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
-          flags: '--service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com --memory=8Gi --cpu=4 --timeout=300 --concurrency=10 --allow-unauthenticated --add-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance'
-          env_vars: |
-            KMS_KEY_NAME=projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek
-            BUCKET_NAME=hoppwhistle-facial-uploads
-            DB_USER=facial_app
-            DB_PASS=${{ secrets.DB_PASS }}
-            DB_NAME=facial_db
-            CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance
-            STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
-            STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
-            JWT_SECRET=${{ secrets.JWT_SECRET }}
-            OPERATOR_PASSWORD=${{ secrets.OPERATOR_PASSWORD }}
-            FRONTEND_URL=https://facial-frontend-vkd6b6ijxa-uk.a.run.app
-            ALLOWED_ORIGINS=https://facial-frontend-vkd6b6ijxa-uk.a.run.app,https://scargods.com
+#       - name: Deploy Backend to Cloud Run
+#         id: deploy-backend
+#         uses: google-github-actions/deploy-cloudrun@v2
+#         with:
+#           service: facial-backend
+#           region: us-east4
+#           image: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+#           flags: '--service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com --memory=8Gi --cpu=4 --timeout=300 --concurrency=10 --allow-unauthenticated --add-cloudsql-instances=hoppwhistle:us-central1:facial-pg-instance'
+#           env_vars: |
+#             KMS_KEY_NAME=projects/hoppwhistle/locations/us-central1/keyRings/facial-keyring/cryptoKeys/facial-dek
+#             BUCKET_NAME=hoppwhistle-facial-uploads
+#             DB_USER=facial_app
+#             DB_PASS=${{ secrets.DB_PASS }}
+#             DB_NAME=facial_db
+#             CLOUD_SQL_CONNECTION_NAME=hoppwhistle:us-central1:facial-pg-instance
+#             STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
+#             STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
+#             JWT_SECRET=${{ secrets.JWT_SECRET }}
+#             OPERATOR_PASSWORD=${{ secrets.OPERATOR_PASSWORD }}
+#             FRONTEND_URL=https://facial-frontend-vkd6b6ijxa-uk.a.run.app
+#             ALLOWED_ORIGINS=https://facial-frontend-vkd6b6ijxa-uk.a.run.app,https://scargods.com
 
       - name: Deploy V2 Strict Marks Backend to Cloud Run
         id: deploy-backend-v2-strict-marks
@@ -292,6 +292,6 @@ jobs:
           image: ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
           flags: '--service-account=facial-runtime-sa@hoppwhistle.iam.gserviceaccount.com --memory=1Gi --allow-unauthenticated'
           env_vars: |
-            BACKEND_API_URL=${{ steps.deploy-backend.outputs.url }}
+            BACKEND_API_URL=https://facial-backend-vkd6b6ijxa-uk.a.run.app
             NEXT_PUBLIC_V2_ISOLATED_URL=https://facial-backend-v2-strict-marks-196207148120.us-east4.run.app
 
