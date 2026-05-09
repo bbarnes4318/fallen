@@ -217,55 +217,125 @@ def _compute_regional_telemetry(mark_g: dict, mark_p: dict) -> dict:
 
     TELEMETRY ONLY — never applied to match cost.
 
+    Phase 2B additions:
+      - Unavailability reason tracking
+      - Cross-region compatibility modes (face_region, related_region)
+      - Per-mark position presence and confidence
+
     Returns dict with regional_* prefixed keys.
     """
+    # Base empty result
+    _empty = {
+        "regional_available": False,
+        "regional_same_region": False,
+        "regional_same_subcell": False,
+        "regional_uv_distance": None,
+        "regional_anchor_distance_delta": None,
+        "regional_canonical_region_gallery": None,
+        "regional_canonical_region_probe": None,
+        "regional_coordinate_quality_gallery": None,
+        "regional_coordinate_quality_probe": None,
+        "regional_cost_enabled": _USE_REGIONAL_COST,
+        # Phase 2B: unavailability reason
+        "regional_unavailable_reason": None,
+        "regional_position_present_gallery": False,
+        "regional_position_present_probe": False,
+        "regional_region_confidence_gallery": None,
+        "regional_region_confidence_probe": None,
+        # Phase 2B: comparison mode
+        "regional_comparison_mode": "unavailable",
+        "regional_related_region_group": None,
+        "regional_cross_region_distance": None,
+    }
+
     try:
-        from mark_anatomy import compute_regional_coordinate_distance
+        from mark_anatomy import compute_regional_coordinate_distance, are_regions_related
 
         pos_g = mark_g.get("regional_position")
         pos_p = mark_p.get("regional_position")
 
-        if pos_g is None or pos_p is None:
-            return {
-                "regional_available": False,
-                "regional_same_region": False,
-                "regional_same_subcell": False,
-                "regional_uv_distance": None,
-                "regional_anchor_distance_delta": None,
-                "regional_canonical_region_gallery": None,
-                "regional_canonical_region_probe": None,
-                "regional_coordinate_quality_gallery": None,
-                "regional_coordinate_quality_probe": None,
-                "regional_cost_enabled": _USE_REGIONAL_COST,
-            }
+        # Track per-mark presence
+        has_g = pos_g is not None
+        has_p = pos_p is not None
+        _empty["regional_position_present_gallery"] = has_g
+        _empty["regional_position_present_probe"] = has_p
 
+        if has_g:
+            _empty["regional_canonical_region_gallery"] = pos_g.get("canonical_region", "unknown")
+            _empty["regional_coordinate_quality_gallery"] = pos_g.get("coordinate_quality")
+            _empty["regional_region_confidence_gallery"] = pos_g.get("region_confidence")
+        if has_p:
+            _empty["regional_canonical_region_probe"] = pos_p.get("canonical_region", "unknown")
+            _empty["regional_coordinate_quality_probe"] = pos_p.get("coordinate_quality")
+            _empty["regional_region_confidence_probe"] = pos_p.get("region_confidence")
+
+        if not has_g or not has_p:
+            _empty["regional_unavailable_reason"] = "missing_regional_position"
+            return _empty
+
+        # Both positions present — try standard comparison
         dist, available, telem = compute_regional_coordinate_distance(pos_g, pos_p)
 
-        return {
+        region_g = pos_g.get("canonical_region", "unknown")
+        region_p = pos_p.get("canonical_region", "unknown")
+        same_region = telem.get("same_canonical_region", False)
+
+        result = {
             "regional_available": available,
-            "regional_same_region": telem.get("same_canonical_region", False),
+            "regional_same_region": same_region,
             "regional_same_subcell": telem.get("same_region_subcell", False),
             "regional_uv_distance": telem.get("region_uv_distance"),
             "regional_anchor_distance_delta": telem.get("anchor_distance_delta"),
-            "regional_canonical_region_gallery": pos_g.get("canonical_region", "unknown"),
-            "regional_canonical_region_probe": pos_p.get("canonical_region", "unknown"),
+            "regional_canonical_region_gallery": region_g,
+            "regional_canonical_region_probe": region_p,
             "regional_coordinate_quality_gallery": pos_g.get("coordinate_quality"),
             "regional_coordinate_quality_probe": pos_p.get("coordinate_quality"),
             "regional_cost_enabled": _USE_REGIONAL_COST,
+            "regional_unavailable_reason": None,
+            "regional_position_present_gallery": True,
+            "regional_position_present_probe": True,
+            "regional_region_confidence_gallery": pos_g.get("region_confidence"),
+            "regional_region_confidence_probe": pos_p.get("region_confidence"),
+            "regional_comparison_mode": "same_canonical_region" if same_region else "unavailable",
+            "regional_related_region_group": None,
+            "regional_cross_region_distance": None,
         }
+
+        if available and same_region:
+            result["regional_comparison_mode"] = "same_canonical_region"
+            return result
+
+        # ── Phase 2B: Cross-region compatibility (TELEMETRY ONLY) ──
+        if not same_region:
+            result["regional_unavailable_reason"] = "different_canonical_region"
+
+            # Compute raw UV distance even across regions for telemetry
+            u_g = pos_g.get("region_u")
+            v_g = pos_g.get("region_v")
+            u_p = pos_p.get("region_u")
+            v_p = pos_p.get("region_v")
+            cross_dist = None
+            if all(x is not None for x in [u_g, v_g, u_p, v_p]):
+                cross_dist = round(math.sqrt((u_g - u_p) ** 2 + (v_g - v_p) ** 2), 6)
+                result["regional_cross_region_distance"] = cross_dist
+
+            # Check face_region compatibility
+            fr_g = mark_g.get("face_region", "unknown")
+            fr_p = mark_p.get("face_region", "unknown")
+            if fr_g != "unknown" and fr_g == fr_p:
+                result["regional_comparison_mode"] = "face_region_compatible_cross_canonical"
+                return result
+
+            # Check related_region compatibility
+            is_related, group_name = are_regions_related(region_g, region_p)
+            if is_related:
+                result["regional_comparison_mode"] = "related_region_compatible"
+                result["regional_related_region_group"] = group_name
+                return result
+
+        return result
     except Exception:
-        return {
-            "regional_available": False,
-            "regional_same_region": False,
-            "regional_same_subcell": False,
-            "regional_uv_distance": None,
-            "regional_anchor_distance_delta": None,
-            "regional_canonical_region_gallery": None,
-            "regional_canonical_region_probe": None,
-            "regional_coordinate_quality_gallery": None,
-            "regional_coordinate_quality_probe": None,
-            "regional_cost_enabled": _USE_REGIONAL_COST,
-        }
+        return _empty
 
 
 def _histogram_intersection(h1, h2):
@@ -287,11 +357,11 @@ def _compute_patch_similarity_telemetry(mark_g: dict, mark_p: dict) -> dict:
 
     TELEMETRY ONLY — never applied to match cost.
 
-    Similarity metrics:
-      - LBP histogram intersection
-      - Intensity histogram intersection
-      - Hu moment L1 distance
-      - Gradient feature differences
+    Phase 2B additions:
+      - Individual component similarities (hu_similarity, gradient_similarity, etc.)
+      - Edge density delta
+      - Texture energy similarity
+      - Three alternate combined formulas for side-by-side comparison
 
     Returns dict with patch_* prefixed keys.
     """
@@ -304,6 +374,18 @@ def _compute_patch_similarity_telemetry(mark_g: dict, mark_p: dict) -> dict:
         "patch_texture_energy_delta": None,
         "patch_combined_similarity": None,
         "patch_cost_enabled": _USE_PATCH_COST,
+        # Phase 2B: individual component similarities
+        "patch_hu_similarity": None,
+        "patch_gradient_similarity": None,
+        "patch_texture_energy_similarity": None,
+        "patch_edge_density_delta": None,
+        "patch_edge_density_gallery": None,
+        "patch_edge_density_probe": None,
+        # Phase 2B: alternate combined scores
+        "patch_combined_similarity_v1_current": None,
+        "patch_combined_similarity_hu_gradient": None,
+        "patch_combined_similarity_hist_hu_gradient": None,
+        "patch_combined_similarity_no_lbp": None,
     }
 
     try:
@@ -336,18 +418,25 @@ def _compute_patch_similarity_telemetry(mark_g: dict, mark_p: dict) -> dict:
         tex_p = desc_p.get("texture_energy")
         tex_delta = abs(tex_g - tex_p) if (tex_g is not None and tex_p is not None) else None
 
-        # Combined similarity: weighted average of available metrics
+        # Phase 2B: edge density
+        edge_g = desc_g.get("edge_density")
+        edge_p = desc_p.get("edge_density")
+        edge_delta = abs(edge_g - edge_p) if (edge_g is not None and edge_p is not None) else None
+
+        # Phase 2B: compute individual component similarities
+        hu_sim = max(0.0, 1.0 - hu_dist / 10.0) if hu_dist is not None else None
+        grad_sim = max(0.0, 1.0 - grad_mean_delta / 500.0) if grad_mean_delta is not None else None
+        tex_sim = max(0.0, 1.0 - tex_delta / 5000.0) if tex_delta is not None else None
+
+        # V1 combined (original formula — preserved as stable reference)
         components = []
         if lbp_sim is not None:
             components.append(("lbp", lbp_sim, 0.35))
         if int_sim is not None:
             components.append(("int", int_sim, 0.25))
-        if hu_dist is not None:
-            # Convert distance to similarity (lower distance = higher similarity)
-            hu_sim = max(0.0, 1.0 - hu_dist / 10.0)
+        if hu_sim is not None:
             components.append(("hu", hu_sim, 0.25))
-        if grad_mean_delta is not None:
-            grad_sim = max(0.0, 1.0 - grad_mean_delta / 500.0)
+        if grad_sim is not None:
             components.append(("grad", grad_sim, 0.15))
 
         if components:
@@ -355,6 +444,23 @@ def _compute_patch_similarity_telemetry(mark_g: dict, mark_p: dict) -> dict:
             combined = sum(c[1] * c[2] for c in components) / total_weight if total_weight > 0 else None
         else:
             combined = None
+
+        # Phase 2B alternate combined: hu_gradient (hu 0.5 + gradient 0.5)
+        alt_hu_grad = None
+        if hu_sim is not None and grad_sim is not None:
+            alt_hu_grad = hu_sim * 0.5 + grad_sim * 0.5
+
+        # Phase 2B alternate combined: hist_hu_gradient (histogram 0.3 + hu 0.4 + gradient 0.3)
+        alt_hist_hu_grad = None
+        if int_sim is not None and hu_sim is not None and grad_sim is not None:
+            alt_hist_hu_grad = int_sim * 0.3 + hu_sim * 0.4 + grad_sim * 0.3
+
+        # Phase 2B alternate combined: no_lbp (same as v1 but LBP excluded)
+        alt_no_lbp = None
+        no_lbp_components = [(n, v, w) for n, v, w in components if n != "lbp"]
+        if no_lbp_components:
+            tw = sum(c[2] for c in no_lbp_components)
+            alt_no_lbp = sum(c[1] * c[2] for c in no_lbp_components) / tw if tw > 0 else None
 
         return {
             "patch_available": True,
@@ -365,6 +471,18 @@ def _compute_patch_similarity_telemetry(mark_g: dict, mark_p: dict) -> dict:
             "patch_texture_energy_delta": round(tex_delta, 4) if tex_delta is not None else None,
             "patch_combined_similarity": round(combined, 4) if combined is not None else None,
             "patch_cost_enabled": _USE_PATCH_COST,
+            # Phase 2B: individual component similarities
+            "patch_hu_similarity": round(hu_sim, 4) if hu_sim is not None else None,
+            "patch_gradient_similarity": round(grad_sim, 4) if grad_sim is not None else None,
+            "patch_texture_energy_similarity": round(tex_sim, 4) if tex_sim is not None else None,
+            "patch_edge_density_delta": round(edge_delta, 4) if edge_delta is not None else None,
+            "patch_edge_density_gallery": round(edge_g, 4) if edge_g is not None else None,
+            "patch_edge_density_probe": round(edge_p, 4) if edge_p is not None else None,
+            # Phase 2B: alternate combined scores (all telemetry-only)
+            "patch_combined_similarity_v1_current": round(combined, 4) if combined is not None else None,
+            "patch_combined_similarity_hu_gradient": round(alt_hu_grad, 4) if alt_hu_grad is not None else None,
+            "patch_combined_similarity_hist_hu_gradient": round(alt_hist_hu_grad, 4) if alt_hist_hu_grad is not None else None,
+            "patch_combined_similarity_no_lbp": round(alt_no_lbp, 4) if alt_no_lbp is not None else None,
         }
 
     except Exception:
@@ -714,6 +832,15 @@ def match_facial_marks_strict(gallery_marks: list, probe_marks: list,
                 "regional_canonical_region_probe": meta.get("regional_canonical_region_probe"),
                 "regional_coordinate_quality_gallery": meta.get("regional_coordinate_quality_gallery"),
                 "regional_coordinate_quality_probe": meta.get("regional_coordinate_quality_probe"),
+                # Phase 2B: regional diagnostics
+                "regional_unavailable_reason": meta.get("regional_unavailable_reason"),
+                "regional_position_present_gallery": meta.get("regional_position_present_gallery", False),
+                "regional_position_present_probe": meta.get("regional_position_present_probe", False),
+                "regional_region_confidence_gallery": meta.get("regional_region_confidence_gallery"),
+                "regional_region_confidence_probe": meta.get("regional_region_confidence_probe"),
+                "regional_comparison_mode": meta.get("regional_comparison_mode", "unavailable"),
+                "regional_related_region_group": meta.get("regional_related_region_group"),
+                "regional_cross_region_distance": meta.get("regional_cross_region_distance"),
                 # Phase 2: Patch descriptor telemetry
                 "patch_available": meta.get("patch_available", False),
                 "patch_lbp_similarity": meta.get("patch_lbp_similarity"),
@@ -722,6 +849,32 @@ def match_facial_marks_strict(gallery_marks: list, probe_marks: list,
                 "patch_gradient_mean_delta": meta.get("patch_gradient_mean_delta"),
                 "patch_texture_energy_delta": meta.get("patch_texture_energy_delta"),
                 "patch_combined_similarity": meta.get("patch_combined_similarity"),
+                # Phase 2B: individual patch component similarities
+                "patch_hu_similarity": meta.get("patch_hu_similarity"),
+                "patch_gradient_similarity": meta.get("patch_gradient_similarity"),
+                "patch_texture_energy_similarity": meta.get("patch_texture_energy_similarity"),
+                "patch_edge_density_delta": meta.get("patch_edge_density_delta"),
+                "patch_edge_density_gallery": meta.get("patch_edge_density_gallery"),
+                "patch_edge_density_probe": meta.get("patch_edge_density_probe"),
+                # Phase 2B: alternate combined patch scores (all telemetry-only)
+                "patch_combined_similarity_v1_current": meta.get("patch_combined_similarity_v1_current"),
+                "patch_combined_similarity_hu_gradient": meta.get("patch_combined_similarity_hu_gradient"),
+                "patch_combined_similarity_hist_hu_gradient": meta.get("patch_combined_similarity_hist_hu_gradient"),
+                "patch_combined_similarity_no_lbp": meta.get("patch_combined_similarity_no_lbp"),
+                # Phase 2B: per-correspondence mark type metadata
+                "mark_type_gallery": gallery_marks[r].get("mark_type", "unknown"),
+                "mark_type_probe": probe_marks[c].get("mark_type", "unknown"),
+                "mark_class_gallery": meta.get("mark_class_gallery", "generic"),
+                "mark_class_probe": meta.get("mark_class_probe", "generic"),
+                # Phase 2B: quality scores (telemetry-only composite)
+                "existing_match_quality": meta.get("match_quality", 0.0),
+                "correspondence_quality_score_v1": round(
+                    meta.get("match_quality", 0.0) * 0.5
+                    + (meta.get("regional_uv_distance") is not None and max(0.0, 1.0 - (meta.get("regional_uv_distance") or 1.0)) or 0.0) * 0.25
+                    + (meta.get("patch_combined_similarity") or 0.0) * 0.25,
+                    4
+                ),
+                "correspondence_quality_formula_version": "v1_telemetry_only",
             }
             all_correspondences.append(entry)
             matched_gal.add(int(r))

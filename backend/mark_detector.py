@@ -217,6 +217,10 @@ def _compute_patch_descriptor(cnt, gray, h, w, cx, cy, area, circ, ecc,
         laplacian = cv2.Laplacian(norm_patch, cv2.CV_64F)
         texture_energy = float(laplacian.var())
 
+        # 3f: Edge density (fraction of edge pixels via Canny)
+        edges = cv2.Canny(norm_patch, 50, 150)
+        edge_density = float(np.count_nonzero(edges) / edges.size) if edges.size > 0 else 0.0
+
         return {
             "descriptor_version": _PATCH_DESCRIPTOR_VERSION,
             "patch_extraction_size": patch_size,
@@ -228,6 +232,7 @@ def _compute_patch_descriptor(cnt, gray, h, w, cx, cy, area, circ, ecc,
             "gradient_std": round(grad_std, 4),
             "gradient_max": round(grad_max, 4),
             "texture_energy": round(texture_energy, 4),
+            "edge_density": round(edge_density, 4),
             "mark_type": mark_type,
             "telemetry_only": True,
             "does_not_affect_scoring": True,

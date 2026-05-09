@@ -313,6 +313,15 @@ def run_single_pair(pair, pipeline_modules):
             "regional_canonical_region_probe": c.get("regional_canonical_region_probe"),
             "regional_coordinate_quality_gallery": c.get("regional_coordinate_quality_gallery"),
             "regional_coordinate_quality_probe": c.get("regional_coordinate_quality_probe"),
+            # Phase 2B: regional diagnostics
+            "regional_unavailable_reason": c.get("regional_unavailable_reason"),
+            "regional_position_present_gallery": c.get("regional_position_present_gallery", False),
+            "regional_position_present_probe": c.get("regional_position_present_probe", False),
+            "regional_region_confidence_gallery": c.get("regional_region_confidence_gallery"),
+            "regional_region_confidence_probe": c.get("regional_region_confidence_probe"),
+            "regional_comparison_mode": c.get("regional_comparison_mode", "unavailable"),
+            "regional_related_region_group": c.get("regional_related_region_group"),
+            "regional_cross_region_distance": c.get("regional_cross_region_distance"),
             # Phase 2: Patch descriptor telemetry
             "patch_available": c.get("patch_available", False),
             "patch_lbp_similarity": c.get("patch_lbp_similarity"),
@@ -321,6 +330,27 @@ def run_single_pair(pair, pipeline_modules):
             "patch_gradient_mean_delta": c.get("patch_gradient_mean_delta"),
             "patch_texture_energy_delta": c.get("patch_texture_energy_delta"),
             "patch_combined_similarity": c.get("patch_combined_similarity"),
+            # Phase 2B: individual patch component similarities
+            "patch_hu_similarity": c.get("patch_hu_similarity"),
+            "patch_gradient_similarity": c.get("patch_gradient_similarity"),
+            "patch_texture_energy_similarity": c.get("patch_texture_energy_similarity"),
+            "patch_edge_density_delta": c.get("patch_edge_density_delta"),
+            "patch_edge_density_gallery": c.get("patch_edge_density_gallery"),
+            "patch_edge_density_probe": c.get("patch_edge_density_probe"),
+            # Phase 2B: alternate combined patch scores
+            "patch_combined_similarity_v1_current": c.get("patch_combined_similarity_v1_current"),
+            "patch_combined_similarity_hu_gradient": c.get("patch_combined_similarity_hu_gradient"),
+            "patch_combined_similarity_hist_hu_gradient": c.get("patch_combined_similarity_hist_hu_gradient"),
+            "patch_combined_similarity_no_lbp": c.get("patch_combined_similarity_no_lbp"),
+            # Phase 2B: per-correspondence mark type metadata
+            "mark_type_gallery": c.get("mark_type_gallery"),
+            "mark_type_probe": c.get("mark_type_probe"),
+            "mark_class_gallery": c.get("mark_class_gallery"),
+            "mark_class_probe": c.get("mark_class_probe"),
+            # Phase 2B: quality scores
+            "existing_match_quality": c.get("existing_match_quality"),
+            "correspondence_quality_score_v1": c.get("correspondence_quality_score_v1"),
+            "correspondence_quality_formula_version": c.get("correspondence_quality_formula_version"),
         } for c in accepted
     ]
     

@@ -16,6 +16,46 @@ from itertools import combinations
 MARK_ANATOMY_VERSION = "2.0.0"
 COORDINATE_SYSTEM_VERSION = "1.0.0-phase1"
 REGIONAL_COORDINATE_VERSION = "2.0.0-regional-canonical"
+
+# ── Phase 2B: Related Region Groups (telemetry-only) ──
+# Canonical regions that are anatomically adjacent and may share coordinate
+# comparability even when the strict canonical_region match fails.
+# Used ONLY for telemetry diagnostics — never affects scoring.
+_RELATED_REGION_GROUPS = [
+    frozenset({"forehead", "left_temple", "right_temple", "glabella"}),
+    frozenset({"chin_jaw", "mentolabial"}),
+    frozenset({"left_periocular", "left_cheek", "left_nasolabial", "left_temple"}),
+    frozenset({"right_periocular", "right_cheek", "right_nasolabial", "right_temple"}),
+    frozenset({"mouth", "philtrum", "mentolabial"}),
+    frozenset({"nose", "nose_bridge", "glabella"}),
+]
+
+
+def are_regions_related(region_a, region_b):
+    """Check if two canonical regions belong to the same anatomical family group.
+
+    TELEMETRY ONLY — does NOT affect scoring.
+
+    Args:
+        region_a: Canonical region name string.
+        region_b: Canonical region name string.
+
+    Returns:
+        Tuple (is_related: bool, group_name: str or None).
+        group_name is a descriptive label for the matched family group.
+    """
+    if region_a == region_b:
+        return True, region_a
+    if not region_a or not region_b or region_a == "unknown" or region_b == "unknown":
+        return False, None
+    for group in _RELATED_REGION_GROUPS:
+        if region_a in group and region_b in group:
+            # Build a descriptive group name from the sorted members
+            group_name = "_".join(sorted(group))
+            return True, group_name
+    return False, None
+
+
 BARYCENTRIC_MODE_2D = "2d_mesh_approximation"
 BARYCENTRIC_MODE_FALLBACK = "nearest_landmark_fallback"
 TRIANGLE_SOURCE = "nearest_3_mediapipe_landmarks"
