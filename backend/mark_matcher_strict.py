@@ -183,6 +183,20 @@ def _barycentric_cost(mark_g: dict, mark_p: dict) -> tuple:
     bary_dist, available, comparison_mode, telemetry = compute_barycentric_distance(anat_g, anat_p)
 
     if not available or bary_dist is None:
+        if comparison_mode == "different_triangle_fallback":
+            ua = anat_g.get("barycentric_u")
+            va = anat_g.get("barycentric_v")
+            wa = anat_g.get("barycentric_w")
+            ub = anat_p.get("barycentric_u")
+            vb = anat_p.get("barycentric_v")
+            wb = anat_p.get("barycentric_w")
+            if None not in (ua, va, wa, ub, vb, wb):
+                import math
+                bary_dist = math.sqrt((ua - ub) ** 2 + (va - vb) ** 2 + (wa - wb) ** 2)
+                bary_cost = bary_dist * _BARY_WEIGHT
+                telemetry["barycentric_distance_available"] = True
+                return bary_cost, bary_dist, True, comparison_mode, telemetry
+        
         # Different triangle or unavailable — cost contribution is 0
         # Falls back to existing strict spatial distance for matching
         return 0.0, None, False, comparison_mode, telemetry
@@ -606,7 +620,9 @@ def match_facial_marks_strict(gallery_marks: list, probe_marks: list,
             probe_marks=probe_marks,
             cluster_domination_score=cluster_factor,
         )
-    except Exception:
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         # Never crash matching for constellation telemetry
         constellation_telemetry = None
 

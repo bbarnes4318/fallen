@@ -21,7 +21,7 @@ TRIANGLE_SOURCE = "nearest_3_mediapipe_landmarks"
 
 # ── Mesh confidence thresholds ──
 _MIN_TRIANGLE_AREA = 1e-8  # Below this, triangle is degenerate
-_MIN_BARY_CONFIDENCE = 0.70  # Below this, barycentric coords are not used for matching
+_MIN_BARY_CONFIDENCE = 0.50  # Below this, barycentric coords are not used for matching
 
 # ── Expanded ~15-region landmark mapping ──
 # This is TELEMETRY ONLY. The existing 8-region face_region in mark_detector.py
