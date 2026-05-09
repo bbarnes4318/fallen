@@ -704,6 +704,24 @@ def match_facial_marks_strict(gallery_marks: list, probe_marks: list,
                 "same_mesh_region": (meta.get("mesh_region_gallery") == meta.get("mesh_region_probe")) if meta.get("mesh_region_gallery") and meta.get("mesh_region_gallery") != "unknown" else False,
                 "nearest_landmark_distance_delta": meta.get("nearest_landmark_distance_delta"),
                 "normalized_spatial_distance": meta.get("normalized_spatial_distance"),
+                # Phase 2: Regional canonical coordinate telemetry
+                "regional_available": meta.get("regional_available", False),
+                "regional_same_region": meta.get("regional_same_region", False),
+                "regional_same_subcell": meta.get("regional_same_subcell", False),
+                "regional_uv_distance": meta.get("regional_uv_distance"),
+                "regional_anchor_distance_delta": meta.get("regional_anchor_distance_delta"),
+                "regional_canonical_region_gallery": meta.get("regional_canonical_region_gallery"),
+                "regional_canonical_region_probe": meta.get("regional_canonical_region_probe"),
+                "regional_coordinate_quality_gallery": meta.get("regional_coordinate_quality_gallery"),
+                "regional_coordinate_quality_probe": meta.get("regional_coordinate_quality_probe"),
+                # Phase 2: Patch descriptor telemetry
+                "patch_available": meta.get("patch_available", False),
+                "patch_lbp_similarity": meta.get("patch_lbp_similarity"),
+                "patch_intensity_similarity": meta.get("patch_intensity_similarity"),
+                "patch_hu_moment_distance": meta.get("patch_hu_moment_distance"),
+                "patch_gradient_mean_delta": meta.get("patch_gradient_mean_delta"),
+                "patch_texture_energy_delta": meta.get("patch_texture_energy_delta"),
+                "patch_combined_similarity": meta.get("patch_combined_similarity"),
             }
             all_correspondences.append(entry)
             matched_gal.add(int(r))
