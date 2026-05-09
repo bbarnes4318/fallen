@@ -139,7 +139,6 @@ def _orientation_penalty(mark_g: dict, mark_p: dict) -> float:
     return (angular_delta / 90.0) * _ORIENTATION_PENALTY_SCALE
 
 
-def _barycentric_cost(mark_g: dict, mark_p: dict) -> tuple:
 def _barycentric_cost(mark_g: dict, mark_p: dict, pos_g: tuple, pos_p: tuple) -> tuple:
     """Calculate the barycentric cost component for the strict matcher.
 
