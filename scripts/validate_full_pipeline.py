@@ -428,6 +428,8 @@ def run_single_pair(pair, pipeline_modules):
 
             # Collect per-correspondence barycentric comparison mode stats
             bary_dists = []
+            fallback_landmark_deltas = []
+            fallback_spatial_dists = []
             comparison_mode_counts = {
                 "same_triangle": 0,
                 "same_anchor_set": 0,
@@ -462,16 +464,22 @@ def run_single_pair(pair, pipeline_modules):
                     bd = c.get("barycentric_distance")
                     if bd is not None:
                         bary_dists.append(bd)
+                        
+                if c.get("fallback_mesh_telemetry_available", False):
+                    nld = c.get("nearest_landmark_distance_delta")
+                    nsd = c.get("normalized_spatial_distance")
+                    if nld is not None: fallback_landmark_deltas.append(nld)
+                    if nsd is not None: fallback_spatial_dists.append(nsd)
 
             result["strict_mark_data"]["barycentric_comparison_mode_counts"] = comparison_mode_counts
-            if bary_dists:
-                result["strict_mark_data"]["barycentric_distance_count"] = len(bary_dists)
-                result["strict_mark_data"]["avg_barycentric_distance"] = round(
-                    sum(bary_dists) / len(bary_dists), 6
-                )
-            else:
-                result["strict_mark_data"]["barycentric_distance_count"] = 0
-                result["strict_mark_data"]["avg_barycentric_distance"] = None
+            
+            result["strict_mark_data"]["valid_barycentric_distance_count"] = len(bary_dists)
+            result["strict_mark_data"]["avg_barycentric_distance"] = round(sum(bary_dists) / len(bary_dists), 6) if bary_dists else None
+
+            result["strict_mark_data"]["fallback_mesh_telemetry_available_count"] = len(fallback_landmark_deltas)
+            result["strict_mark_data"]["avg_fallback_nearest_landmark_distance_delta"] = round(sum(fallback_landmark_deltas) / len(fallback_landmark_deltas), 6) if fallback_landmark_deltas else None
+            result["strict_mark_data"]["avg_normalized_spatial_distance"] = round(sum(fallback_spatial_dists) / len(fallback_spatial_dists), 6) if fallback_spatial_dists else None
+
 
     return result
 

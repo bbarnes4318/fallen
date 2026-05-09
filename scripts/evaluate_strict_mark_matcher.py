@@ -93,6 +93,12 @@ def main():
     # Phase 1 constellation telemetry collectors
     same_bary_distances = []
     diff_bary_distances = []
+    
+    same_fallback_landmark_deltas = []
+    diff_fallback_landmark_deltas = []
+    same_fallback_spatial_dists = []
+    diff_fallback_spatial_dists = []
+    
     same_constellation_quality = []
     diff_constellation_quality = []
     same_region_diversity = []
@@ -181,9 +187,13 @@ def main():
         # Phase 1 constellation telemetry
         bary_total_count += 1
         avg_bary_dist = strict_data.get("avg_barycentric_distance")
-        bary_count = strict_data.get("barycentric_distance_count", 0)
+        bary_count = strict_data.get("valid_barycentric_distance_count", 0)
         if bary_count > 0:
             bary_available_count += 1
+            
+        avg_fallback_delta = strict_data.get("avg_fallback_nearest_landmark_distance_delta")
+        avg_fallback_spatial = strict_data.get("avg_normalized_spatial_distance")
+        fallback_count = strict_data.get("fallback_mesh_telemetry_available_count", 0)
 
         # Aggregate comparison mode counts
         mode_counts = strict_data.get("barycentric_comparison_mode_counts", {})
@@ -204,6 +214,15 @@ def main():
                 same_bary_distances.append(avg_bary_dist)
             else:
                 diff_bary_distances.append(avg_bary_dist)
+                
+        # Collect fallback metrics
+        if avg_fallback_delta is not None:
+            if label: same_fallback_landmark_deltas.append(avg_fallback_delta)
+            else: diff_fallback_landmark_deltas.append(avg_fallback_delta)
+            
+        if avg_fallback_spatial is not None:
+            if label: same_fallback_spatial_dists.append(avg_fallback_spatial)
+            else: diff_fallback_spatial_dists.append(avg_fallback_spatial)
 
         constellation = r.get("constellation_telemetry", {})
         if constellation:
@@ -261,6 +280,10 @@ def main():
         "barycentric_available_rate": round(bary_available_count / bary_total_count, 4) if bary_total_count > 0 else 0.0,
         "same_person_avg_barycentric_distance": safe_avg(same_bary_distances),
         "different_person_avg_barycentric_distance": safe_avg(diff_bary_distances),
+        "same_person_avg_fallback_nearest_landmark_distance_delta": safe_avg(same_fallback_landmark_deltas),
+        "different_person_avg_fallback_nearest_landmark_distance_delta": safe_avg(diff_fallback_landmark_deltas),
+        "same_person_avg_fallback_normalized_spatial_distance": safe_avg(same_fallback_spatial_dists),
+        "different_person_avg_fallback_normalized_spatial_distance": safe_avg(diff_fallback_spatial_dists),
         "same_person_avg_constellation_quality_score": safe_avg(same_constellation_quality),
         "different_person_avg_constellation_quality_score": safe_avg(diff_constellation_quality),
         "same_person_avg_region_diversity": safe_avg(same_region_diversity),
@@ -316,18 +339,21 @@ def main():
     print(f"  Cluster penalties: {total_cluster_penalties}")
     print(f"  False positives: {false_positives}")
     print(f"  False negatives: {false_negatives}")
-    print(f"  ── Phase 1 Constellation Telemetry ──")
-    print(f"  Barycentric available rate: {round(bary_available_count / bary_total_count, 4) if bary_total_count > 0 else 0.0}")
-    print(f"  Same-person avg bary distance: {safe_avg(same_bary_distances)}")
-    print(f"  Diff-person avg bary distance: {safe_avg(diff_bary_distances)}")
-    print(f"  Same-person avg constellation quality: {safe_avg(same_constellation_quality)}")
-    print(f"  Diff-person avg constellation quality: {safe_avg(diff_constellation_quality)}")
-    print(f"  Same-person avg region diversity: {safe_avg(same_region_diversity)}")
-    print(f"  Diff-person avg region diversity: {safe_avg(diff_region_diversity)}")
-    print(f"  Constellation labels: {constellation_labels}")
-    print(f"  ── Comparison Mode Counts ──")
-    for mode_key, mode_val in total_comparison_modes.items():
-        print(f"    {mode_key}: {mode_val}")
+    
+    print("\n--- Constellation & Barycentric Phase 1 ---")
+    print(f"  Valid Barycentric Availability Rate: {round(bary_available_count / bary_total_count * 100, 2) if bary_total_count > 0 else 0}%")
+    print(f"  Same-person Avg Barycentric Distance: {safe_avg(same_bary_distances)}")
+    print(f"  Diff-person Avg Barycentric Distance: {safe_avg(diff_bary_distances)}")
+    print(f"  Same-person Avg Fallback Landmark Delta: {safe_avg(same_fallback_landmark_deltas)}")
+    print(f"  Diff-person Avg Fallback Landmark Delta: {safe_avg(diff_fallback_landmark_deltas)}")
+    print(f"  Same-person Avg Fallback Spatial Distance: {safe_avg(same_fallback_spatial_dists)}")
+    print(f"  Diff-person Avg Fallback Spatial Distance: {safe_avg(diff_fallback_spatial_dists)}")
+    print(f"  Same-person Avg Constellation Quality: {safe_avg(same_constellation_quality)}")
+    print(f"  Diff-person Avg Constellation Quality: {safe_avg(diff_constellation_quality)}")
+    print(f"  Constellation Labels: {constellation_labels}")
+    print(f"  Barycentric Modes: {total_comparison_modes}")
+    print(f"  Raw Mark Presence: {raw_debug_aggregate}")
+    print(f"{'=' * 60}\n")
     print(f"  Results: {args.output_dir}")
     print(f"{'=' * 60}")
 

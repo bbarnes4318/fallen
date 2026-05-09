@@ -140,16 +140,20 @@ def _orientation_penalty(mark_g: dict, mark_p: dict) -> float:
 
 
 def _barycentric_cost(mark_g: dict, mark_p: dict) -> tuple:
-    """Compute barycentric distance cost contribution for a mark pair.
+def _barycentric_cost(mark_g: dict, mark_p: dict, pos_g: tuple, pos_p: tuple) -> tuple:
+    """Calculate the barycentric cost component for the strict matcher.
 
-    Returns (bary_cost, bary_distance, bary_available, bary_comparison_mode, bary_telemetry).
-    bary_cost is the cost contribution (>= 0). It can ONLY increase total cost.
-    bary_available is True only when the comparison is mathematically valid
-    (same triangle or same anchor set).
-    bary_comparison_mode: "same_triangle", "same_anchor_set", "different_triangle_fallback", "unavailable".
-    bary_telemetry: dict with diagnostic fields.
+    Args:
+        mark_g: Dictionary for the gallery mark.
+        mark_p: Dictionary for the probe mark.
+        pos_g: Normalized (x, y) coordinates for gallery mark.
+        pos_p: Normalized (x, y) coordinates for probe mark.
+
+    Returns:
+        Tuple of (barycentric_cost, barycentric_distance, available, comparison_mode,
+        bary_telemetry: dict with diagnostic fields.
     """
-    from mark_anatomy import compute_barycentric_distance, BARY_COMPARE_UNAVAILABLE
+    from mark_anatomy import compute_barycentric_distance, BARY_COMPARE_UNAVAILABLE, _BARY_COST_MIN_CONFIDENCE
 
     anat_g = mark_g.get("anatomical_position")
     anat_p = mark_p.get("anatomical_position")
@@ -161,6 +165,7 @@ def _barycentric_cost(mark_g: dict, mark_p: dict) -> tuple:
         "barycentric_distance_available": False,
         "mesh_triangle_gallery": None,
         "mesh_triangle_probe": None,
+        "fallback_mesh_telemetry_available": False,
     }
 
     if anat_g is None or anat_p is None:
@@ -173,33 +178,26 @@ def _barycentric_cost(mark_g: dict, mark_p: dict) -> tuple:
     if mode_g != "2d_mesh_approximation" or mode_p != "2d_mesh_approximation":
         return 0.0, None, False, "unavailable", empty_telemetry
 
-    conf_g = anat_g.get("mesh_confidence", 0.0)
-    conf_p = anat_p.get("mesh_confidence", 0.0)
-
-    if conf_g < _BARY_MIN_CONFIDENCE or conf_p < _BARY_MIN_CONFIDENCE:
-        return 0.0, None, False, "low_confidence", empty_telemetry
-
-    # Delegate to triangle-aware distance computation
+    # Delegate to triangle-aware distance computation (uses telemetry threshold internally)
     bary_dist, available, comparison_mode, telemetry = compute_barycentric_distance(anat_g, anat_p)
 
+    if telemetry.get("fallback_mesh_telemetry_available"):
+        import math
+        dist_spatial = math.sqrt((pos_g[0] - pos_p[0]) ** 2 + (pos_g[1] - pos_p[1]) ** 2)
+        telemetry["normalized_spatial_distance"] = round(dist_spatial, 6)
+
     if not available or bary_dist is None:
-        if comparison_mode == "different_triangle_fallback":
-            ua = anat_g.get("barycentric_u")
-            va = anat_g.get("barycentric_v")
-            wa = anat_g.get("barycentric_w")
-            ub = anat_p.get("barycentric_u")
-            vb = anat_p.get("barycentric_v")
-            wb = anat_p.get("barycentric_w")
-            if None not in (ua, va, wa, ub, vb, wb):
-                import math
-                bary_dist = math.sqrt((ua - ub) ** 2 + (va - vb) ** 2 + (wa - wb) ** 2)
-                bary_cost = bary_dist * _BARY_WEIGHT
-                telemetry["barycentric_distance_available"] = True
-                return bary_cost, bary_dist, True, comparison_mode, telemetry
-        
         # Different triangle or unavailable — cost contribution is 0
         # Falls back to existing strict spatial distance for matching
         return 0.0, None, False, comparison_mode, telemetry
+
+    # NOW check cost confidence
+    conf_g = anat_g.get("mesh_confidence", 0.0)
+    conf_p = anat_p.get("mesh_confidence", 0.0)
+    
+    if conf_g < _BARY_COST_MIN_CONFIDENCE or conf_p < _BARY_COST_MIN_CONFIDENCE:
+        # We have valid barycentric distance for TELEMETRY, but confidence is too low for COST.
+        return 0.0, bary_dist, True, comparison_mode, telemetry
 
     # Only apply cost when comparison is valid (same_triangle or same_anchor_set)
     bary_cost = bary_dist * _BARY_WEIGHT
@@ -267,7 +265,7 @@ def _compute_cost_strict(mark_g: dict, mark_p: dict, pos_g: tuple, pos_p: tuple)
     # ── Phase 1: Barycentric cost contribution (additive, stricter-only) ──
     # This can ONLY INCREASE cost, never decrease it.
     # If unavailable or different triangle, bary_cost is 0.0 — existing path unchanged.
-    bary_cost, bary_dist, bary_available, bary_mode, bary_telemetry = _barycentric_cost(mark_g, mark_p)
+    bary_cost, bary_dist, bary_available, bary_mode, bary_telemetry = _barycentric_cost(mark_g, mark_p, pos_g, pos_p)
     cost += bary_cost  # Always >= 0, so cost can only go up
 
     if cost > max_cost:
@@ -298,6 +296,9 @@ def _compute_cost_strict(mark_g: dict, mark_p: dict, pos_g: tuple, pos_p: tuple)
         "barycentric_triangle_match": bary_telemetry.get("barycentric_triangle_match", False),
         "barycentric_anchor_overlap_count": bary_telemetry.get("barycentric_anchor_overlap_count", 0),
         "barycentric_distance_available": bary_telemetry.get("barycentric_distance_available", False),
+        "fallback_mesh_telemetry_available": bary_telemetry.get("fallback_mesh_telemetry_available", False),
+        "nearest_landmark_distance_delta": bary_telemetry.get("nearest_landmark_distance_delta"),
+        "normalized_spatial_distance": bary_telemetry.get("normalized_spatial_distance"),
         "mesh_triangle_gallery": bary_telemetry.get("mesh_triangle_gallery"),
         "mesh_triangle_probe": bary_telemetry.get("mesh_triangle_probe"),
     }

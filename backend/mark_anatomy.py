@@ -21,7 +21,8 @@ TRIANGLE_SOURCE = "nearest_3_mediapipe_landmarks"
 
 # ── Mesh confidence thresholds ──
 _MIN_TRIANGLE_AREA = 1e-8  # Below this, triangle is degenerate
-_MIN_BARY_CONFIDENCE = 0.50  # Below this, barycentric coords are not used for matching
+_BARY_TELEMETRY_MIN_CONFIDENCE = 0.50  # Below this, barycentric coords are totally ignored even for telemetry
+_BARY_COST_MIN_CONFIDENCE = 0.70  # Below this, barycentric distance doesn't contribute to match cost
 
 # ── Expanded ~15-region landmark mapping ──
 # This is TELEMETRY ONLY. The existing 8-region face_region in mark_detector.py
@@ -449,6 +450,7 @@ def compute_barycentric_distance(anat_a, anat_b):
         "barycentric_distance_available": False,
         "mesh_triangle_gallery": None,
         "mesh_triangle_probe": None,
+        "fallback_mesh_telemetry_available": False,
     }
 
     if anat_a is None or anat_b is None:
@@ -463,7 +465,7 @@ def compute_barycentric_distance(anat_a, anat_b):
     conf_a = anat_a.get("mesh_confidence", 0.0)
     conf_b = anat_b.get("mesh_confidence", 0.0)
 
-    if conf_a < _MIN_BARY_CONFIDENCE or conf_b < _MIN_BARY_CONFIDENCE:
+    if conf_a < _BARY_TELEMETRY_MIN_CONFIDENCE or conf_b < _BARY_TELEMETRY_MIN_CONFIDENCE:
         return None, False, BARY_COMPARE_UNAVAILABLE, empty_telemetry
 
     ua = anat_a.get("barycentric_u")
@@ -491,6 +493,7 @@ def compute_barycentric_distance(anat_a, anat_b):
         "barycentric_distance_available": False,
         "mesh_triangle_gallery": tri_id_a,
         "mesh_triangle_probe": tri_id_b,
+        "fallback_mesh_telemetry_available": False,
     }
 
     # ── Case A: Same triangle (exact match) ──
@@ -501,36 +504,32 @@ def compute_barycentric_distance(anat_a, anat_b):
         base_telemetry["barycentric_distance_available"] = True
         return dist, True, BARY_COMPARE_SAME_TRIANGLE, base_telemetry
 
-    # ── Case B: Same anchor set (different order) ──
-    if len(anchor_set_a) == 3 and anchor_set_a == anchor_set_b:
-        # Align both coordinate tuples to the same canonical (sorted) vertex order
-        sorted_anchors = sorted(anchor_set_a)
-        aligned_a = _align_bary_coords_to_sorted_anchors(
-            (ua, va, wa), anchors_a, sorted_anchors
-        )
-        aligned_b = _align_bary_coords_to_sorted_anchors(
-            (ub, vb, wb), anchors_b, sorted_anchors
-        )
+    # ── Case B: Same anchor set, different vertex ordering ──
+    if anchor_overlap == 3:
+        target_sorted_indices = sorted(anchor_set_a)
+        
+        bary_a = (ua, va, wa)
+        aligned_a = _align_bary_coords_to_sorted_anchors(bary_a, anchors_a, target_sorted_indices)
+        
+        bary_b = (ub, vb, wb)
+        aligned_b = _align_bary_coords_to_sorted_anchors(bary_b, anchors_b, target_sorted_indices)
 
         if aligned_a is not None and aligned_b is not None:
-            dist = math.sqrt(
-                (aligned_a[0] - aligned_b[0]) ** 2 +
-                (aligned_a[1] - aligned_b[1]) ** 2 +
-                (aligned_a[2] - aligned_b[2]) ** 2
-            )
+            dist = math.sqrt((aligned_a[0] - aligned_b[0]) ** 2 + 
+                             (aligned_a[1] - aligned_b[1]) ** 2 + 
+                             (aligned_a[2] - aligned_b[2]) ** 2)
             base_telemetry["barycentric_comparison_mode"] = BARY_COMPARE_SAME_ANCHOR_SET
-            base_telemetry["barycentric_triangle_match"] = False
             base_telemetry["barycentric_distance_available"] = True
             return dist, True, BARY_COMPARE_SAME_ANCHOR_SET, base_telemetry
-        else:
-            # Alignment failed — treat as different triangle
-            base_telemetry["barycentric_comparison_mode"] = BARY_COMPARE_DIFFERENT_TRIANGLE
-            base_telemetry["barycentric_distance_available"] = False
-            return None, False, BARY_COMPARE_DIFFERENT_TRIANGLE, base_telemetry
 
     # ── Case C: Different triangle — NOT comparable ──
     base_telemetry["barycentric_comparison_mode"] = BARY_COMPARE_DIFFERENT_TRIANGLE
     base_telemetry["barycentric_distance_available"] = False
+    
+    if anchor_overlap > 0:
+        base_telemetry["fallback_mesh_telemetry_available"] = True
+        base_telemetry["nearest_landmark_distance_delta"] = round(abs(anat_a.get("nearest_landmark_distance", 0) - anat_b.get("nearest_landmark_distance", 0)), 6)
+        
     return None, False, BARY_COMPARE_DIFFERENT_TRIANGLE, base_telemetry
 
 
