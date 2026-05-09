@@ -426,59 +426,59 @@ def run_single_pair(pair, pipeline_modules):
         if constellation_telem is not None:
             result["constellation_telemetry"] = constellation_telem
 
-            # Collect per-correspondence barycentric comparison mode stats
-            bary_dists = []
-            fallback_landmark_deltas = []
-            fallback_spatial_dists = []
-            comparison_mode_counts = {
-                "same_triangle": 0,
-                "same_anchor_set": 0,
-                "different_triangle_fallback": 0,
-                "unavailable": 0,
-                "low_confidence": 0,
-                "missing_anatomical_position": 0,
-                "anchor_overlap_3": 0,
-                "anchor_overlap_2": 0,
-                "anchor_overlap_1": 0,
-                "same_mesh_region": 0,
-            }
-            for c in mark_payload.get("scoring_correspondences", []):
-                mode = c.get("barycentric_comparison_mode", "unavailable")
-                if mode in comparison_mode_counts:
-                    comparison_mode_counts[mode] += 1
-                
-                # Check overlaps
-                overlap = c.get("barycentric_anchor_overlap_count", 0)
-                if overlap == 3: comparison_mode_counts["anchor_overlap_3"] += 1
-                elif overlap == 2: comparison_mode_counts["anchor_overlap_2"] += 1
-                elif overlap == 1: comparison_mode_counts["anchor_overlap_1"] += 1
-                
-                # Check mesh region match
-                reg_g = c.get("mesh_region_gallery")
-                reg_p = c.get("mesh_region_probe")
-                if reg_g and reg_p and reg_g != "unknown" and reg_g == reg_p:
-                    comparison_mode_counts["same_mesh_region"] += 1
-
-                # Only include valid comparisons (same_triangle or same_anchor_set)
-                if c.get("barycentric_distance_available", False):
-                    bd = c.get("barycentric_distance")
-                    if bd is not None:
-                        bary_dists.append(bd)
-                        
-                if c.get("fallback_mesh_telemetry_available", False):
-                    nld = c.get("nearest_landmark_distance_delta")
-                    nsd = c.get("normalized_spatial_distance")
-                    if nld is not None: fallback_landmark_deltas.append(nld)
-                    if nsd is not None: fallback_spatial_dists.append(nsd)
-
-            result["strict_mark_data"]["barycentric_comparison_mode_counts"] = comparison_mode_counts
+        # Collect per-correspondence barycentric comparison mode stats
+        bary_dists = []
+        fallback_landmark_deltas = []
+        fallback_spatial_dists = []
+        comparison_mode_counts = {
+            "same_triangle": 0,
+            "same_anchor_set": 0,
+            "different_triangle_fallback": 0,
+            "unavailable": 0,
+            "low_confidence": 0,
+            "missing_anatomical_position": 0,
+            "anchor_overlap_3": 0,
+            "anchor_overlap_2": 0,
+            "anchor_overlap_1": 0,
+            "same_mesh_region": 0,
+        }
+        for c in mark_payload.get("scoring_correspondences", []):
+            mode = c.get("barycentric_comparison_mode", "unavailable")
+            if mode in comparison_mode_counts:
+                comparison_mode_counts[mode] += 1
             
-            result["strict_mark_data"]["valid_barycentric_distance_count"] = len(bary_dists)
-            result["strict_mark_data"]["avg_barycentric_distance"] = round(sum(bary_dists) / len(bary_dists), 6) if bary_dists else None
+            # Check overlaps
+            overlap = c.get("barycentric_anchor_overlap_count", 0)
+            if overlap == 3: comparison_mode_counts["anchor_overlap_3"] += 1
+            elif overlap == 2: comparison_mode_counts["anchor_overlap_2"] += 1
+            elif overlap == 1: comparison_mode_counts["anchor_overlap_1"] += 1
+            
+            # Check mesh region match
+            reg_g = c.get("mesh_region_gallery")
+            reg_p = c.get("mesh_region_probe")
+            if reg_g and reg_p and reg_g != "unknown" and reg_g == reg_p:
+                comparison_mode_counts["same_mesh_region"] += 1
 
-            result["strict_mark_data"]["fallback_mesh_telemetry_available_count"] = len(fallback_landmark_deltas)
-            result["strict_mark_data"]["avg_fallback_nearest_landmark_distance_delta"] = round(sum(fallback_landmark_deltas) / len(fallback_landmark_deltas), 6) if fallback_landmark_deltas else None
-            result["strict_mark_data"]["avg_normalized_spatial_distance"] = round(sum(fallback_spatial_dists) / len(fallback_spatial_dists), 6) if fallback_spatial_dists else None
+            # Only include valid comparisons (same_triangle or same_anchor_set)
+            if c.get("barycentric_distance_available", False):
+                bd = c.get("barycentric_distance")
+                if bd is not None:
+                    bary_dists.append(bd)
+                    
+            if c.get("fallback_mesh_telemetry_available", False):
+                nld = c.get("nearest_landmark_distance_delta")
+                nsd = c.get("normalized_spatial_distance")
+                if nld is not None: fallback_landmark_deltas.append(nld)
+                if nsd is not None: fallback_spatial_dists.append(nsd)
+
+        result["strict_mark_data"]["barycentric_comparison_mode_counts"] = comparison_mode_counts
+        
+        result["strict_mark_data"]["valid_barycentric_distance_count"] = len(bary_dists)
+        result["strict_mark_data"]["avg_barycentric_distance"] = round(sum(bary_dists) / len(bary_dists), 6) if bary_dists else None
+
+        result["strict_mark_data"]["fallback_mesh_telemetry_available_count"] = len(fallback_landmark_deltas)
+        result["strict_mark_data"]["avg_fallback_nearest_landmark_distance_delta"] = round(sum(fallback_landmark_deltas) / len(fallback_landmark_deltas), 6) if fallback_landmark_deltas else None
+        result["strict_mark_data"]["avg_normalized_spatial_distance"] = round(sum(fallback_spatial_dists) / len(fallback_spatial_dists), 6) if fallback_spatial_dists else None
 
 
     return result
