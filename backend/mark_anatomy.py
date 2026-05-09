@@ -13,8 +13,9 @@ import math
 from collections import Counter
 from itertools import combinations
 
-MARK_ANATOMY_VERSION = "1.0.0"
+MARK_ANATOMY_VERSION = "2.0.0"
 COORDINATE_SYSTEM_VERSION = "1.0.0-phase1"
+REGIONAL_COORDINATE_VERSION = "2.0.0-regional-canonical"
 BARYCENTRIC_MODE_2D = "2d_mesh_approximation"
 BARYCENTRIC_MODE_FALLBACK = "nearest_landmark_fallback"
 TRIANGLE_SOURCE = "nearest_3_mediapipe_landmarks"
@@ -649,3 +650,458 @@ def compute_constellation_telemetry(scoring_correspondences, suppressed_correspo
         "telemetry_only": True,
         "does_not_affect_scoring": True,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 2: Regional Canonical Coordinate System v2.0.0
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Each region is defined by an origin landmark + u-axis landmark + v-axis landmark.
+# This creates a local coordinate basis anchored to anatomically stable points.
+#
+# For a mark at centroid P:
+#   O = origin anchor position
+#   U_vec = (u_axis_anchor - O)  → defines the positive-u direction
+#   V_vec = (v_axis_anchor - O)  → defines the positive-v direction
+#   P_rel = P - O
+#   region_u = dot(P_rel, U_vec) / dot(U_vec, U_vec)
+#   region_v = dot(P_rel, V_vec) / dot(V_vec, V_vec)
+#
+# Raw region_u/region_v are NEVER silently clamped.
+# If mark falls outside the region frame, region_coordinate_in_bounds = False.
+#
+# TELEMETRY ONLY — does NOT affect scoring.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_REGION_ANCHOR_TABLE = {
+    # ── Forehead ──
+    "forehead": {
+        "region_name": "forehead",
+        "origin_anchor": 10,      # Top-center of forehead
+        "u_axis_anchor": 338,     # Right forehead (defines +u = rightward)
+        "v_axis_anchor": 151,     # Below center (defines +v = downward)
+        "optional_boundary_anchors": [109, 284],
+        "allowed_region_landmarks": list(_FOREHEAD_IDX),
+        "notes": "Upper face, above brow line. Origin at hairline center.",
+    },
+    # ── Left periocular ──
+    "left_periocular": {
+        "region_name": "left_periocular",
+        "origin_anchor": 70,      # Left brow medial
+        "u_axis_anchor": 46,      # Left brow lateral
+        "v_axis_anchor": 145,     # Left eye lower
+        "optional_boundary_anchors": [33, 133],
+        "allowed_region_landmarks": list(_LEFT_EYE_IDX | _LEFT_BROW_IDX),
+        "notes": "Left eye + brow region.",
+    },
+    # ── Right periocular ──
+    "right_periocular": {
+        "region_name": "right_periocular",
+        "origin_anchor": 300,     # Right brow medial
+        "u_axis_anchor": 276,     # Right brow lateral
+        "v_axis_anchor": 374,     # Right eye lower
+        "optional_boundary_anchors": [362, 263],
+        "allowed_region_landmarks": list(_RIGHT_EYE_IDX | _RIGHT_BROW_IDX),
+        "notes": "Right eye + brow region.",
+    },
+    # ── Glabella ──
+    "glabella": {
+        "region_name": "glabella",
+        "origin_anchor": 9,       # Center of glabella
+        "u_axis_anchor": 337,     # Right side
+        "v_axis_anchor": 168,     # Nose bridge top
+        "optional_boundary_anchors": [108, 299],
+        "allowed_region_landmarks": list(_GLABELLA_IDX),
+        "notes": "Between the brows. Small region, high stability.",
+    },
+    # ── Nose bridge ──
+    "nose_bridge": {
+        "region_name": "nose_bridge",
+        "origin_anchor": 6,       # Upper nose bridge
+        "u_axis_anchor": 197,     # Nose right side
+        "v_axis_anchor": 4,       # Nose tip direction
+        "optional_boundary_anchors": [168, 195],
+        "allowed_region_landmarks": list(_NOSE_BRIDGE_IDX),
+        "notes": "Upper nose structure. Narrow region.",
+    },
+    # ── Nose (full) ──
+    "nose": {
+        "region_name": "nose",
+        "origin_anchor": 6,       # Upper nose bridge center
+        "u_axis_anchor": 327,     # Right alar
+        "v_axis_anchor": 4,       # Nose tip
+        "optional_boundary_anchors": [98, 2],
+        "allowed_region_landmarks": list(_NOSE_IDX),
+        "notes": "Full nose. Overlaps nose_bridge; nose_bridge takes priority.",
+    },
+    # ── Left cheek ──
+    "left_cheek": {
+        "region_name": "left_cheek",
+        "origin_anchor": 116,     # Upper left cheek (below eye)
+        "u_axis_anchor": 123,     # Mid-left cheek lateral
+        "v_axis_anchor": 187,     # Lower left cheek
+        "optional_boundary_anchors": [205, 135],
+        "allowed_region_landmarks": list(_LEFT_CHEEK_IDX),
+        "notes": "Left cheek body. Largest region. Key for mole mapping.",
+    },
+    # ── Right cheek ──
+    "right_cheek": {
+        "region_name": "right_cheek",
+        "origin_anchor": 345,     # Upper right cheek (below eye)
+        "u_axis_anchor": 352,     # Mid-right cheek lateral
+        "v_axis_anchor": 411,     # Lower right cheek
+        "optional_boundary_anchors": [425, 364],
+        "allowed_region_landmarks": list(_RIGHT_CHEEK_IDX),
+        "notes": "Right cheek body. Mirror of left_cheek.",
+    },
+    # ── Left nasolabial ──
+    "left_nasolabial": {
+        "region_name": "left_nasolabial",
+        "origin_anchor": 49,      # Upper nasolabial
+        "u_axis_anchor": 131,     # Lateral
+        "v_axis_anchor": 198,     # Lower nasolabial
+        "optional_boundary_anchors": [48, 134],
+        "allowed_region_landmarks": list(_LEFT_NASOLABIAL_IDX),
+        "notes": "Left nasolabial fold region.",
+    },
+    # ── Right nasolabial ──
+    "right_nasolabial": {
+        "region_name": "right_nasolabial",
+        "origin_anchor": 279,     # Upper nasolabial
+        "u_axis_anchor": 360,     # Lateral
+        "v_axis_anchor": 420,     # Lower nasolabial
+        "optional_boundary_anchors": [278, 363],
+        "allowed_region_landmarks": list(_RIGHT_NASOLABIAL_IDX),
+        "notes": "Right nasolabial fold region.",
+    },
+    # ── Philtrum ──
+    "philtrum": {
+        "region_name": "philtrum",
+        "origin_anchor": 164,     # Upper philtrum (below nose)
+        "u_axis_anchor": 186,     # Left edge
+        "v_axis_anchor": 18,      # Lower lip edge
+        "optional_boundary_anchors": [167, 165],
+        "allowed_region_landmarks": list(_PHILTRUM_IDX),
+        "notes": "Between nose and upper lip.",
+    },
+    # ── Mouth (lips) ──
+    "mouth": {
+        "region_name": "mouth",
+        "origin_anchor": 0,       # Upper lip center
+        "u_axis_anchor": 291,     # Right mouth corner
+        "v_axis_anchor": 17,      # Lower lip center
+        "optional_boundary_anchors": [61, 78],
+        "allowed_region_landmarks": list(_LIPS_IDX),
+        "notes": "Lip region. Low mark density expected.",
+    },
+    # ── Left temple ──
+    "left_temple": {
+        "region_name": "left_temple",
+        "origin_anchor": 132,     # Upper temple
+        "u_axis_anchor": 58,      # Lateral temple
+        "v_axis_anchor": 172,     # Lower temple
+        "optional_boundary_anchors": [136, 150],
+        "allowed_region_landmarks": list(_LEFT_TEMPLE_IDX),
+        "notes": "Left temporal region. Sparse landmarks.",
+    },
+    # ── Right temple ──
+    "right_temple": {
+        "region_name": "right_temple",
+        "origin_anchor": 389,     # Upper temple
+        "u_axis_anchor": 356,     # Lateral temple
+        "v_axis_anchor": 454,     # Lower temple
+        "optional_boundary_anchors": [323, 361],
+        "allowed_region_landmarks": list(_RIGHT_TEMPLE_IDX),
+        "notes": "Right temporal region. Sparse landmarks.",
+    },
+    # ── Chin / jaw ──
+    "chin_jaw": {
+        "region_name": "chin_jaw",
+        "origin_anchor": 152,     # Chin tip
+        "u_axis_anchor": 377,     # Right jaw
+        "v_axis_anchor": 400,     # Upper chin
+        "optional_boundary_anchors": [148, 176],
+        "allowed_region_landmarks": list(_CHIN_JAW_IDX),
+        "notes": "Chin and jawline.",
+    },
+    # ── Mentolabial ──
+    "mentolabial": {
+        "region_name": "mentolabial",
+        "origin_anchor": 17,      # Lower lip center
+        "u_axis_anchor": 314,     # Right lower lip edge
+        "v_axis_anchor": 152,     # Chin
+        "optional_boundary_anchors": [84, 181],
+        "allowed_region_landmarks": list(_MENTOLABIAL_IDX),
+        "notes": "Between lower lip and chin.",
+    },
+}
+
+# Fallback for marks whose region is "unknown" or not in the table
+_REGION_ANCHOR_FALLBACK = {
+    "region_name": "unknown",
+    "origin_anchor": 1,       # Nose tip
+    "u_axis_anchor": 454,     # Right ear
+    "v_axis_anchor": 152,     # Chin
+    "optional_boundary_anchors": [],
+    "allowed_region_landmarks": [],
+    "notes": "Global fallback using whole-face anchors. Low precision.",
+}
+
+
+def _get_landmark_xy(landmarks, idx):
+    """Get (x, y) normalized coordinates from a MediaPipe landmark by index.
+
+    Returns (x, y) float tuple, or None if the index is out of range or
+    the landmark list is missing.
+    """
+    if landmarks is None or idx < 0 or idx >= len(landmarks):
+        return None
+    lm = landmarks[idx]
+    if hasattr(lm, "x"):
+        return (float(lm.x), float(lm.y))
+    if isinstance(lm, (list, tuple)) and len(lm) >= 2:
+        return (float(lm[0]), float(lm[1]))
+    return None
+
+
+def compute_regional_canonical_position(mark_centroid, landmarks, image_shape):
+    """Compute the regional canonical coordinate position for a single mark.
+
+    This maps a mark into a region-local (u, v) coordinate frame defined by
+    three anatomically stable anchor landmarks: origin, u-axis, v-axis.
+
+    TELEMETRY ONLY — does NOT affect production scoring.
+
+    Args:
+        mark_centroid: Tuple (cx, cy) in NORMALIZED [0,1] coordinates.
+        landmarks: MediaPipe landmark list with .x, .y attributes, or None.
+        image_shape: Tuple (height, width) of the image.
+
+    Returns:
+        Dict with regional canonical coordinate fields, or a fallback dict
+        if landmarks are unavailable.
+    """
+    empty_result = {
+        "coordinate_model": "regional_canonical",
+        "coordinate_system_version": REGIONAL_COORDINATE_VERSION,
+        "canonical_region": "unknown",
+        "canonical_region_subcell": None,
+        "region_u": None,
+        "region_v": None,
+        "region_coordinate_in_bounds": False,
+        "distance_to_primary_anchor": None,
+        "distance_to_secondary_anchor": None,
+        "anchor_pair_id": None,
+        "anchor_distances": [],
+        "region_confidence": 0.0,
+        "coordinate_quality": 0.0,
+        "telemetry_only": True,
+        "does_not_affect_scoring": True,
+    }
+
+    if landmarks is None or len(landmarks) < 3:
+        return empty_result
+
+    cx, cy = mark_centroid
+
+    # Step 1: Determine the expanded mesh region for this mark
+    # Use existing barycentric nearest-3 to classify region via majority vote
+    nearest_3 = _find_nearest_3_landmarks(cx, cy, landmarks, 1, 1)
+    if len(nearest_3) < 3:
+        return empty_result
+
+    region_indices = [n[0] for n in nearest_3]
+    canonical_region = compute_expanded_mesh_region(region_indices)
+
+    # Step 2: Look up anchor table entry
+    anchor_entry = _REGION_ANCHOR_TABLE.get(canonical_region, _REGION_ANCHOR_FALLBACK)
+    origin_idx = anchor_entry["origin_anchor"]
+    u_axis_idx = anchor_entry["u_axis_anchor"]
+    v_axis_idx = anchor_entry["v_axis_anchor"]
+
+    # Step 3: Get anchor positions
+    origin_pt = _get_landmark_xy(landmarks, origin_idx)
+    u_axis_pt = _get_landmark_xy(landmarks, u_axis_idx)
+    v_axis_pt = _get_landmark_xy(landmarks, v_axis_idx)
+
+    if origin_pt is None or u_axis_pt is None or v_axis_pt is None:
+        return empty_result
+
+    # Step 4: Compute coordinate basis vectors
+    u_vec = (u_axis_pt[0] - origin_pt[0], u_axis_pt[1] - origin_pt[1])
+    v_vec = (v_axis_pt[0] - origin_pt[0], v_axis_pt[1] - origin_pt[1])
+
+    # Check for degenerate basis (parallel or zero-length vectors)
+    u_dot_u = u_vec[0] * u_vec[0] + u_vec[1] * u_vec[1]
+    v_dot_v = v_vec[0] * v_vec[0] + v_vec[1] * v_vec[1]
+
+    if u_dot_u < 1e-12 or v_dot_v < 1e-12:
+        return empty_result
+
+    # Step 5: Project mark centroid into the coordinate frame
+    p_rel = (cx - origin_pt[0], cy - origin_pt[1])
+    region_u = (p_rel[0] * u_vec[0] + p_rel[1] * u_vec[1]) / u_dot_u
+    region_v = (p_rel[0] * v_vec[0] + p_rel[1] * v_vec[1]) / v_dot_v
+
+    # Step 6: Determine if in-bounds (raw values preserved, NEVER clamped)
+    in_bounds = (0.0 <= region_u <= 1.0 and 0.0 <= region_v <= 1.0)
+
+    # Step 7: Compute subcell (3x3 grid)
+    if in_bounds:
+        subcell_col = min(int(region_u * 3), 2)
+        subcell_row = min(int(region_v * 3), 2)
+        canonical_region_subcell = f"{canonical_region}_{subcell_row}_{subcell_col}"
+    else:
+        # Out of bounds — still compute a subcell for telemetry,
+        # but clamp only for the subcell label, not the raw coordinates
+        clamped_u = max(0.0, min(1.0, region_u))
+        clamped_v = max(0.0, min(1.0, region_v))
+        subcell_col = min(int(clamped_u * 3), 2)
+        subcell_row = min(int(clamped_v * 3), 2)
+        canonical_region_subcell = f"{canonical_region}_{subcell_row}_{subcell_col}_oob"
+
+    # Step 8: Compute anchor distances
+    dist_to_origin = math.sqrt((cx - origin_pt[0]) ** 2 + (cy - origin_pt[1]) ** 2)
+    dist_to_u_axis = math.sqrt((cx - u_axis_pt[0]) ** 2 + (cy - u_axis_pt[1]) ** 2)
+    dist_to_v_axis = math.sqrt((cx - v_axis_pt[0]) ** 2 + (cy - v_axis_pt[1]) ** 2)
+
+    # Include optional boundary anchors
+    anchor_distances = [
+        round(dist_to_origin, 6),
+        round(dist_to_u_axis, 6),
+        round(dist_to_v_axis, 6),
+    ]
+    for bnd_idx in anchor_entry.get("optional_boundary_anchors", []):
+        bnd_pt = _get_landmark_xy(landmarks, bnd_idx)
+        if bnd_pt is not None:
+            d = math.sqrt((cx - bnd_pt[0]) ** 2 + (cy - bnd_pt[1]) ** 2)
+            anchor_distances.append(round(d, 6))
+
+    anchor_pair_id = f"anc_{origin_idx}_{u_axis_idx}_{v_axis_idx}"
+
+    # Step 9: Compute coordinate quality and region confidence
+    # Factors: in-bounds, basis orthogonality, distance to origin
+    cross_product = abs(u_vec[0] * v_vec[1] - u_vec[1] * v_vec[0])
+    basis_area = math.sqrt(u_dot_u * v_dot_v)
+    orthogonality = cross_product / basis_area if basis_area > 1e-12 else 0.0
+
+    quality = 1.0
+    if not in_bounds:
+        quality *= 0.5
+    # Penalize near-parallel basis vectors (orthogonality close to 0)
+    quality *= max(0.2, min(1.0, orthogonality / 0.5))
+    # Penalize marks very far from origin
+    if dist_to_origin > 0.3:
+        quality *= 0.6
+    elif dist_to_origin > 0.2:
+        quality *= 0.8
+
+    # Region confidence: based on whether nearest landmarks actually belong
+    # to the assigned region
+    allowed = set(anchor_entry.get("allowed_region_landmarks", []))
+    if allowed:
+        in_region_count = sum(1 for idx in region_indices if idx in allowed)
+        region_confidence = in_region_count / len(region_indices)
+    else:
+        region_confidence = 0.3  # Unknown fallback
+
+    coordinate_quality = round(quality * region_confidence, 4)
+
+    return {
+        "coordinate_model": "regional_canonical",
+        "coordinate_system_version": REGIONAL_COORDINATE_VERSION,
+        "canonical_region": canonical_region,
+        "canonical_region_subcell": canonical_region_subcell,
+        "region_u": round(float(region_u), 6),
+        "region_v": round(float(region_v), 6),
+        "region_coordinate_in_bounds": in_bounds,
+        "distance_to_primary_anchor": round(dist_to_origin, 6),
+        "distance_to_secondary_anchor": round(dist_to_u_axis, 6),
+        "anchor_pair_id": anchor_pair_id,
+        "anchor_distances": anchor_distances,
+        "region_confidence": round(float(region_confidence), 4),
+        "coordinate_quality": coordinate_quality,
+        "telemetry_only": True,
+        "does_not_affect_scoring": True,
+    }
+
+
+def compute_regional_coordinate_distance(pos_a, pos_b):
+    """Compute distance between two marks in regional canonical coordinate space.
+
+    CRITICAL RULE: Regional coordinates are only directly comparable when both
+    marks share the same canonical_region. Cross-region comparison is NOT valid.
+
+    TELEMETRY ONLY — does NOT affect production scoring.
+
+    Args:
+        pos_a: regional_position dict from mark A (output of compute_regional_canonical_position).
+        pos_b: regional_position dict from mark B (output of compute_regional_canonical_position).
+
+    Returns:
+        Tuple (distance, available, telemetry_dict).
+        distance is float or None.
+        available is True only when comparison is valid.
+        telemetry_dict contains diagnostic fields.
+    """
+    empty_telemetry = {
+        "regional_comparison_available": False,
+        "same_canonical_region": False,
+        "same_region_subcell": False,
+        "region_uv_distance": None,
+        "anchor_distance_delta": None,
+        "regional_coordinate_version": REGIONAL_COORDINATE_VERSION,
+        "telemetry_only": True,
+        "does_not_affect_scoring": True,
+    }
+
+    if pos_a is None or pos_b is None:
+        return None, False, empty_telemetry
+
+    region_a = pos_a.get("canonical_region", "unknown")
+    region_b = pos_b.get("canonical_region", "unknown")
+    same_region = (region_a == region_b and region_a != "unknown")
+
+    subcell_a = pos_a.get("canonical_region_subcell")
+    subcell_b = pos_b.get("canonical_region_subcell")
+    same_subcell = (subcell_a is not None and subcell_b is not None and subcell_a == subcell_b)
+
+    u_a = pos_a.get("region_u")
+    v_a = pos_a.get("region_v")
+    u_b = pos_b.get("region_u")
+    v_b = pos_b.get("region_v")
+
+    # Anchor distance delta (always computable if both have anchor_distances)
+    anc_a = pos_a.get("anchor_distances", [])
+    anc_b = pos_b.get("anchor_distances", [])
+    anchor_distance_delta = None
+    if anc_a and anc_b:
+        min_len = min(len(anc_a), len(anc_b))
+        if min_len > 0:
+            delta_sq = sum((anc_a[i] - anc_b[i]) ** 2 for i in range(min_len))
+            anchor_distance_delta = round(math.sqrt(delta_sq), 6)
+
+    telemetry = {
+        "regional_comparison_available": False,
+        "same_canonical_region": same_region,
+        "same_region_subcell": same_subcell,
+        "region_uv_distance": None,
+        "anchor_distance_delta": anchor_distance_delta,
+        "regional_coordinate_version": REGIONAL_COORDINATE_VERSION,
+        "telemetry_only": True,
+        "does_not_affect_scoring": True,
+    }
+
+    if not same_region:
+        return None, False, telemetry
+
+    if any(x is None for x in [u_a, v_a, u_b, v_b]):
+        return None, False, telemetry
+
+    # Euclidean distance in (u, v) space
+    dist = math.sqrt((u_a - u_b) ** 2 + (v_a - v_b) ** 2)
+
+    telemetry["regional_comparison_available"] = True
+    telemetry["region_uv_distance"] = round(dist, 6)
+
+    return dist, True, telemetry

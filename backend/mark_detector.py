@@ -7,7 +7,13 @@ import base64
 import cv2
 import numpy as np
 
-MARK_DETECTOR_VERSION = "2.2.0"
+MARK_DETECTOR_VERSION = "2.3.0"
+
+# ── Patch descriptor constants ──
+_PATCH_DESCRIPTOR_VERSION = "1.0.0"
+_PATCH_MIN_SIZE = 24
+_PATCH_MAX_SIZE = 64
+_DESCRIPTOR_PATCH_SIZE = 32
 
 # Lazy import to avoid circular dependency at module load
 _mark_anatomy = None
@@ -123,6 +129,114 @@ def _find_nearest_landmark(cx, cy, w, h, landmarks):
     return best
 
 
+def _compute_patch_descriptor(cnt, gray, h, w, cx, cy, area, circ, ecc,
+                              orientation, mark_type):
+    """Compute a deterministic local patch descriptor for a detected mark.
+
+    Extraction strategy (from implementation plan):
+      1. Scale extraction window by mark size: 2*radius + margin, range [24, 64] px
+      2. Normalize to 32×32 for comparable descriptors
+      3. Compute: LBP histogram, Hu moments, intensity histogram summary, gradient stats
+
+    TELEMETRY ONLY — does NOT affect production scoring.
+
+    Args:
+        cnt: OpenCV contour array.
+        gray: Grayscale image (uint8).
+        h, w: Image dimensions.
+        cx, cy: Centroid in pixel coordinates.
+        area: Contour area.
+        circ: Circularity.
+        ecc: Eccentricity.
+        orientation: Ellipse orientation angle (degrees) or None.
+        mark_type: Classified mark type string.
+
+    Returns:
+        Dict with descriptor fields, or None if extraction fails.
+    """
+    try:
+        # Step 1: Compute extraction window size
+        radius = math.sqrt(area / math.pi) if area > 0 else 4.0
+        margin = max(4, int(radius * 0.5))
+        raw_size = int(2 * radius + margin)
+        patch_size = max(_PATCH_MIN_SIZE, min(_PATCH_MAX_SIZE, raw_size))
+        half = patch_size // 2
+
+        ix, iy = int(cx), int(cy)
+        y0 = max(0, iy - half)
+        y1 = min(h, iy + half)
+        x0 = max(0, ix - half)
+        x1 = min(w, ix + half)
+
+        patch = gray[y0:y1, x0:x1]
+        if patch.size == 0 or patch.shape[0] < 8 or patch.shape[1] < 8:
+            return None
+
+        # Step 2: Resize to canonical 32×32
+        norm_patch = cv2.resize(patch, (_DESCRIPTOR_PATCH_SIZE, _DESCRIPTOR_PATCH_SIZE),
+                                interpolation=cv2.INTER_AREA)
+
+        # Step 3: Compute descriptors
+
+        # 3a: LBP histogram (simplified uniform LBP via threshold comparison)
+        lbp_codes = np.zeros(norm_patch.shape, dtype=np.uint8)
+        for dy, dx in [(-1, -1), (-1, 0), (-1, 1), (0, 1),
+                       (1, 1), (1, 0), (1, -1), (0, -1)]:
+            shifted = np.roll(np.roll(norm_patch, dy, axis=0), dx, axis=1)
+            lbp_codes = (lbp_codes << 1) | (shifted >= norm_patch).astype(np.uint8)
+        # 16-bin histogram of LBP codes
+        lbp_hist, _ = np.histogram(lbp_codes[1:-1, 1:-1], bins=16, range=(0, 256))
+        lbp_total = lbp_hist.sum()
+        lbp_hist_norm = (lbp_hist / lbp_total).tolist() if lbp_total > 0 else [0.0] * 16
+
+        # 3b: Hu moments (7 log-scale rotation-invariant moments)
+        moments = cv2.moments(norm_patch)
+        hu_raw = cv2.HuMoments(moments).flatten()
+        # Log transform for numerical stability
+        hu_moments = []
+        for hv in hu_raw:
+            if abs(hv) > 0:
+                hu_moments.append(round(-1.0 * math.copysign(1.0, hv) * math.log10(abs(hv)), 6))
+            else:
+                hu_moments.append(0.0)
+
+        # 3c: Intensity histogram summary (8-bin)
+        int_hist, _ = np.histogram(norm_patch, bins=8, range=(0, 256))
+        int_total = int_hist.sum()
+        int_hist_norm = (int_hist / int_total).tolist() if int_total > 0 else [0.0] * 8
+
+        # 3d: Gradient statistics
+        sx = cv2.Scharr(norm_patch, cv2.CV_64F, 1, 0)
+        sy = cv2.Scharr(norm_patch, cv2.CV_64F, 0, 1)
+        grad_mag = np.sqrt(sx ** 2 + sy ** 2)
+        grad_mean = float(np.mean(grad_mag))
+        grad_std = float(np.std(grad_mag))
+        grad_max = float(np.max(grad_mag))
+
+        # 3e: Texture energy (Laplacian variance)
+        laplacian = cv2.Laplacian(norm_patch, cv2.CV_64F)
+        texture_energy = float(laplacian.var())
+
+        return {
+            "descriptor_version": _PATCH_DESCRIPTOR_VERSION,
+            "patch_extraction_size": patch_size,
+            "normalized_size": _DESCRIPTOR_PATCH_SIZE,
+            "lbp_histogram": [round(v, 4) for v in lbp_hist_norm],
+            "hu_moments": hu_moments,
+            "intensity_histogram": [round(v, 4) for v in int_hist_norm],
+            "gradient_mean": round(grad_mean, 4),
+            "gradient_std": round(grad_std, 4),
+            "gradient_max": round(grad_max, 4),
+            "texture_energy": round(texture_energy, 4),
+            "mark_type": mark_type,
+            "telemetry_only": True,
+            "does_not_affect_scoring": True,
+        }
+
+    except Exception:
+        return None
+
+
 def _contour_to_descriptor(cnt, gray, skin_mask, h, w, channel, landmarks, mark_index,
                            is_fallback=False):
     """Build a candidate descriptor from a contour. Returns None if invalid."""
@@ -221,6 +335,23 @@ def _contour_to_descriptor(cnt, gray, skin_mask, h, w, channel, landmarks, mark_
         # Never crash detection for anatomy — graceful degradation
         anatomical_position = None
 
+    # ── Phase 2: Regional canonical coordinate (additive, telemetry only) ──
+    regional_position = None
+    try:
+        anatomy = _get_mark_anatomy()
+        regional_position = anatomy.compute_regional_canonical_position(
+            mark_centroid=(cx / w, cy / h),
+            landmarks=landmarks,
+            image_shape=(h, w),
+        )
+    except Exception:
+        regional_position = None
+
+    # ── Phase 2: Local patch descriptor (deterministic, telemetry only) ──
+    patch_descriptor = _compute_patch_descriptor(
+        cnt, gray, h, w, cx, cy, area, circ, ecc, orientation, mt,
+    )
+
     return {
         "index": mark_index,
         "centroid": (cx / w, cy / h),
@@ -247,8 +378,12 @@ def _contour_to_descriptor(cnt, gray, skin_mask, h, w, channel, landmarks, mark_
         "low_confidence": is_fallback,
         "fallback_generated": is_fallback,
         "contrast": float(contrast),
-        # ── Phase 1 anatomical fields (additive only) ──
+        # ── Phase 1 anatomical fields (additive only, PRESERVED) ──
         "anatomical_position": anatomical_position,
+        # ── Phase 2: Regional canonical coordinate (additive, telemetry only) ──
+        "regional_position": regional_position,
+        # ── Phase 2: Local patch descriptor (additive, telemetry only) ──
+        "patch_descriptor": patch_descriptor,
     }
 
 

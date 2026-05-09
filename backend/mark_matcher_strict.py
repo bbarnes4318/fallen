@@ -65,6 +65,14 @@ _USE_BARYCENTRIC_COST = False
 _BARY_WEIGHT = 1.0
 _BARY_MIN_CONFIDENCE = 0.70  # Require this mesh_confidence for bary distance
 
+# ── Phase 2 Regional Canonical Coordinates ──
+# TELEMETRY ONLY — compute and report, never affect scoring.
+_USE_REGIONAL_COST = False
+
+# ── Phase 2 Patch Descriptors ──
+# TELEMETRY ONLY — compute similarity and report, never affect scoring.
+_USE_PATCH_COST = False
+
 # ── LR Caps ──
 _GENERIC_LR_CAP = 1.0
 _DISTINCTIVE_LR_CAP = 25.0
@@ -204,6 +212,165 @@ def _barycentric_cost(mark_g: dict, mark_p: dict, pos_g: tuple, pos_p: tuple) ->
     return bary_cost, bary_dist, True, comparison_mode, telemetry
 
 
+def _compute_regional_telemetry(mark_g: dict, mark_p: dict) -> dict:
+    """Compute regional canonical coordinate comparison telemetry.
+
+    TELEMETRY ONLY — never applied to match cost.
+
+    Returns dict with regional_* prefixed keys.
+    """
+    try:
+        from mark_anatomy import compute_regional_coordinate_distance
+
+        pos_g = mark_g.get("regional_position")
+        pos_p = mark_p.get("regional_position")
+
+        if pos_g is None or pos_p is None:
+            return {
+                "regional_available": False,
+                "regional_same_region": False,
+                "regional_same_subcell": False,
+                "regional_uv_distance": None,
+                "regional_anchor_distance_delta": None,
+                "regional_canonical_region_gallery": None,
+                "regional_canonical_region_probe": None,
+                "regional_coordinate_quality_gallery": None,
+                "regional_coordinate_quality_probe": None,
+                "regional_cost_enabled": _USE_REGIONAL_COST,
+            }
+
+        dist, available, telem = compute_regional_coordinate_distance(pos_g, pos_p)
+
+        return {
+            "regional_available": available,
+            "regional_same_region": telem.get("same_canonical_region", False),
+            "regional_same_subcell": telem.get("same_region_subcell", False),
+            "regional_uv_distance": telem.get("region_uv_distance"),
+            "regional_anchor_distance_delta": telem.get("anchor_distance_delta"),
+            "regional_canonical_region_gallery": pos_g.get("canonical_region", "unknown"),
+            "regional_canonical_region_probe": pos_p.get("canonical_region", "unknown"),
+            "regional_coordinate_quality_gallery": pos_g.get("coordinate_quality"),
+            "regional_coordinate_quality_probe": pos_p.get("coordinate_quality"),
+            "regional_cost_enabled": _USE_REGIONAL_COST,
+        }
+    except Exception:
+        return {
+            "regional_available": False,
+            "regional_same_region": False,
+            "regional_same_subcell": False,
+            "regional_uv_distance": None,
+            "regional_anchor_distance_delta": None,
+            "regional_canonical_region_gallery": None,
+            "regional_canonical_region_probe": None,
+            "regional_coordinate_quality_gallery": None,
+            "regional_coordinate_quality_probe": None,
+            "regional_cost_enabled": _USE_REGIONAL_COST,
+        }
+
+
+def _histogram_intersection(h1, h2):
+    """Compute histogram intersection similarity (0 to 1, higher = more similar)."""
+    if not h1 or not h2 or len(h1) != len(h2):
+        return None
+    return sum(min(a, b) for a, b in zip(h1, h2))
+
+
+def _hu_moment_l1_distance(hu1, hu2):
+    """Compute L1 distance between log-scale Hu moment vectors."""
+    if not hu1 or not hu2 or len(hu1) != len(hu2):
+        return None
+    return sum(abs(a - b) for a, b in zip(hu1, hu2))
+
+
+def _compute_patch_similarity_telemetry(mark_g: dict, mark_p: dict) -> dict:
+    """Compute patch descriptor similarity telemetry between two marks.
+
+    TELEMETRY ONLY — never applied to match cost.
+
+    Similarity metrics:
+      - LBP histogram intersection
+      - Intensity histogram intersection
+      - Hu moment L1 distance
+      - Gradient feature differences
+
+    Returns dict with patch_* prefixed keys.
+    """
+    empty = {
+        "patch_available": False,
+        "patch_lbp_similarity": None,
+        "patch_intensity_similarity": None,
+        "patch_hu_moment_distance": None,
+        "patch_gradient_mean_delta": None,
+        "patch_texture_energy_delta": None,
+        "patch_combined_similarity": None,
+        "patch_cost_enabled": _USE_PATCH_COST,
+    }
+
+    try:
+        desc_g = mark_g.get("patch_descriptor")
+        desc_p = mark_p.get("patch_descriptor")
+
+        if desc_g is None or desc_p is None:
+            return empty
+
+        lbp_sim = _histogram_intersection(
+            desc_g.get("lbp_histogram", []),
+            desc_p.get("lbp_histogram", []),
+        )
+
+        int_sim = _histogram_intersection(
+            desc_g.get("intensity_histogram", []),
+            desc_p.get("intensity_histogram", []),
+        )
+
+        hu_dist = _hu_moment_l1_distance(
+            desc_g.get("hu_moments", []),
+            desc_p.get("hu_moments", []),
+        )
+
+        grad_mean_g = desc_g.get("gradient_mean")
+        grad_mean_p = desc_p.get("gradient_mean")
+        grad_mean_delta = abs(grad_mean_g - grad_mean_p) if (grad_mean_g is not None and grad_mean_p is not None) else None
+
+        tex_g = desc_g.get("texture_energy")
+        tex_p = desc_p.get("texture_energy")
+        tex_delta = abs(tex_g - tex_p) if (tex_g is not None and tex_p is not None) else None
+
+        # Combined similarity: weighted average of available metrics
+        components = []
+        if lbp_sim is not None:
+            components.append(("lbp", lbp_sim, 0.35))
+        if int_sim is not None:
+            components.append(("int", int_sim, 0.25))
+        if hu_dist is not None:
+            # Convert distance to similarity (lower distance = higher similarity)
+            hu_sim = max(0.0, 1.0 - hu_dist / 10.0)
+            components.append(("hu", hu_sim, 0.25))
+        if grad_mean_delta is not None:
+            grad_sim = max(0.0, 1.0 - grad_mean_delta / 500.0)
+            components.append(("grad", grad_sim, 0.15))
+
+        if components:
+            total_weight = sum(c[2] for c in components)
+            combined = sum(c[1] * c[2] for c in components) / total_weight if total_weight > 0 else None
+        else:
+            combined = None
+
+        return {
+            "patch_available": True,
+            "patch_lbp_similarity": round(lbp_sim, 4) if lbp_sim is not None else None,
+            "patch_intensity_similarity": round(int_sim, 4) if int_sim is not None else None,
+            "patch_hu_moment_distance": round(hu_dist, 4) if hu_dist is not None else None,
+            "patch_gradient_mean_delta": round(grad_mean_delta, 4) if grad_mean_delta is not None else None,
+            "patch_texture_energy_delta": round(tex_delta, 4) if tex_delta is not None else None,
+            "patch_combined_similarity": round(combined, 4) if combined is not None else None,
+            "patch_cost_enabled": _USE_PATCH_COST,
+        }
+
+    except Exception:
+        return empty
+
+
 def _compute_cost_strict(mark_g: dict, mark_p: dict, pos_g: tuple, pos_p: tuple) -> tuple:
     """Compute matching cost with strict type-specific thresholds.
     Returns (cost, metadata_dict) or (None, rejection_reason).
@@ -306,6 +473,15 @@ def _compute_cost_strict(mark_g: dict, mark_p: dict, pos_g: tuple, pos_p: tuple)
         "mesh_region_gallery": mark_g.get("anatomical_position", {}).get("mesh_region", "unknown") if isinstance(mark_g.get("anatomical_position"), dict) else "unknown",
         "mesh_region_probe": mark_p.get("anatomical_position", {}).get("mesh_region", "unknown") if isinstance(mark_p.get("anatomical_position"), dict) else "unknown",
     }
+
+    # ── Phase 2: Regional canonical coordinate telemetry (DOES NOT AFFECT COST) ──
+    regional_telemetry = _compute_regional_telemetry(mark_g, mark_p)
+    metadata.update(regional_telemetry)
+
+    # ── Phase 2: Patch descriptor similarity telemetry (DOES NOT AFFECT COST) ──
+    patch_telemetry = _compute_patch_similarity_telemetry(mark_g, mark_p)
+    metadata.update(patch_telemetry)
+
     return cost, metadata
 
 

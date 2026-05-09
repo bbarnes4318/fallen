@@ -131,6 +131,28 @@ def main():
         "marks_with_nearest_landmark_indices": 0,
     }
 
+    # Phase 2: Regional canonical coordinate collectors
+    same_regional_uv_dists = []
+    diff_regional_uv_dists = []
+    same_regional_anchor_deltas = []
+    diff_regional_anchor_deltas = []
+    regional_available_count = 0
+    regional_same_region_count = 0
+    regional_same_subcell_count = 0
+    regional_total_correspondences = 0
+    same_regional_coord_qualities = []
+    diff_regional_coord_qualities = []
+
+    # Phase 2: Patch descriptor collectors
+    same_patch_lbp_sims = []
+    diff_patch_lbp_sims = []
+    same_patch_combined_sims = []
+    diff_patch_combined_sims = []
+    same_patch_hu_dists = []
+    diff_patch_hu_dists = []
+    patch_available_count = 0
+    patch_total_correspondences = 0
+
     for r in results:
         if r.get("error") == "FACE_NOT_DETECTED":
             face_not_detected += 1
@@ -244,6 +266,55 @@ def main():
             if cql in constellation_labels:
                 constellation_labels[cql] += 1
 
+        # Phase 2: Regional + Patch per-correspondence telemetry
+        # Iterate scoring correspondences to collect regional/patch metrics
+        scoring_corrs = []
+        # Check for scoring_correspondences inside strict_mark_data or at top level
+        if "strict_mark_data" in r:
+            # The correspondences come from the pipeline trace, check validation JSONL
+            pass
+        # Regional and patch data is embedded in accepted_correspondences_detail
+        for c in r.get("accepted_correspondences_detail", []):
+            regional_total_correspondences += 1
+            patch_total_correspondences += 1
+
+            # Regional metrics
+            if c.get("regional_available"):
+                regional_available_count += 1
+                if c.get("regional_same_region"):
+                    regional_same_region_count += 1
+                if c.get("regional_same_subcell"):
+                    regional_same_subcell_count += 1
+                ruv = c.get("regional_uv_distance")
+                if ruv is not None:
+                    if label: same_regional_uv_dists.append(ruv)
+                    else: diff_regional_uv_dists.append(ruv)
+                rad = c.get("regional_anchor_distance_delta")
+                if rad is not None:
+                    if label: same_regional_anchor_deltas.append(rad)
+                    else: diff_regional_anchor_deltas.append(rad)
+                for qkey in ["regional_coordinate_quality_gallery", "regional_coordinate_quality_probe"]:
+                    qv = c.get(qkey)
+                    if qv is not None:
+                        if label: same_regional_coord_qualities.append(qv)
+                        else: diff_regional_coord_qualities.append(qv)
+
+            # Patch metrics
+            if c.get("patch_available"):
+                patch_available_count += 1
+                lbp = c.get("patch_lbp_similarity")
+                if lbp is not None:
+                    if label: same_patch_lbp_sims.append(lbp)
+                    else: diff_patch_lbp_sims.append(lbp)
+                comb = c.get("patch_combined_similarity")
+                if comb is not None:
+                    if label: same_patch_combined_sims.append(comb)
+                    else: diff_patch_combined_sims.append(comb)
+                hu = c.get("patch_hu_moment_distance")
+                if hu is not None:
+                    if label: same_patch_hu_dists.append(hu)
+                    else: diff_patch_hu_dists.append(hu)
+
     # Build report
     def safe_avg(lst):
         return round(sum(lst) / len(lst), 4) if lst else 0.0
@@ -295,6 +366,30 @@ def main():
         "constellation_quality_labels": constellation_labels,
         "barycentric_comparison_mode_counts": total_comparison_modes,
         "raw_mark_presence_totals": raw_debug_aggregate,
+        # Phase 2: Regional canonical coordinate telemetry
+        "regional_coordinate_version": "2.0.0-regional-canonical",
+        "regional_available_rate": round(regional_available_count / regional_total_correspondences, 4) if regional_total_correspondences > 0 else 0.0,
+        "regional_same_region_rate": round(regional_same_region_count / regional_total_correspondences, 4) if regional_total_correspondences > 0 else 0.0,
+        "regional_same_subcell_rate": round(regional_same_subcell_count / regional_total_correspondences, 4) if regional_total_correspondences > 0 else 0.0,
+        "same_person_avg_regional_uv_distance": safe_avg(same_regional_uv_dists),
+        "different_person_avg_regional_uv_distance": safe_avg(diff_regional_uv_dists),
+        "same_person_avg_regional_anchor_delta": safe_avg(same_regional_anchor_deltas),
+        "different_person_avg_regional_anchor_delta": safe_avg(diff_regional_anchor_deltas),
+        "same_person_avg_regional_coord_quality": safe_avg(same_regional_coord_qualities),
+        "different_person_avg_regional_coord_quality": safe_avg(diff_regional_coord_qualities),
+        "regional_cost_enabled": False,
+        "regional_telemetry_only": True,
+        # Phase 2: Patch descriptor telemetry
+        "patch_descriptor_version": "1.0.0",
+        "patch_available_rate": round(patch_available_count / patch_total_correspondences, 4) if patch_total_correspondences > 0 else 0.0,
+        "same_person_avg_patch_lbp_similarity": safe_avg(same_patch_lbp_sims),
+        "different_person_avg_patch_lbp_similarity": safe_avg(diff_patch_lbp_sims),
+        "same_person_avg_patch_combined_similarity": safe_avg(same_patch_combined_sims),
+        "different_person_avg_patch_combined_similarity": safe_avg(diff_patch_combined_sims),
+        "same_person_avg_patch_hu_moment_distance": safe_avg(same_patch_hu_dists),
+        "different_person_avg_patch_hu_moment_distance": safe_avg(diff_patch_hu_dists),
+        "patch_cost_enabled": False,
+        "patch_telemetry_only": True,
     }
 
     # Write JSON report
@@ -357,6 +452,27 @@ def main():
     print(f"  Constellation Labels: {constellation_labels}")
     print(f"  Barycentric Modes: {total_comparison_modes}")
     print(f"  Raw Mark Presence: {raw_debug_aggregate}")
+
+    print("\n--- Phase 2: Regional Canonical Coordinates ---")
+    print(f"  Regional Available Rate: {round(regional_available_count / regional_total_correspondences * 100, 2) if regional_total_correspondences > 0 else 0}%")
+    print(f"  Same-Region Rate: {round(regional_same_region_count / regional_total_correspondences * 100, 2) if regional_total_correspondences > 0 else 0}%")
+    print(f"  Same-Subcell Rate: {round(regional_same_subcell_count / regional_total_correspondences * 100, 2) if regional_total_correspondences > 0 else 0}%")
+    print(f"  Same-person Avg UV Distance: {safe_avg(same_regional_uv_dists)}")
+    print(f"  Diff-person Avg UV Distance: {safe_avg(diff_regional_uv_dists)}")
+    print(f"  Same-person Avg Anchor Delta: {safe_avg(same_regional_anchor_deltas)}")
+    print(f"  Diff-person Avg Anchor Delta: {safe_avg(diff_regional_anchor_deltas)}")
+    print(f"  Same-person Avg Coord Quality: {safe_avg(same_regional_coord_qualities)}")
+    print(f"  Diff-person Avg Coord Quality: {safe_avg(diff_regional_coord_qualities)}")
+
+    print("\n--- Phase 2: Patch Descriptors ---")
+    print(f"  Patch Available Rate: {round(patch_available_count / patch_total_correspondences * 100, 2) if patch_total_correspondences > 0 else 0}%")
+    print(f"  Same-person Avg LBP Similarity: {safe_avg(same_patch_lbp_sims)}")
+    print(f"  Diff-person Avg LBP Similarity: {safe_avg(diff_patch_lbp_sims)}")
+    print(f"  Same-person Avg Combined Similarity: {safe_avg(same_patch_combined_sims)}")
+    print(f"  Diff-person Avg Combined Similarity: {safe_avg(diff_patch_combined_sims)}")
+    print(f"  Same-person Avg Hu Moment Distance: {safe_avg(same_patch_hu_dists)}")
+    print(f"  Diff-person Avg Hu Moment Distance: {safe_avg(diff_patch_hu_dists)}")
+
     print(f"{'=' * 60}\n")
     print(f"  Results: {args.output_dir}")
     print(f"{'=' * 60}")

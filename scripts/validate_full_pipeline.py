@@ -302,7 +302,25 @@ def run_single_pair(pair, pipeline_modules):
             "area_ratio": c.get("area_ratio"),
             "match_quality": c.get("match_quality"),
             "match_cost": c.get("match_cost") or c.get("cost"),
-            "lr": finite_or_none(c.get("lr", 1.0))
+            "lr": finite_or_none(c.get("lr", 1.0)),
+            # Phase 2: Regional canonical coordinate telemetry
+            "regional_available": c.get("regional_available", False),
+            "regional_same_region": c.get("regional_same_region", False),
+            "regional_same_subcell": c.get("regional_same_subcell", False),
+            "regional_uv_distance": c.get("regional_uv_distance"),
+            "regional_anchor_distance_delta": c.get("regional_anchor_distance_delta"),
+            "regional_canonical_region_gallery": c.get("regional_canonical_region_gallery"),
+            "regional_canonical_region_probe": c.get("regional_canonical_region_probe"),
+            "regional_coordinate_quality_gallery": c.get("regional_coordinate_quality_gallery"),
+            "regional_coordinate_quality_probe": c.get("regional_coordinate_quality_probe"),
+            # Phase 2: Patch descriptor telemetry
+            "patch_available": c.get("patch_available", False),
+            "patch_lbp_similarity": c.get("patch_lbp_similarity"),
+            "patch_intensity_similarity": c.get("patch_intensity_similarity"),
+            "patch_hu_moment_distance": c.get("patch_hu_moment_distance"),
+            "patch_gradient_mean_delta": c.get("patch_gradient_mean_delta"),
+            "patch_texture_energy_delta": c.get("patch_texture_energy_delta"),
+            "patch_combined_similarity": c.get("patch_combined_similarity"),
         } for c in accepted
     ]
     
