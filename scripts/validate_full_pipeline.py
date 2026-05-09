@@ -370,7 +370,7 @@ def run_single_pair(pair, pipeline_modules):
         "largest_single_channel_correspondence_count": max(channel_counts.values()) if channel_counts else 0,
     }
 
-    return {
+    result = {
         "calibration_loaded": CALIBRATION is not None,
         "calibration_source": "gcs_or_local" if CALIBRATION else "missing",
         "calibration_status": "loaded" if CALIBRATION else "failed",
