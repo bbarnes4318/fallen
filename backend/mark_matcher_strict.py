@@ -61,6 +61,7 @@ _ORIENTATION_PENALTY_SCALE = 0.2
 # ── Phase 1 Barycentric ──
 # Conservative weight. Can only INCREASE cost (make matching stricter).
 # Start at 1.0; validate before increasing. Do NOT start at 3.0.
+_USE_BARYCENTRIC_COST = False
 _BARY_WEIGHT = 1.0
 _BARY_MIN_CONFIDENCE = 0.70  # Require this mesh_confidence for bary distance
 
@@ -265,6 +266,8 @@ def _compute_cost_strict(mark_g: dict, mark_p: dict, pos_g: tuple, pos_p: tuple)
     # This can ONLY INCREASE cost, never decrease it.
     # If unavailable or different triangle, bary_cost is 0.0 — existing path unchanged.
     bary_cost, bary_dist, bary_available, bary_mode, bary_telemetry = _barycentric_cost(mark_g, mark_p, pos_g, pos_p)
+    if not _USE_BARYCENTRIC_COST:
+        bary_cost = 0.0
     cost += bary_cost  # Always >= 0, so cost can only go up
 
     if cost > max_cost:
@@ -300,6 +303,8 @@ def _compute_cost_strict(mark_g: dict, mark_p: dict, pos_g: tuple, pos_p: tuple)
         "normalized_spatial_distance": bary_telemetry.get("normalized_spatial_distance"),
         "mesh_triangle_gallery": bary_telemetry.get("mesh_triangle_gallery"),
         "mesh_triangle_probe": bary_telemetry.get("mesh_triangle_probe"),
+        "mesh_region_gallery": mark_g.get("anatomical_position", {}).get("mesh_region", "unknown") if isinstance(mark_g.get("anatomical_position"), dict) else "unknown",
+        "mesh_region_probe": mark_p.get("anatomical_position", {}).get("mesh_region", "unknown") if isinstance(mark_p.get("anatomical_position"), dict) else "unknown",
     }
     return cost, metadata
 
@@ -513,10 +518,16 @@ def match_facial_marks_strict(gallery_marks: list, probe_marks: list,
                 "barycentric_cost_contribution": meta.get("barycentric_cost_contribution", 0.0),
                 "barycentric_comparison_mode": meta.get("barycentric_comparison_mode", "unavailable"),
                 "barycentric_triangle_match": meta.get("barycentric_triangle_match", False),
-                "barycentric_anchor_overlap_count": meta.get("barycentric_anchor_overlap_count", 0),
-                "barycentric_distance_available": meta.get("barycentric_distance_available", False),
+                "mesh_anchor_overlap_count": meta.get("barycentric_anchor_overlap_count", 0),
+                "valid_barycentric_distance_available": meta.get("barycentric_distance_available", False),
+                "fallback_mesh_telemetry_available": meta.get("fallback_mesh_telemetry_available", False),
                 "mesh_triangle_gallery": meta.get("mesh_triangle_gallery"),
                 "mesh_triangle_probe": meta.get("mesh_triangle_probe"),
+                "mesh_region_gallery": meta.get("mesh_region_gallery"),
+                "mesh_region_probe": meta.get("mesh_region_probe"),
+                "same_mesh_region": (meta.get("mesh_region_gallery") == meta.get("mesh_region_probe")) if meta.get("mesh_region_gallery") and meta.get("mesh_region_gallery") != "unknown" else False,
+                "nearest_landmark_distance_delta": meta.get("nearest_landmark_distance_delta"),
+                "normalized_spatial_distance": meta.get("normalized_spatial_distance"),
             }
             all_correspondences.append(entry)
             matched_gal.add(int(r))

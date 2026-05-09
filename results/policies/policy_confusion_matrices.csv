@@ -1,0 +1,6 @@
+policy,TP,FP,TN,FN,precision,recall,FAR,FRR
+current_hard_safety_rule,0,0,0,0,0,0,0,0
+soft_cap,0,0,0,0,0,0,0,0
+human_review_flag,0,0,0,0,0,0,0,0
+separate_channels,0,0,0,0,0,0,0,0
+strict_mark_override,0,0,0,0,0,0,0,0

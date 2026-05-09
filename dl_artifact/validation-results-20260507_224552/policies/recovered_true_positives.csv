@@ -1,0 +1,3 @@
+pair_id,policy,original_state,new_state,structural_sim,fused_score,lr_marks
+lfw_matched_0079,separate_channels,FN,TP,0.300721,0.0,5.675055589136715e+21
+lfw_matched_0090,separate_channels,FN,TP,0.395544,0.0,8.661118871779743e+21

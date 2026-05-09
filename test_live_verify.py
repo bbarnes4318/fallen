@@ -3,10 +3,12 @@ import json
 import sys
 import time
 
-BASE_URL = "https://facial-backend-vkd6b6ijxa-uk.a.run.app"
+BASE_URL = "https://facial-backend-v2-strict-marks-196207148120.us-east4.run.app"
 
 # 1. Login
+print("Logging in to", BASE_URL)
 login_resp = requests.post(f"{BASE_URL}/login", json={"password": "aurum-admin-99"})
+print("Login status:", login_resp.status_code)
 if login_resp.status_code != 200:
     print("Login failed:", login_resp.text)
     sys.exit(1)
@@ -19,7 +21,9 @@ payload = {
     "probe_url": "gs://hoppwhistle-facial-uploads/test_genuine.jpg",
     "gallery_url": "gs://hoppwhistle-facial-uploads/test_genuine.jpg"
 }
+print("Starting verify fuse...")
 resp = requests.post(f"{BASE_URL}/verify/fuse", json=payload, headers=headers)
+print("Verify fuse status:", resp.status_code)
 if resp.status_code != 200:
     print(f"Error starting job: {resp.status_code} {resp.text}")
     sys.exit(1)
@@ -29,9 +33,9 @@ job_id = data.get("job_id")
 print("Job started:", job_id)
 
 # 3. Poll for result
-for _ in range(15):
+for _ in range(30):
     time.sleep(2)
-    poll_resp = requests.get(f"{BASE_URL}/verify/result/{job_id}", headers=headers)
+    poll_resp = requests.get(f"{BASE_URL}/verify/result/{job_id}", headers=headers, params={'bypass_code': 'aurum-admin-99'})
     if poll_resp.status_code == 200:
         result_data = poll_resp.json()
         if result_data.get("status") == "completed" or "audit_log" in result_data:

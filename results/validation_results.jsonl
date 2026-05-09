@@ -1,0 +1,10 @@
+{"pair_id": "lfw_matched_0002", "label_same_person": true, "category": "same_person_normal", "error": "NameError: name 'face_mesh' is not defined", "timing_ms": 0}
+{"pair_id": "lfw_matched_0003", "label_same_person": true, "category": "same_person_normal", "error": "NameError: name 'face_mesh' is not defined", "timing_ms": 0}
+{"pair_id": "lfw_matched_0007", "label_same_person": true, "category": "same_person_normal", "error": "NameError: name 'face_mesh' is not defined", "timing_ms": 0}
+{"pair_id": "lfw_matched_0008", "label_same_person": true, "category": "same_person_normal", "error": "NameError: name 'face_mesh' is not defined", "timing_ms": 0}
+{"pair_id": "lfw_matched_0009", "label_same_person": true, "category": "same_person_normal", "error": "NameError: name 'face_mesh' is not defined", "timing_ms": 0}
+{"pair_id": "lfw_mismatched_0001", "label_same_person": false, "category": "different_person_random", "error": "NameError: name 'face_mesh' is not defined", "timing_ms": 0}
+{"pair_id": "lfw_mismatched_0002", "label_same_person": false, "category": "different_person_random", "error": "NameError: name 'face_mesh' is not defined", "timing_ms": 0}
+{"pair_id": "lfw_mismatched_0005", "label_same_person": false, "category": "different_person_random", "error": "NameError: name 'face_mesh' is not defined", "timing_ms": 0}
+{"pair_id": "lfw_mismatched_0008", "label_same_person": false, "category": "different_person_random", "error": "NameError: name 'face_mesh' is not defined", "timing_ms": 0}
+{"pair_id": "lfw_mismatched_0009", "label_same_person": false, "category": "different_person_random", "error": "NameError: name 'face_mesh' is not defined", "timing_ms": 0}

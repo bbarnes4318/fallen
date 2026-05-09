@@ -1,0 +1,3 @@
+pair_id,label_same_person,lr_marks,display_correspondences,scoring_correspondences,generic_suppressed,distinctive_preserved,lr_before_caps,lr_after_all_caps,cluster_penalty
+lfw_matched_0083,True,1.0,0,0,0,0,,,False
+lfw_matched_0012,True,1.0,0,0,0,0,,,False

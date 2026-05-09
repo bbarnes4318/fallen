@@ -1,0 +1,9 @@
+pair_id,policy,original_state,new_state,structural_sim,fused_score,lr_marks
+lfw_mismatched_0001,soft_cap,TN,FP,0.242592,50.0,1.0
+lfw_mismatched_0002,soft_cap,TN,FP,0.070536,50.0,1.0
+lfw_mismatched_0008,soft_cap,TN,FP,0.196973,50.0,1.0
+lfw_mismatched_0009,soft_cap,TN,FP,0.061475,50.0,1.0
+lfw_mismatched_0001,human_review_flag,TN,FP,0.242592,50.0,1.0
+lfw_mismatched_0002,human_review_flag,TN,FP,0.070536,50.0,1.0
+lfw_mismatched_0008,human_review_flag,TN,FP,0.196973,50.0,1.0
+lfw_mismatched_0009,human_review_flag,TN,FP,0.061475,50.0,1.0

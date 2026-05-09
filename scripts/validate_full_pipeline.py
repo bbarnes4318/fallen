@@ -448,7 +448,7 @@ def run_single_pair(pair, pipeline_modules):
                 comparison_mode_counts[mode] += 1
             
             # Check overlaps
-            overlap = c.get("barycentric_anchor_overlap_count", 0)
+            overlap = c.get("mesh_anchor_overlap_count", 0)
             if overlap == 3: comparison_mode_counts["anchor_overlap_3"] += 1
             elif overlap == 2: comparison_mode_counts["anchor_overlap_2"] += 1
             elif overlap == 1: comparison_mode_counts["anchor_overlap_1"] += 1
@@ -460,7 +460,7 @@ def run_single_pair(pair, pipeline_modules):
                 comparison_mode_counts["same_mesh_region"] += 1
 
             # Only include valid comparisons (same_triangle or same_anchor_set)
-            if c.get("barycentric_distance_available", False):
+            if c.get("valid_barycentric_distance_available", False):
                 bd = c.get("barycentric_distance")
                 if bd is not None:
                     bary_dists.append(bd)
@@ -479,6 +479,11 @@ def run_single_pair(pair, pipeline_modules):
         result["strict_mark_data"]["fallback_mesh_telemetry_available_count"] = len(fallback_landmark_deltas)
         result["strict_mark_data"]["avg_fallback_nearest_landmark_distance_delta"] = round(sum(fallback_landmark_deltas) / len(fallback_landmark_deltas), 6) if fallback_landmark_deltas else None
         result["strict_mark_data"]["avg_normalized_spatial_distance"] = round(sum(fallback_spatial_dists) / len(fallback_spatial_dists), 6) if fallback_spatial_dists else None
+        
+        result["strict_mark_data"]["barycentric_cost_enabled"] = False
+        result["strict_mark_data"]["barycentric_telemetry_only"] = True
+        result["strict_mark_data"]["fallback_mesh_telemetry_only"] = True
+        result["strict_mark_data"]["does_not_affect_scoring"] = True
 
 
     return result

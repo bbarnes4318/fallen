@@ -1,0 +1,3 @@
+pair_id,image1_url_or_gcs_path,image2_url_or_gcs_path,label_same_person,category,notes,expected_challenge_type
+lfw_matched_0001,gs://hoppwhistle-facial-uploads/gallery/Abel_Pacheco_0001.jpg,gs://hoppwhistle-facial-uploads/gallery/Abel_Pacheco_0004.jpg,true,same_person_normal,LFW matched pair: Abel_Pacheco images 1 and 4. Same person confirmed by LFW ground truth label.,baseline
+lfw_mismatched_0001,gs://hoppwhistle-facial-uploads/gallery/Abdel_Madi_Shabneh_0001.jpg,gs://hoppwhistle-facial-uploads/gallery/Dean_Barker_0001.jpg,false,different_person_random,LFW mismatched pair: Abdel_Madi_Shabneh image 1 vs Dean_Barker image 1. Different person confirmed by LFW ground truth label.,baseline
