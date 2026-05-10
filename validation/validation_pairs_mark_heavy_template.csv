@@ -1,0 +1,1 @@
+pair_id,image1_url_or_gcs_path,image2_url_or_gcs_path,label_same_person,category,notes,expected_challenge_type,primary_mark_type,secondary_mark_type,mark_region,manual_label_required,quality_notes

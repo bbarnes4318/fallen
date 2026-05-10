@@ -552,6 +552,19 @@ def main():
         },
     }
 
+    # ── Phase 3A: Signal purification, region-normalized UV, availability, hard impostors ──
+    # TELEMETRY ONLY — does not affect scoring, Bayesian fusion, or production logic.
+    from phase3a_analysis import (
+        compute_signal_purification_filters,
+        compute_region_normalized_uv,
+        compute_availability_diagnostics,
+        compute_hard_impostor_mining,
+    )
+    report["signal_purification_filters"] = compute_signal_purification_filters(results)
+    report["region_normalized_uv"] = compute_region_normalized_uv(results)
+    report["availability_diagnostics"] = compute_availability_diagnostics(results)
+    report["hard_impostor_mining"] = compute_hard_impostor_mining(results)
+
     # Write JSON report
     report_path = os.path.join(args.output_dir, "strict_mark_report.json")
     with open(report_path, "w") as f:
@@ -659,6 +672,46 @@ def main():
     print("\n--- Phase 2B: Region Breakdown ---")
     for rg, s in sorted(region_stats.items(), key=lambda x: -x[1]["count"])[:10]:
         print(f"  {rg}: n={s['count']} same_uv={safe_avg(s['same_uv'])} diff_uv={safe_avg(s['diff_uv'])} same_patch={safe_avg(s['same_patch'])} diff_patch={safe_avg(s['diff_patch'])} same_mq={safe_avg(s['same_mq'])} diff_mq={safe_avg(s['diff_mq'])}")
+
+    # ── Phase 3A Console Output ──
+    print("\n--- Phase 3A: Signal Purification Filters ---")
+    spf = report.get("signal_purification_filters", {})
+    for fname in ["include_all_current", "suppress_light_scar", "distinctive_only",
+                   "high_value_types_only", "remove_unknown_region", "useful_regions_only"]:
+        fd = spf.get(fname, {})
+        print(f"  {fname}: n={fd.get('correspondences_retained', 0)} "
+              f"same_uv={fd.get('same_avg_uv_distance', 0)} "
+              f"diff_uv={fd.get('diff_avg_uv_distance', 0)} "
+              f"delta={fd.get('uv_separation_delta', 0)} "
+              f"fp_risk={fd.get('fp_risk_proxy', 0)}")
+
+    print("\n--- Phase 3A: Region-Normalized UV ---")
+    rnuv = report.get("region_normalized_uv", {}).get("aggregated", {})
+    for metric in ["raw", "zscore_by_region", "percentile_by_region", "quality_weighted", "region_calibrated"]:
+        m = rnuv.get(metric, {})
+        print(f"  {metric}: same={m.get('same_avg', 0)} diff={m.get('diff_avg', 0)} delta={m.get('delta', 0)}")
+
+    print("\n--- Phase 3A: Availability Diagnostics ---")
+    avail = report.get("availability_diagnostics", {})
+    print(f"  Fully available (same_region): {avail.get('fully_available_same_region', 0)}")
+    fc = avail.get("face_region_compatible", {})
+    print(f"  Face region compatible: n={fc.get('count', 0)} delta={fc.get('separation_delta', 0)} preserves={fc.get('preserves_separation', False)}")
+    rc = avail.get("related_region_compatible", {})
+    print(f"  Related region compatible: n={rc.get('count', 0)} delta={rc.get('separation_delta', 0)} preserves={rc.get('preserves_separation', False)}")
+    print(f"  Unavailable (no fallback): {avail.get('unavailable_no_fallback', {}).get('count', 0)}")
+    print(f"  Potential rescue count: {avail.get('potential_rescue_count', 0)}")
+    print(f"  Rescue preserves separation: {avail.get('rescue_preserves_separation', False)}")
+    print(f"  Noise risk: {avail.get('noise_risk', 'unknown')}")
+
+    print("\n--- Phase 3A: Hard Impostor Mining ---")
+    him = report.get("hard_impostor_mining", {})
+    print(f"  Total different-person pairs: {him.get('total_different_person_pairs', 0)}")
+    print(f"  Light scar drove signal: {him.get('light_scar_drove_signal', False)}")
+    print(f"  Unknown region drove signal: {him.get('unknown_region_drove_signal', False)}")
+    print(f"  Recommended suppressions: {him.get('recommended_suppressions', [])}")
+    top5 = him.get("top_25_hardest", [])[:5]
+    for p in top5:
+        print(f"    {p.get('pair_id')}: danger={p.get('danger_score')} lr={p.get('lr_marks')} top_type={p.get('top_mark_type')} top_region={p.get('top_region')}")
 
     print(f"{'=' * 60}\n")
     print(f"  Results: {args.output_dir}")

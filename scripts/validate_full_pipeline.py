@@ -322,6 +322,8 @@ def run_single_pair(pair, pipeline_modules):
             "regional_comparison_mode": c.get("regional_comparison_mode", "unavailable"),
             "regional_related_region_group": c.get("regional_related_region_group"),
             "regional_cross_region_distance": c.get("regional_cross_region_distance"),
+            # Phase 3A: quality-weighted UV distance (TELEMETRY ONLY)
+            "region_uv_distance_quality_weighted": c.get("region_uv_distance_quality_weighted"),
             # Phase 2: Patch descriptor telemetry
             "patch_available": c.get("patch_available", False),
             "patch_lbp_similarity": c.get("patch_lbp_similarity"),

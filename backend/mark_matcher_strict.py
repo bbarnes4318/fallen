@@ -246,6 +246,8 @@ def _compute_regional_telemetry(mark_g: dict, mark_p: dict) -> dict:
         "regional_comparison_mode": "unavailable",
         "regional_related_region_group": None,
         "regional_cross_region_distance": None,
+        # Phase 3A: quality-weighted UV distance (TELEMETRY ONLY)
+        "region_uv_distance_quality_weighted": None,
     }
 
     try:
@@ -280,16 +282,25 @@ def _compute_regional_telemetry(mark_g: dict, mark_p: dict) -> dict:
         region_p = pos_p.get("canonical_region", "unknown")
         same_region = telem.get("same_canonical_region", False)
 
+        # Phase 3A: compute quality-weighted UV distance (TELEMETRY ONLY)
+        raw_uv = telem.get("region_uv_distance")
+        cq_g = pos_g.get("coordinate_quality")
+        cq_p = pos_p.get("coordinate_quality")
+        qw_uv = None
+        if raw_uv is not None and cq_g is not None and cq_p is not None:
+            avg_quality = (cq_g + cq_p) / 2.0
+            qw_uv = round(raw_uv * avg_quality, 6) if avg_quality > 0 else None
+
         result = {
             "regional_available": available,
             "regional_same_region": same_region,
             "regional_same_subcell": telem.get("same_region_subcell", False),
-            "regional_uv_distance": telem.get("region_uv_distance"),
+            "regional_uv_distance": raw_uv,
             "regional_anchor_distance_delta": telem.get("anchor_distance_delta"),
             "regional_canonical_region_gallery": region_g,
             "regional_canonical_region_probe": region_p,
-            "regional_coordinate_quality_gallery": pos_g.get("coordinate_quality"),
-            "regional_coordinate_quality_probe": pos_p.get("coordinate_quality"),
+            "regional_coordinate_quality_gallery": cq_g,
+            "regional_coordinate_quality_probe": cq_p,
             "regional_cost_enabled": _USE_REGIONAL_COST,
             "regional_unavailable_reason": None,
             "regional_position_present_gallery": True,
@@ -299,6 +310,8 @@ def _compute_regional_telemetry(mark_g: dict, mark_p: dict) -> dict:
             "regional_comparison_mode": "same_canonical_region" if same_region else "unavailable",
             "regional_related_region_group": None,
             "regional_cross_region_distance": None,
+            # Phase 3A: quality-weighted UV distance (TELEMETRY ONLY)
+            "region_uv_distance_quality_weighted": qw_uv,
         }
 
         if available and same_region:
