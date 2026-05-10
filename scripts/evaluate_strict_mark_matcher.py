@@ -565,6 +565,29 @@ def main():
     report["availability_diagnostics"] = compute_availability_diagnostics(results)
     report["hard_impostor_mining"] = compute_hard_impostor_mining(results)
 
+    # ── Phase 3B: Shadow scoring simulation ──
+    # TELEMETRY ONLY — shadow scores never affect fused_score, lr_marks,
+    # bayesian_fused_score, conclusion, veto logic, or production API behavior.
+    from phase3b_shadow_scoring import (
+        compute_shadow_scoring_simulation,
+        compute_threshold_sweep,
+        compute_face_interaction,
+        compute_hard_impostor_test,
+        build_dataset_limitations,
+    )
+    shadow_sim = compute_shadow_scoring_simulation(results)
+    report["shadow_scoring_simulation"] = shadow_sim["candidates"]
+    report["shadow_threshold_sweep"] = compute_threshold_sweep(shadow_sim["per_pair_scores"])
+    report["shadow_face_interaction"] = compute_face_interaction(
+        results, shadow_sim["per_pair_scores"]
+    )
+    report["shadow_hard_impostor_test"] = compute_hard_impostor_test(
+        results,
+        shadow_sim["per_pair_scores"],
+        report.get("hard_impostor_mining", {}).get("top_25_hardest", []),
+    )
+    report["dataset_limitations"] = build_dataset_limitations()
+
     # Write JSON report
     report_path = os.path.join(args.output_dir, "strict_mark_report.json")
     with open(report_path, "w") as f:
@@ -713,7 +736,52 @@ def main():
     for p in top5:
         print(f"    {p.get('pair_id')}: danger={p.get('danger_score')} lr={p.get('lr_marks')} top_type={p.get('top_mark_type')} top_region={p.get('top_region')}")
 
-    print(f"{'=' * 60}\n")
+    # ── Phase 3B Console Output ──
+    print("\n--- Phase 3B: Shadow Scoring Candidates ---")
+    ssc = report.get("shadow_scoring_simulation", {})
+    for cand_name in ["suppress_light_scar_uv", "useful_regions_uv", "combined_best_uv",
+                       "high_value_types_uv", "conservative_constellation_uv",
+                       "conservative_constellation_uv_strict"]:
+        cd = ssc.get(cand_name, {})
+        print(f"  {cand_name}: retained={cd.get('retained_pairs_with_evidence', 0)} "
+              f"avg_surv={cd.get('avg_surviving_correspondences', 0)} "
+              f"same_avg={cd.get('avg_score_same_person', 0)} "
+              f"diff_avg={cd.get('avg_score_different_person', 0)}")
+
+    print("\n--- Phase 3B: Threshold Sweep (best zero-false-support) ---")
+    sts = report.get("shadow_threshold_sweep", {})
+    for cand_name in sts:
+        best_t = sts[cand_name].get("best_zero_false_support_threshold")
+        if best_t is not None:
+            td = sts[cand_name]["thresholds"].get(str(best_t), {})
+            print(f"  {cand_name}: threshold={best_t} "
+                  f"true_support={td.get('true_support_count', 0)} "
+                  f"false_support={td.get('false_support_count', 0)} "
+                  f"precision={td.get('support_precision', 0)} "
+                  f"recall={td.get('support_recall', 0)}")
+        else:
+            print(f"  {cand_name}: NO zero-false-support threshold found")
+
+    print("\n--- Phase 3B: Face Interaction (fused>=70) ---")
+    sfi = report.get("shadow_face_interaction", {}).get("face_ge_70", {})
+    for cand_name in ["suppress_light_scar_uv", "combined_best_uv", "conservative_constellation_uv"]:
+        fid = sfi.get(cand_name, {})
+        b3s = fid.get("weak_face_strong_marks_same_count", 0)
+        b3d = fid.get("weak_face_strong_marks_diff_count", 0)
+        danger = fid.get("different_person_in_strong_shadow_bucket", 0)
+        print(f"  {cand_name}: weak_face+strong_marks same={b3s} diff={b3d} danger_diff_in_strong={danger}")
+
+    print("\n--- Phase 3B: Hard Impostor Test ---")
+    shit = report.get("shadow_hard_impostor_test", {})
+    print(f"  Safest candidate: {shit.get('safest_candidate', 'unknown')}")
+    fs25 = shit.get("candidate_false_support_ge_25", {})
+    fs50 = shit.get("candidate_false_support_ge_50", {})
+    for cand_name in ["suppress_light_scar_uv", "useful_regions_uv", "combined_best_uv",
+                       "high_value_types_uv", "conservative_constellation_uv",
+                       "conservative_constellation_uv_strict"]:
+        print(f"  {cand_name}: false_support>=25: {fs25.get(cand_name, 0)} false_support>=50: {fs50.get(cand_name, 0)}")
+
+    print(f"\n{'=' * 60}\n")
     print(f"  Results: {args.output_dir}")
     print(f"{'=' * 60}")
 
