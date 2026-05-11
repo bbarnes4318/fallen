@@ -55,6 +55,11 @@ on:
         required: false
         type: boolean
         default: false
+      hq_mark_calibration:
+        description: 'Enable validation-only HQ Phase 1 mark detector calibration'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   validate:
@@ -371,6 +376,13 @@ jobs:
           python scripts/evaluate_strict_mark_matcher.py \
             --input validation/results/${{ steps.run_id.outputs.id }}/merged/validation_results.jsonl \
             --output-dir validation/results/${{ steps.run_id.outputs.id }}/merged/strict_mark_analysis
+
+      - name: Evaluate HQ Mark Calibration
+        if: inputs.hq_mark_calibration
+        run: |
+          python scripts/evaluate_hq_calibration.py \
+            --input validation/results/${{ steps.run_id.outputs.id }}/merged/validation_results.jsonl \
+            --output-dir validation/results/${{ steps.run_id.outputs.id }}/merged/hq_calibration
 
       - name: Upload Final Merged Artifact
         uses: actions/upload-artifact@v4
