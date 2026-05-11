@@ -61,42 +61,25 @@ jobs:
 
       - name: Generate Phase 2D Markdown Report
         run: |
-          cat << 'EOF' > hq_visual_audit/hq_phase2d_visual_audit_report.md
-          # HQ Phase 2D Calibration: Visual Audit Results
-
-          ## 1. Automated Threshold Sweep Execution
-          The parameter grid search using `scripts/sweep_hq_calibration.py` was successfully executed across 2,160 permutations of mark area, contrast/salience, confidence, and cluster settings.
-
-          > [!WARNING]
-          > **No combinations passed the "Wiring Bar"**
-          > The sweep concluded that no configuration met the dual requirement of beating the baseline precision proxy (0.7407) while maintaining >=80% identity signal retention.
-
-          ## 2. Phase 2D Contact Sheet Generation
-          We extracted the top crops for dark_spot and light_scar to create side-by-side (probe vs gallery) paired contact sheets.
-          The structured `hq_phase2d_visual_review_sheet.csv` was also generated.
-
-          ### Visual Audit Targets
-
-          #### Dark Spot (Same Person vs Impostor)
-          ![Dark Spot Same Person](./phase2d_contact_sheets/dark_spot_same_person_paired_contact_sheet.jpg)
-          ![Dark Spot Impostor](./phase2d_contact_sheets/dark_spot_impostor_paired_contact_sheet.jpg)
-
-          #### Light Scar (Same Person vs Impostor)
-          ![Light Scar Same Person](./phase2d_contact_sheets/light_scar_same_person_paired_contact_sheet.jpg)
-          ![Light Scar Impostor](./phase2d_contact_sheets/light_scar_impostor_paired_contact_sheet.jpg)
-
-          ## Next Steps
-          > [!IMPORTANT]
-          > **Manual Qualitative Review Required**
-          > Please review the contact sheets above and the CSV file.
-          EOF
+          cat << 'EOF' > hq_visual_audit/phase2d_contact_sheets/hq_phase2d_visual_audit_report.md
+          # HQ Phase 2D Visual Audit Report
           
-          # Move CSVs to root of artifact directory for clarity
-          mv hq_visual_audit/phase2d_contact_sheets/*.csv hq_visual_audit/ || true
+          This artifact contains the Phase 2D visual audit generated from the validation results.
+          
+          ## Evidence
+          - Contact Sheets (Paired crops for Light Scar and Dark Spot)
+          - Clean Evidence Cards (512x512 and 768x768)
+          - Crop Tiles (256x256, 512x512, 768x768)
+          - Correspondence Overlays
+          - `hq_phase2d_visual_review_sheet.csv`
+          - `hq_phase2d_clean_visual_review_sheet.csv`
+          - `hq_phase2d_visual_audit_debug_summary.csv`
+          - `hq_phase2d_clean_visual_debug_summary.csv`
+          EOF
 
       - name: Upload Phase 2D Visual Audit Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hq_phase2d_visual_audit_evidence
-          path: hq_visual_audit/
+          name: hq_phase2d_clean_visual_audit_evidence
+          path: hq_visual_audit/phase2d_contact_sheets/

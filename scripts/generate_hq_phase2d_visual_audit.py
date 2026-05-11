@@ -37,6 +37,48 @@ def draw_mark(draw, centroid, bbox, img_w, img_h, color=(0, 255, 0)):
         y_max = int(bbox[3] * img_h)
         draw.rectangle([x_min, y_min, x_max, y_max], outline=color, width=2)
 
+def generate_evidence_card(p_clean, g_clean, p_marked, g_marked, p_loc, g_loc, size, item, p_mark, g_mark, c, pair_id, output_path):
+    card_w = 2 * size
+    card_h = 2 * size + 256 + 150
+    card = Image.new('RGB', (card_w, card_h), (255,255,255))
+    
+    card.paste(p_clean, (0, 0))
+    card.paste(g_clean, (size, 0))
+    
+    card.paste(p_marked, (0, size))
+    card.paste(g_marked, (size, size))
+    
+    # Center locators at the bottom
+    locator_y = 2 * size
+    p_loc_x = size // 2 - 128
+    g_loc_x = size + size // 2 - 128
+    
+    card.paste(p_loc, (p_loc_x, locator_y))
+    card.paste(g_loc, (g_loc_x, locator_y))
+    
+    draw = ImageDraw.Draw(card)
+    try:
+        font = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", 20)
+    except:
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
+        except:
+            font = ImageFont.load_default()
+            
+    labels = [
+        f"pair_id: {pair_id} | label_same_person: {item['is_same']} | mark_type: {item['mark_type']}",
+        f"match_quality: {round(c.get('patch_combined_similarity') or 0, 3)} | regional_uv_distance: {c.get('regional_uv_distance')}",
+        f"Probe: conf: {p_mark.get('confidence')} | area: {p_mark.get('area')} | cont: {p_mark.get('contrast_score')} | sal: {p_mark.get('salience')}",
+        f"Gallery: conf: {g_mark.get('confidence')} | area: {g_mark.get('area')} | cont: {g_mark.get('contrast_score')} | sal: {g_mark.get('salience')}",
+    ]
+    
+    text_y = 2 * size + 256 + 10
+    for idx, label in enumerate(labels):
+        draw.text((10, text_y + (idx * 25)), label, font=font, fill=(0,0,0))
+        
+    card.save(output_path)
+    return get_non_white_pixels(card) > 0
+
 def create_phase2d_audit(input_jsonl, output_dir):
     os.makedirs(output_dir, exist_ok=True)
     crop_tmp_dir = os.path.join(output_dir, "tmp_crops")
@@ -46,8 +88,10 @@ def create_phase2d_audit(input_jsonl, output_dir):
     for size in crop_sizes:
         os.makedirs(os.path.join(output_dir, f"crops/{size}"), exist_ok=True)
         
-    for cat in ["light_scar_same_person", "light_scar_impostor", "dark_spot_same_person", "dark_spot_impostor"]:
+    target_categories = ["light_scar_same_person", "light_scar_impostor", "dark_spot_same_person", "dark_spot_impostor"]
+    for cat in target_categories:
         os.makedirs(os.path.join(output_dir, f"{cat}_overlay_examples"), exist_ok=True)
+        os.makedirs(os.path.join(output_dir, f"evidence_cards/{cat}"), exist_ok=True)
 
     manifest_map = {}
     import glob
@@ -70,12 +114,7 @@ def create_phase2d_audit(input_jsonl, output_dir):
         for line in f:
             pairs.append(json.loads(line))
 
-    targets = {
-        "light_scar_same_person": [],
-        "light_scar_impostor": [],
-        "dark_spot_same_person": [],
-        "dark_spot_impostor": []
-    }
+    targets = {cat: [] for cat in target_categories}
 
     for p in pairs:
         pair_id = p.get("pair_id", "unknown")
@@ -114,7 +153,8 @@ def create_phase2d_audit(input_jsonl, output_dir):
             }
             
             cat_key = f"{m_type}_{'same_person' if is_same else 'impostor'}"
-            targets[cat_key].append(item)
+            if cat_key in targets:
+                targets[cat_key].append(item)
 
     try:
         font = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", 15)
@@ -125,7 +165,9 @@ def create_phase2d_audit(input_jsonl, output_dir):
             font = ImageFont.load_default()
 
     reviewer_csv_rows = []
+    clean_reviewer_csv_rows = []
     debug_summary_rows = []
+    clean_debug_summary_rows = []
     failed_rows = []
     fatal = False
     
@@ -136,17 +178,14 @@ def create_phase2d_audit(input_jsonl, output_dir):
         if not items:
             debug_summary_rows.append({
                 "sheet_name": output_filename,
-                "rows_loaded": 0,
-                "targets_selected": 0,
-                "probe_downloads": 0,
-                "gallery_downloads": 0,
-                "probe_crops": 0,
-                "gallery_crops": 0,
-                "pasted_tiles": 0,
-                "failed_rows": 0,
-                "non_white_pixels": 0,
-                "is_blank": True,
-                "manually_reviewable": False
+                "rows_loaded": 0, "targets_selected": 0, "probe_downloads": 0, "gallery_downloads": 0,
+                "probe_crops": 0, "gallery_crops": 0, "pasted_tiles": 0, "failed_rows": 0, "non_white_pixels": 0,
+                "is_blank": True, "manually_reviewable": False
+            })
+            clean_debug_summary_rows.append({
+                "category": target_key,
+                "rows_loaded": 0, "targets_selected": 0, "probe_downloads_succeeded": 0, "gallery_downloads_succeeded": 0,
+                "512_cards_generated": 0, "768_cards_generated": 0, "failed_rows": 0, "blank_cards": 0
             })
             return
             
@@ -157,10 +196,7 @@ def create_phase2d_audit(input_jsonl, output_dir):
         tile_w = 1536
         tile_h = 662
         
-        cols = 1
-        rows = len(top_items)
-        
-        sheet_img = Image.new('RGB', (tile_w, rows * tile_h), color=(255, 255, 255))
+        sheet_img = Image.new('RGB', (tile_w, targets_selected * tile_h), color=(255, 255, 255))
         draw = ImageDraw.Draw(sheet_img)
         
         successful_probe_downloads = 0
@@ -169,6 +205,9 @@ def create_phase2d_audit(input_jsonl, output_dir):
         successful_gallery_crops = 0
         pasted_tiles = 0
         failed_count = 0
+        cards_512_generated = 0
+        cards_768_generated = 0
+        blank_cards = 0
         
         for i, item in enumerate(top_items):
             c = item["corresp"]
@@ -178,6 +217,7 @@ def create_phase2d_audit(input_jsonl, output_dir):
             p_img_path = item["probe_img"]
             g_img_path = item["gallery_img"]
             pair_id = item["pair_id"]
+            review_id = f"{target_key}_{i}"
             
             local_p_img = os.path.join(crop_tmp_dir, get_basename(p_img_path))
             local_g_img = os.path.join(crop_tmp_dir, get_basename(g_img_path))
@@ -225,35 +265,43 @@ def create_phase2d_audit(input_jsonl, output_dir):
 
             p_crops = {}
             g_crops = {}
+            p_marked_crops = {}
+            g_marked_crops = {}
+            
             for size in crop_sizes:
                 try:
                     p_c = extract_crop(p_im, p_centroid, size)
                     g_c = extract_crop(g_im, g_centroid, size)
                     
-                    p_draw = ImageDraw.Draw(p_c)
-                    g_draw = ImageDraw.Draw(g_c)
+                    p_c_marked = p_c.copy()
+                    g_c_marked = g_c.copy()
+                    
+                    p_draw_crop = ImageDraw.Draw(p_c_marked)
+                    g_draw_crop = ImageDraw.Draw(g_c_marked)
                     
                     ccx, ccy = size // 2, size // 2
                     r = 5
-                    p_draw.ellipse([(ccx-r, ccy-r), (ccx+r, ccy+r)], outline=(0,255,0), width=2)
-                    g_draw.ellipse([(ccx-r, ccy-r), (ccx+r, ccy+r)], outline=(0,255,0), width=2)
+                    p_draw_crop.ellipse([(ccx-r, ccy-r), (ccx+r, ccy+r)], outline=(0,255,0), width=2)
+                    g_draw_crop.ellipse([(ccx-r, ccy-r), (ccx+r, ccy+r)], outline=(0,255,0), width=2)
                     
                     p_bbox = p_mark.get("bbox")
                     if p_bbox:
                         pw, ph = p_im.size
                         bx_min, by_min, bx_max, by_max = p_bbox[0]*pw, p_bbox[1]*ph, p_bbox[2]*pw, p_bbox[3]*ph
                         cx_orig, cy_orig = int(p_centroid[0]*pw), int(p_centroid[1]*ph)
-                        p_draw.rectangle([bx_min - cx_orig + ccx, by_min - cy_orig + ccy, bx_max - cx_orig + ccx, by_max - cy_orig + ccy], outline=(0,255,0), width=2)
+                        p_draw_crop.rectangle([bx_min - cx_orig + ccx, by_min - cy_orig + ccy, bx_max - cx_orig + ccx, by_max - cy_orig + ccy], outline=(0,255,0), width=2)
                         
                     g_bbox = g_mark.get("bbox")
                     if g_bbox:
                         gw, gh = g_im.size
                         bx_min, by_min, bx_max, by_max = g_bbox[0]*gw, g_bbox[1]*gh, g_bbox[2]*gw, g_bbox[3]*gh
                         cx_orig, cy_orig = int(g_centroid[0]*gw), int(g_centroid[1]*gh)
-                        g_draw.rectangle([bx_min - cx_orig + ccx, by_min - cy_orig + ccy, bx_max - cx_orig + ccx, by_max - cy_orig + ccy], outline=(0,255,0), width=2)
+                        g_draw_crop.rectangle([bx_min - cx_orig + ccx, by_min - cy_orig + ccy, bx_max - cx_orig + ccx, by_max - cy_orig + ccy], outline=(0,255,0), width=2)
                         
                     p_crops[size] = p_c
                     g_crops[size] = g_c
+                    p_marked_crops[size] = p_c_marked
+                    g_marked_crops[size] = g_c_marked
                     
                     p_c_name = f"{target_key}_probe_{pair_id}_{i}_{size}.jpg"
                     g_c_name = f"{target_key}_gallery_{pair_id}_{i}_{size}.jpg"
@@ -270,6 +318,7 @@ def create_phase2d_audit(input_jsonl, output_dir):
             successful_probe_crops += 1
             successful_gallery_crops += 1
             
+            # Use smaller thumbnail for full-face locators
             p_loc = p_im.copy()
             p_loc.thumbnail((256, 256))
             p_draw_loc = ImageDraw.Draw(p_loc)
@@ -280,6 +329,22 @@ def create_phase2d_audit(input_jsonl, output_dir):
             g_draw_loc = ImageDraw.Draw(g_loc)
             draw_mark(g_draw_loc, g_centroid, g_mark.get("bbox"), g_loc.size[0], g_loc.size[1], color=(255,0,0))
             
+            card_512_path = os.path.join(output_dir, f"evidence_cards/{target_key}/{review_id}_512.jpg")
+            is_valid_512 = generate_evidence_card(p_crops[512], g_crops[512], p_marked_crops[512], g_marked_crops[512], p_loc, g_loc, 512, item, p_mark, g_mark, c, pair_id, card_512_path)
+            if is_valid_512:
+                cards_512_generated += 1
+            else:
+                blank_cards += 1
+                
+            card_768_path = os.path.join(output_dir, f"evidence_cards/{target_key}/{review_id}_768.jpg")
+            is_valid_768 = False
+            if 768 in p_crops and 768 in g_crops:
+                is_valid_768 = generate_evidence_card(p_crops[768], g_crops[768], p_marked_crops[768], g_marked_crops[768], p_loc, g_loc, 768, item, p_mark, g_mark, c, pair_id, card_768_path)
+                if is_valid_768:
+                    cards_768_generated += 1
+                else:
+                    blank_cards += 1
+
             overlay_filename = ""
             if i < 5:
                 p_ov = p_im.copy()
@@ -313,10 +378,8 @@ def create_phase2d_audit(input_jsonl, output_dir):
                 combined_ov.save(os.path.join(output_dir, f"{target_key}_overlay_examples", overlay_filename))
             
             y_offset = i * tile_h
-            
             p_loc_y = y_offset + (512 - p_loc.size[1]) // 2
             g_loc_y = y_offset + (512 - g_loc.size[1]) // 2
-            
             sheet_img.paste(p_loc, (0, p_loc_y))
             sheet_img.paste(p_crops[512], (256, y_offset))
             sheet_img.paste(g_crops[512], (256 + 512, y_offset))
@@ -325,7 +388,6 @@ def create_phase2d_audit(input_jsonl, output_dir):
             pasted_tiles += 1
             
             text_y = y_offset + 512 + 10
-            
             labels = [
                 f"pair_id: {pair_id} | label_same_person: {item['is_same']}",
                 f"variant: {item['mark_type']} | mark_type: {item['mark_type']}",
@@ -340,7 +402,7 @@ def create_phase2d_audit(input_jsonl, output_dir):
             bbox_missing = p_mark.get('bbox') is None or g_mark.get('bbox') is None
 
             reviewer_csv_rows.append({
-                "review_id": f"{target_key}_{i}",
+                "review_id": review_id,
                 "pair_id": pair_id,
                 "label_same_person": item["is_same"],
                 "probe_image_path": p_img_path,
@@ -379,6 +441,36 @@ def create_phase2d_audit(input_jsonl, output_dir):
                 "human_correspondence_confidence_1_to_5": "",
                 "review_notes": ""
             })
+            
+            clean_reviewer_csv_rows.append({
+                "review_id": review_id,
+                "pair_id": pair_id,
+                "label_same_person": item["is_same"],
+                "mark_type": item["mark_type"],
+                "probe_crop_clean": f"crops/768/{target_key}_probe_{pair_id}_{i}_768.jpg",
+                "gallery_crop_clean": f"crops/768/{target_key}_gallery_{pair_id}_{i}_768.jpg",
+                "probe_crop_marked": "embed in card",
+                "gallery_crop_marked": "embed in card",
+                "probe_full_face_locator": "embed in card",
+                "gallery_full_face_locator": "embed in card",
+                "evidence_card_filename_512": f"evidence_cards/{target_key}/{review_id}_512.jpg",
+                "evidence_card_filename_768": f"evidence_cards/{target_key}/{review_id}_768.jpg",
+                "match_quality": c.get("patch_combined_similarity"),
+                "regional_uv_distance": c.get("regional_uv_distance"),
+                "confidence_probe": p_mark.get("confidence"),
+                "confidence_gallery": g_mark.get("confidence"),
+                "area_probe": p_mark.get("area"),
+                "area_gallery": g_mark.get("area"),
+                "contrast_probe": p_mark.get("contrast_score"),
+                "contrast_gallery": g_mark.get("contrast_score"),
+                "salience_probe": p_mark.get("salience"),
+                "salience_gallery": g_mark.get("salience"),
+                "human_real_mark_probe_yes_no": "",
+                "human_real_mark_gallery_yes_no": "",
+                "human_same_physical_mark_yes_no": "",
+                "human_texture_noise_yes_no": "",
+                "review_notes": ""
+            })
 
         sheet_img.save(os.path.join(output_dir, output_filename))
         print(f"Generated {output_filename}")
@@ -401,12 +493,32 @@ def create_phase2d_audit(input_jsonl, output_dir):
             "manually_reviewable": not is_blank and pasted_tiles > 0
         })
         
+        clean_debug_summary_rows.append({
+            "category": target_key,
+            "rows_loaded": rows_loaded,
+            "targets_selected": targets_selected,
+            "probe_downloads_succeeded": successful_probe_downloads,
+            "gallery_downloads_succeeded": successful_gallery_downloads,
+            "512_cards_generated": cards_512_generated,
+            "768_cards_generated": cards_768_generated,
+            "failed_rows": failed_count,
+            "blank_cards": blank_cards
+        })
+        
         if targets_selected > 0 and pasted_tiles == 0:
             print(f"FATAL ERROR: Contact sheet {output_filename} has 0 pasted tiles despite {targets_selected} targets.")
             fatal = True
             
+        if targets_selected > 0 and cards_512_generated == 0:
+            print(f"FATAL ERROR: 0 evidence cards generated for {target_key}")
+            fatal = True
+            
         if is_blank:
             print(f"FATAL ERROR: Contact sheet {output_filename} is a blank canvas.")
+            fatal = True
+            
+        if blank_cards > 0:
+            print(f"FATAL ERROR: {blank_cards} blank evidence cards generated for {target_key}")
             fatal = True
             
         if targets_selected > 0 and successful_probe_downloads == 0:
@@ -437,12 +549,30 @@ def create_phase2d_audit(input_jsonl, output_dir):
             writer.writeheader()
             writer.writerows(reviewer_csv_rows)
             
+    if clean_reviewer_csv_rows:
+        keys = clean_reviewer_csv_rows[0].keys()
+        with open(os.path.join(output_dir, "hq_phase2d_clean_visual_review_sheet.csv"), "w", newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=keys)
+            writer.writeheader()
+            writer.writerows(clean_reviewer_csv_rows)
+            
     if debug_summary_rows:
         keys = debug_summary_rows[0].keys()
         with open(os.path.join(output_dir, "hq_phase2d_visual_audit_debug_summary.csv"), "w", newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=keys)
             writer.writeheader()
             writer.writerows(debug_summary_rows)
+            
+    if clean_debug_summary_rows:
+        keys = clean_debug_summary_rows[0].keys()
+        with open(os.path.join(output_dir, "hq_phase2d_clean_visual_debug_summary.csv"), "w", newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=keys)
+            writer.writeheader()
+            writer.writerows(clean_debug_summary_rows)
+            
+    if not clean_reviewer_csv_rows:
+        print("FATAL ERROR: Empty CSV hq_phase2d_clean_visual_review_sheet.csv")
+        fatal = True
             
     if failed_rows:
         keys = failed_rows[0].keys()
