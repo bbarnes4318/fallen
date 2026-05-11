@@ -316,8 +316,8 @@ def evaluate_calibration(input_path, output_dir):
     summary_csv = []
     for v in variants:
         res = results[v]
-        total_same_base = max(1, results["A_baseline_current_detector"]["same_retention"])
-        total_diff_base = max(1, results["A_baseline_current_detector"]["false_support"])
+        total_same_base = max(1, results["baseline_current_detector"]["same_retention"])
+        total_diff_base = max(1, results["baseline_current_detector"]["false_support"])
         
         same_ret_rate = res["same_retention"] / total_same_base
         diff_sup_rate = 1.0 - (res["false_support"] / total_diff_base)
