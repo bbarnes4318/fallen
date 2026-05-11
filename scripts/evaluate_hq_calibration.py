@@ -16,20 +16,10 @@ def filter_marks(marks, variant):
     retained = []
     suppressed = []
     
-    if variant == "A_baseline_current_detector":
+    if variant == "baseline_current_detector":
         return marks, []
         
-    if variant == "B_suppress_light_scar":
-        for m in marks:
-            if m.get("mark_type") == "light_scar":
-                m_sup = dict(m)
-                m_sup["suppression_reason"] = "suppress_light_scar"
-                suppressed.append(m_sup)
-            else:
-                retained.append(m)
-        return retained, suppressed
-
-    if variant == "C_dark_spot_strict":
+    if variant == "dark_spot_strict":
         for m in marks:
             if m.get("mark_type") == "dark_spot":
                 area = m.get("area", 0)
@@ -55,54 +45,79 @@ def filter_marks(marks, variant):
                 retained.append(m)
         return retained, suppressed
 
-    if variant == "D_cluster_cap_by_region":
-        from collections import defaultdict
-        by_region = defaultdict(list)
+    if variant == "light_scar_strict":
         for m in marks:
-            by_region[m.get("face_region", "unknown")].append(m)
-            
-        global_hv_count = 0
-        for region, rm_list in by_region.items():
-            # Sort by confidence descending
-            rm_list.sort(key=lambda x: x.get("confidence", 0), reverse=True)
-            region_total = 0
-            region_hv = 0
-            for m in rm_list:
-                hv = is_high_value(m)
+            if m.get("mark_type") == "light_scar":
+                area = m.get("area", 0)
+                contrast = m.get("contrast", 0)
+                confidence = m.get("confidence", 0)
                 
-                if region_total >= 5:
-                    m_sup = dict(m); m_sup["suppression_reason"] = "region_cap_total"; suppressed.append(m_sup)
-                    continue
-                if hv and region_hv >= 3:
-                    m_sup = dict(m); m_sup["suppression_reason"] = "region_cap_hv"; suppressed.append(m_sup)
-                    continue
-                if hv and global_hv_count >= 10:
-                    m_sup = dict(m); m_sup["suppression_reason"] = "global_cap_hv"; suppressed.append(m_sup)
-                    continue
-                    
-                retained.append(m)
-                region_total += 1
-                if hv:
-                    region_hv += 1
-                    global_hv_count += 1
-        return retained, suppressed
-
-    if variant == "E_NMS_strict":
-        # Sort by confidence
-        sorted_marks = sorted(marks, key=lambda x: x.get("confidence", 0), reverse=True)
-        for m in sorted_marks:
-            dominated = False
-            for r in retained:
-                if distance(m, r) < 0.005:
-                    dominated = True
-                    break
-            if dominated:
-                m_sup = dict(m); m_sup["suppression_reason"] = "nms_strict"; suppressed.append(m_sup)
+                # Check isolation
+                isolated = True
+                for other in marks:
+                    if other == m: continue
+                    if distance(m, other) < 0.005:
+                        isolated = False
+                        break
+                        
+                if area < 50:
+                    m_sup = dict(m); m_sup["suppression_reason"] = "light_scar_strict_area"; suppressed.append(m_sup)
+                elif contrast < 0.15:
+                    m_sup = dict(m); m_sup["suppression_reason"] = "light_scar_strict_contrast"; suppressed.append(m_sup)
+                elif confidence < 0.8:
+                    m_sup = dict(m); m_sup["suppression_reason"] = "light_scar_strict_confidence"; suppressed.append(m_sup)
+                elif not isolated:
+                    m_sup = dict(m); m_sup["suppression_reason"] = "light_scar_strict_cluster"; suppressed.append(m_sup)
+                else:
+                    retained.append(m)
             else:
                 retained.append(m)
         return retained, suppressed
 
-    if variant == "F_permanent_mark_only_experiment":
+    if variant == "dark_spot_strict_plus_light_scar_strict":
+        for m in marks:
+            if m.get("mark_type") == "dark_spot":
+                area = m.get("area", 0)
+                contrast = m.get("contrast", 0)
+                isolated = True
+                for other in marks:
+                    if other == m: continue
+                    if distance(m, other) < 0.005:
+                        isolated = False
+                        break
+                if area < 15:
+                    m_sup = dict(m); m_sup["suppression_reason"] = "dark_spot_strict_area"; suppressed.append(m_sup)
+                elif contrast < 3.0:
+                    m_sup = dict(m); m_sup["suppression_reason"] = "dark_spot_strict_contrast"; suppressed.append(m_sup)
+                elif not isolated:
+                    m_sup = dict(m); m_sup["suppression_reason"] = "dark_spot_strict_cluster"; suppressed.append(m_sup)
+                else:
+                    retained.append(m)
+            elif m.get("mark_type") == "light_scar":
+                area = m.get("area", 0)
+                contrast = m.get("contrast", 0)
+                confidence = m.get("confidence", 0)
+                isolated = True
+                for other in marks:
+                    if other == m: continue
+                    if distance(m, other) < 0.005:
+                        isolated = False
+                        break
+                if area < 50:
+                    m_sup = dict(m); m_sup["suppression_reason"] = "light_scar_strict_area"; suppressed.append(m_sup)
+                elif contrast < 0.15:
+                    m_sup = dict(m); m_sup["suppression_reason"] = "light_scar_strict_contrast"; suppressed.append(m_sup)
+                elif confidence < 0.8:
+                    m_sup = dict(m); m_sup["suppression_reason"] = "light_scar_strict_confidence"; suppressed.append(m_sup)
+                elif not isolated:
+                    m_sup = dict(m); m_sup["suppression_reason"] = "light_scar_strict_cluster"; suppressed.append(m_sup)
+                else:
+                    retained.append(m)
+            else:
+                retained.append(m)
+        return retained, suppressed
+
+    if variant == "permanent_mark_only_experiment":
         allowed = ["dark_mole", "depression_scar", "linear_scar", "structural_crater"]
         for m in marks:
             if m.get("mark_type") in allowed:
@@ -118,12 +133,11 @@ def evaluate_calibration(input_path, output_dir):
     os.makedirs(output_dir, exist_ok=True)
     
     variants = [
-        "A_baseline_current_detector",
-        "B_suppress_light_scar",
-        "C_dark_spot_strict",
-        "D_cluster_cap_by_region",
-        "E_NMS_strict",
-        "F_permanent_mark_only_experiment"
+        "baseline_current_detector",
+        "dark_spot_strict",
+        "light_scar_strict",
+        "dark_spot_strict_plus_light_scar_strict",
+        "permanent_mark_only_experiment"
     ]
     
     pairs = []
@@ -223,7 +237,7 @@ def evaluate_calibration(input_path, output_dir):
                     if tot_count > 30: results[v]["images_gt_30_total"] += 1
                     
                     # Store for before/after by image
-                    if v == "A_baseline_current_detector":
+                    if v == "baseline_current_detector":
                         by_image_csv.append({
                             "pair_id": p.get("pair_id"),
                             "image_path": key,
@@ -261,7 +275,7 @@ def evaluate_calibration(input_path, output_dir):
             
             retained_corresps = []
             for c in corresps:
-                if v == "A_baseline_current_detector":
+                if v == "baseline_current_detector":
                     if is_same: results[v]["total_same_corresps_baseline"] += 1
                     else: results[v]["total_diff_corresps_baseline"] += 1
                     
