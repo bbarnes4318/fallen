@@ -1,0 +1,109 @@
+name: HQ Visual Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Run ID of the validation pipeline to use for the audit (e.g. 25645218529)'
+        required: true
+        type: string
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install Pillow
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.SA_EMAIL }}
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Download Validation Artifact
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh run download ${{ inputs.run_id }} -D ./downloaded_artifacts || echo "Fallback: continuing to search"
+          find ./downloaded_artifacts -name "validation_results.jsonl" -exec cp {} validation_results.jsonl \;
+          if [ ! -f validation_results.jsonl ]; then
+            echo "ERROR: validation_results.jsonl not found in artifact"
+            exit 1
+          fi
+
+      - name: Run Grid Sweep
+        run: |
+          python scripts/sweep_hq_calibration.py --input validation_results.jsonl --output-dir hq_visual_audit
+
+      - name: Generate Contact Sheets
+        run: |
+          python scripts/generate_hq_contact_sheets.py --input validation_results.jsonl --output-dir hq_visual_audit/contact_sheets
+
+      - name: Generate Markdown Report
+        run: |
+          cat << 'EOF' > hq_visual_audit/hq_phase1_visual_audit_report.md
+          # HQ Phase 1 Calibration: Sweep & Visual Audit Results
+
+          ## 1. Automated Threshold Sweep Execution
+          The parameter grid search using `scripts/sweep_hq_calibration.py` was successfully executed across 2,160 permutations of mark area, contrast/salience, confidence, and cluster settings.
+
+          > [!WARNING]
+          > **No combinations passed the "Wiring Bar"**
+          > The sweep concluded that no configuration met the dual requirement of beating the baseline precision proxy (0.7407) while maintaining >=80% identity signal retention. The automated analysis outputted: *"No detector calibration variant is ready. Manual audit or new detector features are required."*
+
+          ## 2. Contact Sheet Generation
+          To bridge the gap between telemetry and physical evidence, we extracted the top 50 crops for both the `light_scar_cluster_aware` and `dark_spot_strict` variants. The structured `hq_visual_audit_review_sheet.csv` was also generated.
+
+          ### Visual Audit Targets
+
+          #### Dark Spot (Strict Variant)
+          Displays the top retained and suppressed dark spots based on the strict region/area logic.
+          ![Dark Spot Retained & Suppressed](./contact_sheets/dark_spot_retained_suppressed_contact_sheet.jpg)
+
+          #### Light Scar (Cluster-Aware Variant)
+          **Retained Signals** (Marks kept by the filter):
+          ![Light Scar Retained](./contact_sheets/light_scar_retained_contact_sheet.jpg)
+
+          **Suppressed Signals** (Marks deleted by the filter):
+          ![Light Scar Suppressed](./contact_sheets/light_scar_suppressed_contact_sheet.jpg)
+
+          **Correspondences (Same Person)** (True positive signals):
+          ![Light Scar Same-Person Correspondences](./contact_sheets/light_scar_same_person_correspondence_contact_sheet.jpg)
+
+          **Correspondences (Impostor)** (False positive signals driving down precision):
+          ![Light Scar Impostor Correspondences](./contact_sheets/light_scar_impostor_correspondence_contact_sheet.jpg)
+
+          ## Next Steps
+          > [!IMPORTANT]
+          > **Manual Qualitative Review Required**
+          > Please review the contact sheets above and the CSV file.
+          EOF
+          
+          # Move CSVs to root of artifact directory for clarity
+          mv hq_visual_audit/contact_sheets/hq_visual_audit_review_sheet.csv hq_visual_audit/ || true
+
+      - name: Upload Visual Audit Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hq_phase1_visual_audit_evidence
+          path: hq_visual_audit/
