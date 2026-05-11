@@ -1,139 +1,36 @@
 import json
 import os
-import csv
 import math
 import subprocess
 import sys
+import csv
 import argparse
-
-try:
-    from PIL import Image, ImageDraw, ImageFont
-except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "Pillow"])
-    from PIL import Image, ImageDraw, ImageFont
-
-def distance(m1, m2):
-    c1 = m1.get("centroid", [0, 0])
-    c2 = m2.get("centroid", [0, 0])
-    return math.sqrt((c1[0] - c2[0])**2 + (c1[1] - c2[1])**2)
-
-def download_gcs_file(gcs_uri, local_path):
-    if os.path.exists(local_path): return True
-    gsutil_cmd = "gsutil.cmd" if sys.platform == "win32" else "gsutil"
-    try:
-        subprocess.run([gsutil_cmd, "cp", gcs_uri, local_path], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"Error downloading {gcs_uri}: {e}")
-        return False
+from PIL import Image, ImageDraw, ImageFont
 
 def get_basename(path):
-    return path.split("/")[-1].split("\\")[-1]
+    if not path: return ""
+    return path.split("/")[-1]
 
-def filter_marks(marks, variant):
-    retained = []
-    suppressed = []
-    
-    for m in marks:
-        m_type = m.get("mark_type")
-        area = m.get("area") or 0
-        contrast = m.get("contrast_score", m.get("salience", 0)) or 0
-        confidence = m.get("confidence") or 0
-        region = m.get("face_region", "unknown")
-        
-        isolated = True
-        for other in marks:
-            if other == m: continue
-            if distance(m, other) < 0.005:
-                isolated = False
-                break
-                
-        def apply_dark_spot_strict(mark):
-            if mark.get("mark_type") == "dark_spot":
-                if area < 15: return False, "dark_spot_strict_area"
-                if contrast > 0 and contrast < 3.0: return False, "dark_spot_strict_salience"
-                if not isolated: return False, "dark_spot_strict_cluster"
-            return True, None
+def download_gcs_file(gcs_uri, local_path):
+    if os.path.exists(local_path): 
+        return True, ""
+    gsutil_cmd = "gsutil.cmd" if sys.platform == "win32" else "gsutil"
+    try:
+        res = subprocess.run([gsutil_cmd, "cp", gcs_uri, local_path], capture_output=True, text=True, check=True)
+        return True, ""
+    except subprocess.CalledProcessError as e:
+        return False, e.stderr
 
-        def get_light_scar_contrast_relaxed(mark):
-            if mark.get("mark_type") == "light_scar":
-                if area < 10: return False, "area_too_small"
-                if contrast > 0 and contrast < 0.05: return False, "salience_too_low"
-                if confidence > 0 and confidence < 0.5: return False, "confidence_too_low"
-            return True, None
+def get_non_white_pixels(img):
+    gray = img.convert("L")
+    data = list(gray.getdata())
+    return sum(1 for p in data if p < 255)
 
-        keep = True
-        reason = None
-        
-        if variant == "dark_spot_strict":
-            keep, reason = apply_dark_spot_strict(m)
-        elif variant == "light_scar_cluster_aware":
-            keep, reason = get_light_scar_contrast_relaxed(m)
-            
-        if keep:
-            retained.append(m)
-        else:
-            m_sup = dict(m)
-            m_sup["suppression_reason"] = reason
-            suppressed.append(m_sup)
-
-    # 2nd pass for cluster logic
-    if variant == "light_scar_cluster_aware":
-        final_retained = []
-        light_scars = [m for m in retained if m.get("mark_type") == "light_scar"]
-        other_marks = [m for m in retained if m.get("mark_type") != "light_scar"]
-        
-        clusters = []
-        for m in light_scars:
-            added = False
-            for c in clusters:
-                if any(distance(m, cm) < 0.02 for cm in c):
-                    c.append(m)
-                    added = True
-                    break
-            if not added:
-                clusters.append([m])
-                
-        for c in clusters:
-            c.sort(key=lambda x: (x.get("contrast_score", x.get("salience", 0)) or 0) * (x.get("confidence") or 0), reverse=True)
-            final_retained.append(c[0])
-            for suppressed_m in c[1:]:
-                m_sup = dict(suppressed_m)
-                m_sup["suppression_reason"] = "cluster_duplicate"
-                suppressed.append(m_sup)
-                
-        retained = other_marks + final_retained
-
-    return retained, suppressed
-
-
-def create_contact_sheets(input_file, output_dir):
+def create_contact_sheets(input_jsonl, output_dir):
     os.makedirs(output_dir, exist_ok=True)
-    crop_tmp_dir = os.path.join(output_dir, "crop_source_tmp")
+    crop_tmp_dir = os.path.join(output_dir, "tmp_crops")
     os.makedirs(crop_tmp_dir, exist_ok=True)
     
-    # Load manifest
-    manifest_map = {}
-    manifest_path = "validation/validation_pairs_hq_headshots.csv"
-    if os.path.exists(manifest_path):
-        with open(manifest_path, "r") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                manifest_map[row["pair_id"]] = {
-                    "probe": row["image1_url_or_gcs_path"],
-                    "gallery": row["image2_url_or_gcs_path"],
-                    "is_same": str(row.get("label_same_person", "")).lower() in ["true", "1", "yes"]
-                }
-    
-    pairs = []
-    with open(input_file, "r") as f:
-        for line in f:
-            if not line.strip(): continue
-            try:
-                pairs.append(json.loads(line.strip()))
-            except:
-                pass
-                
     crop_targets = {
         "retained_light_scar": [],
         "suppressed_light_scar": [],
@@ -143,22 +40,28 @@ def create_contact_sheets(input_file, output_dir):
         "suppressed_dark_spot_strict": []
     }
 
-    # Extract marks
+    pairs = []
+    with open(input_jsonl, 'r') as f:
+        for line in f:
+            pairs.append(json.loads(line))
+
     for p in pairs:
-        pair_id = p.get("pair_id")
-        is_same = manifest_map.get(pair_id, {}).get("is_same", False)
+        pair_id = p.get("pair_id", "unknown")
+        is_same = p.get("label_same_person", False)
+        image_path = p.get("gallery_image_path", "")
         
-        retained_ls, suppressed_ls = filter_marks(p.get("raw_gallery_marks_summary", []), "light_scar_cluster_aware")
-        retained_ds, suppressed_ds = filter_marks(p.get("raw_gallery_marks_summary", []), "dark_spot_strict")
-        
-        image_path = manifest_map.get(pair_id, {}).get("gallery", "")
-        
+        # Variants logic
+        retained_ls = p.get("variant_marks_light_scar_cluster_aware", [])
+        suppressed_ls = p.get("variant_suppressed_light_scar_cluster_aware", [])
         for m in retained_ls:
             if m.get("mark_type") == "light_scar":
-                crop_targets["retained_light_scar"].append({"mark": m, "img": image_path, "pair_id": pair_id, "is_same": is_same, "variant": "light_scar_cluster_aware"})
+                crop_targets["retained_light_scar"].append({"mark": m, "img": image_path, "pair_id": pair_id, "is_same": is_same, "variant": "light_scar_cluster_aware", "suppression_reason": ""})
         for m in suppressed_ls:
             if m.get("mark_type") == "light_scar":
                 crop_targets["suppressed_light_scar"].append({"mark": m, "img": image_path, "pair_id": pair_id, "is_same": is_same, "variant": "light_scar_cluster_aware"})
+
+        retained_ds = p.get("variant_marks_dark_spot_strict", [])
+        suppressed_ds = p.get("variant_suppressed_dark_spot_strict", [])
         for m in retained_ds:
             if m.get("mark_type") == "dark_spot":
                 crop_targets["retained_dark_spot_strict"].append({"mark": m, "img": image_path, "pair_id": pair_id, "is_same": is_same, "variant": "dark_spot_strict", "suppression_reason": ""})
@@ -166,7 +69,7 @@ def create_contact_sheets(input_file, output_dir):
             if m.get("mark_type") == "dark_spot":
                 crop_targets["suppressed_dark_spot_strict"].append({"mark": m, "img": image_path, "pair_id": pair_id, "is_same": is_same, "variant": "dark_spot_strict"})
 
-        # Correspondences (only gallery side for visualization)
+        # Correspondences (gallery side only)
         corresps = p.get("accepted_correspondences_detail", [])
         for c in corresps:
             if c.get("mark_type") == "light_scar":
@@ -181,9 +84,7 @@ def create_contact_sheets(input_file, output_dir):
                 if is_same: crop_targets["same_person_light_scar_corresps"].append(item)
                 else: crop_targets["impostor_light_scar_corresps"].append(item)
 
-    # Prepare fonts
     try:
-        # standard fallback on windows
         font = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", 10)
     except:
         try:
@@ -192,34 +93,53 @@ def create_contact_sheets(input_file, output_dir):
             font = ImageFont.load_default()
 
     reviewer_csv_rows = []
+    debug_summary_rows = []
+    failed_rows = []
     
     def generate_sheet(target_key, output_filename, is_corresp=False, is_mixed=False):
         if is_mixed and target_key == "dark_spot_retained_suppressed":
             items = crop_targets["retained_dark_spot_strict"] + crop_targets["suppressed_dark_spot_strict"]
         else:
             items = crop_targets[target_key]
-        if not items: return
+            
+        rows_loaded = len(items)
+        if not items:
+            debug_summary_rows.append({
+                "sheet_name": output_filename,
+                "rows_loaded": 0,
+                "crop_targets_selected": 0,
+                "successful_downloads": 0,
+                "successful_crops": 0,
+                "pasted_tiles": 0,
+                "failed_rows": 0,
+                "non_white_pixels": 0,
+                "is_blank": True
+            })
+            return
         
         if is_corresp: items.sort(key=lambda x: x["corresp"].get("patch_combined_similarity") or 0, reverse=True)
         else: items.sort(key=lambda x: x["mark"].get("contrast_score", x["mark"].get("salience", 0)) or 0, reverse=True)
             
         top_items = items[:50]
+        crop_targets_selected = len(top_items)
         
         cols = 5
         rows = math.ceil(len(top_items) / cols)
         
-        # Tile size: 150 crop + 100 for text
         tile_w = 150
         tile_h = 250
         
         sheet_img = Image.new('RGB', (cols * tile_w, rows * tile_h), color=(255, 255, 255))
         draw = ImageDraw.Draw(sheet_img)
         
+        successful_downloads = 0
+        successful_crops = 0
+        pasted_tiles = 0
+        failed_count = 0
+        labels_drawn = 0
+        
         for i, item in enumerate(top_items):
             gcs_path = item.get("img")
-            if not gcs_path: continue
-            
-            # Metadata
             pair_id = item["pair_id"]
             is_same = "same_person" if item["is_same"] else "different_person"
             variant = item["variant"]
@@ -244,28 +164,46 @@ def create_contact_sheets(input_file, output_dir):
                 match_quality = "N/A"
                 sup_reason = m.get("suppression_reason", "None")
                 centroid = m.get("centroid")
+                
+            if not gcs_path:
+                failed_rows.append({"sheet": output_filename, "pair_id": pair_id, "error": "Missing image path"})
+                failed_count += 1
+                continue
+                
+            if not centroid:
+                failed_rows.append({"sheet": output_filename, "pair_id": pair_id, "error": "Missing centroid"})
+                failed_count += 1
+                continue
 
-            # Crop
             local_img_path = os.path.join(crop_tmp_dir, get_basename(gcs_path))
             cropped_img = None
-            if download_gcs_file(gcs_path, local_img_path) and centroid:
-                try:
-                    img = Image.open(local_img_path)
-                    w, h = img.size
-                    cx, cy = int(centroid[0] * w), int(centroid[1] * h)
-                    box_size = 150
-                    left = max(0, cx - box_size // 2)
-                    top = max(0, cy - box_size // 2)
-                    right = min(w, cx + box_size // 2)
-                    bottom = min(h, cy + box_size // 2)
-                    cropped = img.crop((left, top, right, bottom))
-                    # pad if smaller
-                    cropped_img = Image.new("RGB", (box_size, box_size), (0,0,0))
-                    cropped_img.paste(cropped, (0,0))
-                except Exception as e:
-                    print(f"Crop failed: {e}")
             
-            # Place on sheet
+            success, err_msg = download_gcs_file(gcs_path, local_img_path)
+            if not success:
+                failed_rows.append({"sheet": output_filename, "pair_id": pair_id, "error": f"Download failed: {err_msg}"})
+                failed_count += 1
+                continue
+            
+            successful_downloads += 1
+            
+            try:
+                img = Image.open(local_img_path)
+                w, h = img.size
+                cx, cy = int(centroid[0] * w), int(centroid[1] * h)
+                box_size = 150
+                left = max(0, cx - box_size // 2)
+                top = max(0, cy - box_size // 2)
+                right = min(w, cx + box_size // 2)
+                bottom = min(h, cy + box_size // 2)
+                cropped = img.crop((left, top, right, bottom))
+                cropped_img = Image.new("RGB", (box_size, box_size), (0,0,0))
+                cropped_img.paste(cropped, (0,0))
+                successful_crops += 1
+            except Exception as e:
+                failed_rows.append({"sheet": output_filename, "pair_id": pair_id, "error": f"Crop failed: {e}"})
+                failed_count += 1
+                continue
+            
             col_idx = i % cols
             row_idx = i // cols
             x = col_idx * tile_w
@@ -273,8 +211,8 @@ def create_contact_sheets(input_file, output_dir):
             
             if cropped_img:
                 sheet_img.paste(cropped_img, (x, y))
+                pasted_tiles += 1
             
-            # Draw text
             text_y = y + 155
             lines = [
                 f"ID: {pair_id} ({is_same})",
@@ -287,8 +225,8 @@ def create_contact_sheets(input_file, output_dir):
             for line in lines:
                 draw.text((x + 5, text_y), line, font=font, fill=(0,0,0))
                 text_y += 15
+            labels_drawn += 1
 
-            # Append to Reviewer CSV
             crop_filename = f"{target_key}_{i:02d}.jpg"
             reviewer_csv_rows.append({
                 "review_id": crop_filename,
@@ -300,7 +238,7 @@ def create_contact_sheets(input_file, output_dir):
                 "region": region,
                 "confidence": confidence,
                 "contrast_score": contrast,
-                "salience_score": contrast, # Fallback mapping
+                "salience_score": contrast,
                 "area": area,
                 "match_quality": match_quality,
                 "suppression_reason": sup_reason,
@@ -313,6 +251,29 @@ def create_contact_sheets(input_file, output_dir):
 
         sheet_img.save(os.path.join(output_dir, output_filename))
         print(f"Generated {output_filename}")
+        
+        non_white_pixels = get_non_white_pixels(sheet_img)
+        is_blank = non_white_pixels == 0
+        
+        debug_summary_rows.append({
+            "sheet_name": output_filename,
+            "rows_loaded": rows_loaded,
+            "crop_targets_selected": crop_targets_selected,
+            "successful_downloads": successful_downloads,
+            "successful_crops": successful_crops,
+            "pasted_tiles": pasted_tiles,
+            "failed_rows": failed_count,
+            "non_white_pixels": non_white_pixels,
+            "is_blank": is_blank
+        })
+        
+        if crop_targets_selected > 0 and pasted_tiles == 0:
+            print(f"FATAL ERROR: Contact sheet {output_filename} has 0 pasted tiles despite {crop_targets_selected} targets.")
+            sys.exit(1)
+            
+        if is_blank:
+            print(f"FATAL ERROR: Contact sheet {output_filename} is a blank canvas.")
+            sys.exit(1)
 
     print("Generating contact sheets...")
     generate_sheet("retained_light_scar", "light_scar_retained_contact_sheet.jpg")
@@ -321,13 +282,26 @@ def create_contact_sheets(input_file, output_dir):
     generate_sheet("impostor_light_scar_corresps", "light_scar_impostor_correspondence_contact_sheet.jpg", is_corresp=True)
     generate_sheet("dark_spot_retained_suppressed", "dark_spot_retained_suppressed_contact_sheet.jpg", is_mixed=True)
     
-    # Save reviewer CSV
     if reviewer_csv_rows:
         keys = reviewer_csv_rows[0].keys()
         with open(os.path.join(output_dir, "hq_visual_audit_review_sheet.csv"), "w", newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=keys)
             writer.writeheader()
             writer.writerows(reviewer_csv_rows)
+            
+    if debug_summary_rows:
+        keys = debug_summary_rows[0].keys()
+        with open(os.path.join(output_dir, "hq_contact_sheet_debug_summary.csv"), "w", newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=keys)
+            writer.writeheader()
+            writer.writerows(debug_summary_rows)
+            
+    if failed_rows:
+        keys = failed_rows[0].keys()
+        with open(os.path.join(output_dir, "hq_contact_sheet_failed_rows.csv"), "w", newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=keys)
+            writer.writeheader()
+            writer.writerows(failed_rows)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
