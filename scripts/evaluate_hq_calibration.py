@@ -30,9 +30,12 @@ def filter_marks(marks, variant):
         
     for m in marks:
         m_type = m.get("mark_type")
-        area = m.get("area", 0)
-        salience = m.get("salience", 0)
-        confidence = m.get("confidence", 0)
+        area = m.get("area")
+        if area is None: area = 0
+        salience = m.get("salience")
+        if salience is None: salience = 0
+        confidence = m.get("confidence")
+        if confidence is None: confidence = 0
         region = m.get("face_region", "unknown")
         
         isolated = True
@@ -45,15 +48,15 @@ def filter_marks(marks, variant):
         def apply_dark_spot_strict(mark):
             if mark.get("mark_type") == "dark_spot":
                 if area < 15: return False, "dark_spot_strict_area"
-                if salience < 3.0: return False, "dark_spot_strict_salience"
+                if salience > 0 and salience < 3.0: return False, "dark_spot_strict_salience"
                 if not isolated: return False, "dark_spot_strict_cluster"
             return True, None
 
         def get_light_scar_contrast_relaxed(mark):
             if mark.get("mark_type") == "light_scar":
                 if area < 10: return False, "area_too_small"
-                if salience < 0.05: return False, "salience_too_low"
-                if confidence < 0.5: return False, "confidence_too_low"
+                if salience > 0 and salience < 0.05: return False, "salience_too_low"
+                if confidence > 0 and confidence < 0.5: return False, "confidence_too_low"
             return True, None
 
         def get_light_scar_shape_linear(mark):
@@ -128,7 +131,7 @@ def filter_marks(marks, variant):
                 clusters.append([m])
                 
         for c in clusters:
-            c.sort(key=lambda x: x.get("salience", 0) * x.get("confidence", 0), reverse=True)
+            c.sort(key=lambda x: (x.get("salience") or 0) * (x.get("confidence") or 0), reverse=True)
             final_retained.append(c[0])
             for suppressed_m in c[1:]:
                 m_sup = dict(suppressed_m)
@@ -141,8 +144,10 @@ def filter_marks(marks, variant):
 
 def download_gcs_file(gcs_uri, local_path):
     if os.path.exists(local_path): return True
+    import sys
+    gsutil_cmd = "gsutil.cmd" if sys.platform == "win32" else "gsutil"
     try:
-        subprocess.run(["gsutil", "cp", gcs_uri, local_path], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run([gsutil_cmd, "cp", gcs_uri, local_path], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return True
     except subprocess.CalledProcessError as e:
         print(f"Error downloading {gcs_uri}: {e}")
@@ -193,7 +198,8 @@ def evaluate_calibration(input_file, output_dir):
             for row in reader:
                 manifest_map[row["pair_id"]] = {
                     "probe": row["image1_url_or_gcs_path"],
-                    "gallery": row["image2_url_or_gcs_path"]
+                    "gallery": row["image2_url_or_gcs_path"],
+                    "is_same": str(row.get("label_same_person", "")).lower() in ["true", "1", "yes"]
                 }
     
     pairs = []
@@ -241,6 +247,8 @@ def evaluate_calibration(input_file, output_dir):
                 image_path = manifest_map.get(pair_id, {}).get(role, "")
                 
                 marks = p.get(summary_key, [])
+                for i, m in enumerate(marks):
+                    m["index"] = i
                 ret, sup = filter_marks(marks, v)
                 
                 retained_map[f"{pair_id}_{role}"] = ret
@@ -279,7 +287,7 @@ def evaluate_calibration(input_file, output_dir):
                 results[v]["images_hv_marks"].append(hv_count)
 
         for p in pairs:
-            is_same = p.get("label_same_person", False)
+            is_same = manifest_map.get(p.get("pair_id"), {}).get("is_same", False)
             corresps = p.get("accepted_correspondences_detail", [])
             ret1 = {m.get("index") for m in retained_map.get(f"{p.get('pair_id')}_probe", [])}
             ret2 = {m.get("index") for m in retained_map.get(f"{p.get('pair_id')}_gallery", [])}
@@ -326,8 +334,8 @@ def evaluate_calibration(input_file, output_dir):
     def crop_top(target_key, output_subfolder, is_corresp=False):
         items = crop_targets[target_key]
         if not items: return
-        if is_corresp: items.sort(key=lambda x: x["corresp"].get("patch_combined_similarity", 0), reverse=True)
-        else: items.sort(key=lambda x: x["mark"].get("salience", 0), reverse=True)
+        if is_corresp: items.sort(key=lambda x: x["corresp"].get("patch_combined_similarity") or 0, reverse=True)
+        else: items.sort(key=lambda x: x["mark"].get("salience") or 0, reverse=True)
             
         top_items = items[:50]
         out_dir = os.path.join(output_dir, "crops", output_subfolder)
@@ -383,8 +391,12 @@ def evaluate_calibration(input_file, output_dir):
 
     def write_csv(path, dicts):
         if not dicts: return
+        keys = []
+        for d in dicts:
+            for k in d.keys():
+                if k not in keys: keys.append(k)
         with open(path, "w", newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=dicts[0].keys())
+            writer = csv.DictWriter(f, fieldnames=keys)
             writer.writeheader()
             writer.writerows(dicts)
 

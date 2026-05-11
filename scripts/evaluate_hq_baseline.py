@@ -118,8 +118,11 @@ def generate_hq_report(input_jsonl, strict_mark_report_json, output_md, output_j
             mtype = c.get("mark_type", "unknown")
             cregion = c.get("regional_canonical_region_gallery", "unknown")
             uv_dist = c.get("regional_uv_distance", 0)
+            if uv_dist is None: uv_dist = 0
             patch_sim = c.get("patch_combined_similarity", 0)
+            if patch_sim is None: patch_sim = 0
             qual = c.get("match_quality", 0)
+            if qual is None: qual = 0
             
             mark_type_stats[mtype]["accepted"] += 1
             region_stats[cregion]["accepted"] += 1

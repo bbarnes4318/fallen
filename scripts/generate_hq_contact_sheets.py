@@ -40,6 +40,18 @@ def create_contact_sheets(input_jsonl, output_dir):
         "suppressed_dark_spot_strict": []
     }
 
+    manifest_map = {}
+    manifest_path = "validation/validation_pairs_hq_headshots.csv"
+    if os.path.exists(manifest_path):
+        with open(manifest_path, "r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                manifest_map[row["pair_id"]] = {
+                    "probe": row["image1_url_or_gcs_path"],
+                    "gallery": row["image2_url_or_gcs_path"],
+                    "is_same": str(row.get("label_same_person", "")).lower() in ["true", "1", "yes"]
+                }
+
     pairs = []
     with open(input_jsonl, 'r') as f:
         for line in f:
@@ -48,7 +60,7 @@ def create_contact_sheets(input_jsonl, output_dir):
     for p in pairs:
         pair_id = p.get("pair_id", "unknown")
         is_same = p.get("label_same_person", False)
-        image_path = p.get("gallery_image_path", "")
+        image_path = manifest_map.get(pair_id, {}).get("gallery", "")
         
         # Variants logic
         retained_ls = p.get("variant_marks_light_scar_cluster_aware", [])
