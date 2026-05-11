@@ -5,8 +5,8 @@ import csv
 import math
 
 def distance(m1, m2):
-    c1 = m1.get("centroid_px", (0, 0))
-    c2 = m2.get("centroid_px", (0, 0))
+    c1 = m1.get("centroid", [0, 0])
+    c2 = m2.get("centroid", [0, 0])
     return math.sqrt((c1[0] - c2[0])**2 + (c1[1] - c2[1])**2)
 
 def is_high_value(m):
@@ -39,7 +39,7 @@ def filter_marks(marks, variant):
                 isolated = True
                 for other in marks:
                     if other == m: continue
-                    if distance(m, other) < 15:
+                    if distance(m, other) < 0.005:
                         isolated = False
                         break
                         
@@ -93,7 +93,7 @@ def filter_marks(marks, variant):
         for m in sorted_marks:
             dominated = False
             for r in retained:
-                if distance(m, r) < 15:
+                if distance(m, r) < 0.005:
                     dominated = True
                     break
             if dominated:
@@ -166,12 +166,15 @@ def evaluate_calibration(input_path, output_dir):
         # Precompute retained marks by image path
         retained_map = {}
         for p in pairs:
-            for path_key, marks_key in [("image1_path", "raw_probe_marks_summary"), ("image2_path", "raw_gallery_marks_summary")]:
-                path = p.get(path_key)
-                if path not in retained_map:
+            for side, marks_key in [("probe", "raw_probe_marks_summary"), ("gallery", "raw_gallery_marks_summary")]:
+                key = f"{p.get('pair_id')}_{side}"
+                if key not in retained_map:
                     marks = p.get(marks_key, [])
+                    # Inject index based on array position since it's missing in json
+                    for i, m in enumerate(marks):
+                        if "index" not in m: m["index"] = i
                     ret, sup = filter_marks(marks, v)
-                    retained_map[path] = ret
+                    retained_map[key] = ret
                     
                     results[v]["generated_marks_total"] += len(ret)
                     
@@ -184,11 +187,11 @@ def evaluate_calibration(input_path, output_dir):
                         if len(retained_csv) < 1000:
                             retained_csv.append({
                                 "pair_id": p.get("pair_id"),
-                                "image_path": path,
+                                "image_path": key,
                                 "variant_name": v,
                                 "mark_type": mtype,
                                 "canonical_region": m.get("face_region"),
-                                "centroid": m.get("centroid_px"),
+                                "centroid": m.get("centroid"),
                                 "area": m.get("area"),
                                 "contrast": m.get("contrast"),
                                 "confidence": m.get("confidence"),
@@ -199,11 +202,11 @@ def evaluate_calibration(input_path, output_dir):
                         if len(suppressed_csv) < 1000:
                             suppressed_csv.append({
                                 "pair_id": p.get("pair_id"),
-                                "image_path": path,
+                                "image_path": key,
                                 "variant_name": v,
                                 "mark_type": m.get("mark_type"),
                                 "canonical_region": m.get("face_region"),
-                                "centroid": m.get("centroid_px"),
+                                "centroid": m.get("centroid"),
                                 "area": m.get("area"),
                                 "contrast": m.get("contrast"),
                                 "confidence": m.get("confidence"),
@@ -223,7 +226,7 @@ def evaluate_calibration(input_path, output_dir):
                     if v == "A_baseline_current_detector":
                         by_image_csv.append({
                             "pair_id": p.get("pair_id"),
-                            "image_path": path,
+                            "image_path": key,
                             "baseline_total": tot_count,
                             "baseline_hv": hv_count
                         })
@@ -233,7 +236,7 @@ def evaluate_calibration(input_path, output_dir):
                     type_counts = Counter(m.get("mark_type") for m in ret)
                     for mtype, count in type_counts.items():
                         by_mark_type_csv.append({
-                            "image_path": path,
+                            "image_path": key,
                             "variant_name": v,
                             "mark_type": mtype,
                             "count": count
@@ -243,7 +246,7 @@ def evaluate_calibration(input_path, output_dir):
                     region_counts = Counter(m.get("face_region", "unknown") for m in ret)
                     for reg, count in region_counts.items():
                         by_region_csv.append({
-                            "image_path": path,
+                            "image_path": key,
                             "variant_name": v,
                             "canonical_region": reg,
                             "count": count
@@ -251,10 +254,10 @@ def evaluate_calibration(input_path, output_dir):
                         
         # Now evaluate correspondences
         for p in pairs:
-            is_same = p.get("is_same_person", False)
+            is_same = p.get("label_same_person", False)
             corresps = p.get("accepted_correspondences_detail", [])
-            ret1 = {m.get("index") for m in retained_map.get(p.get("image1_path"), [])}
-            ret2 = {m.get("index") for m in retained_map.get(p.get("image2_path"), [])}
+            ret1 = {m.get("index") for m in retained_map.get(f"{p.get('pair_id')}_probe", [])}
+            ret2 = {m.get("index") for m in retained_map.get(f"{p.get('pair_id')}_gallery", [])}
             
             retained_corresps = []
             for c in corresps:
@@ -263,8 +266,12 @@ def evaluate_calibration(input_path, output_dir):
                     else: results[v]["total_diff_corresps_baseline"] += 1
                     
                 # Strict Matcher logic: if mark was suppressed, correspondence is invalid
-                i1 = c.get("probe_index")
-                i2 = c.get("gallery_index")
+                i1 = c.get("probe_idx")
+                i2 = c.get("gallery_idx")
+                
+                # If either is None, it means the structure is malformed, skip
+                if i1 is None or i2 is None: continue
+                
                 if i1 in ret1 and i2 in ret2:
                     retained_corresps.append(c)
                     results[v]["accepted_marks_total"] += 2
