@@ -103,6 +103,7 @@ jobs:
           mv hq_visual_audit/contact_sheets/hq_visual_audit_review_sheet.csv hq_visual_audit/ || true
 
       - name: Upload Visual Audit Artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: hq_phase1_visual_audit_evidence

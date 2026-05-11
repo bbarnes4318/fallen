@@ -269,18 +269,21 @@ def create_contact_sheets(input_jsonl, output_dir):
         
         if crop_targets_selected > 0 and pasted_tiles == 0:
             print(f"FATAL ERROR: Contact sheet {output_filename} has 0 pasted tiles despite {crop_targets_selected} targets.")
-            sys.exit(1)
+            return True
             
         if is_blank:
             print(f"FATAL ERROR: Contact sheet {output_filename} is a blank canvas.")
-            sys.exit(1)
+            return True
+            
+        return False
 
     print("Generating contact sheets...")
-    generate_sheet("retained_light_scar", "light_scar_retained_contact_sheet.jpg")
-    generate_sheet("suppressed_light_scar", "light_scar_suppressed_contact_sheet.jpg")
-    generate_sheet("same_person_light_scar_corresps", "light_scar_same_person_correspondence_contact_sheet.jpg", is_corresp=True)
-    generate_sheet("impostor_light_scar_corresps", "light_scar_impostor_correspondence_contact_sheet.jpg", is_corresp=True)
-    generate_sheet("dark_spot_retained_suppressed", "dark_spot_retained_suppressed_contact_sheet.jpg", is_mixed=True)
+    fatal = False
+    fatal = generate_sheet("retained_light_scar", "light_scar_retained_contact_sheet.jpg") or fatal
+    fatal = generate_sheet("suppressed_light_scar", "light_scar_suppressed_contact_sheet.jpg") or fatal
+    fatal = generate_sheet("same_person_light_scar_corresps", "light_scar_same_person_correspondence_contact_sheet.jpg", is_corresp=True) or fatal
+    fatal = generate_sheet("impostor_light_scar_corresps", "light_scar_impostor_correspondence_contact_sheet.jpg", is_corresp=True) or fatal
+    fatal = generate_sheet("dark_spot_retained_suppressed", "dark_spot_retained_suppressed_contact_sheet.jpg", is_mixed=True) or fatal
     
     if reviewer_csv_rows:
         keys = reviewer_csv_rows[0].keys()
@@ -302,6 +305,9 @@ def create_contact_sheets(input_jsonl, output_dir):
             writer = csv.DictWriter(f, fieldnames=keys)
             writer.writeheader()
             writer.writerows(failed_rows)
+            
+    if fatal:
+        sys.exit(1)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
