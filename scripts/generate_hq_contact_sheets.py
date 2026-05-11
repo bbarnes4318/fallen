@@ -41,16 +41,20 @@ def create_contact_sheets(input_jsonl, output_dir):
     }
 
     manifest_map = {}
-    manifest_path = "validation/validation_pairs_hq_headshots.csv"
-    if os.path.exists(manifest_path):
-        with open(manifest_path, "r") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                manifest_map[row["pair_id"]] = {
-                    "probe": row["image1_url_or_gcs_path"],
-                    "gallery": row["image2_url_or_gcs_path"],
-                    "is_same": str(row.get("label_same_person", "")).lower() in ["true", "1", "yes"]
-                }
+    import glob
+    for manifest_path in glob.glob("validation/validation_pairs*.csv"):
+        try:
+            with open(manifest_path, "r") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if "pair_id" in row and "image2_url_or_gcs_path" in row:
+                        manifest_map[row["pair_id"]] = {
+                            "probe": row.get("image1_url_or_gcs_path", ""),
+                            "gallery": row.get("image2_url_or_gcs_path", ""),
+                            "is_same": str(row.get("label_same_person", "")).lower() in ["true", "1", "yes"]
+                        }
+        except Exception as e:
+            print(f"Skipping {manifest_path}: {e}")
 
     pairs = []
     with open(input_jsonl, 'r') as f:
@@ -62,24 +66,71 @@ def create_contact_sheets(input_jsonl, output_dir):
         is_same = p.get("label_same_person", False)
         image_path = manifest_map.get(pair_id, {}).get("gallery", "")
         
-        # Variants logic
-        retained_ls = p.get("variant_marks_light_scar_cluster_aware", [])
-        suppressed_ls = p.get("variant_suppressed_light_scar_cluster_aware", [])
-        for m in retained_ls:
-            if m.get("mark_type") == "light_scar":
-                crop_targets["retained_light_scar"].append({"mark": m, "img": image_path, "pair_id": pair_id, "is_same": is_same, "variant": "light_scar_cluster_aware", "suppression_reason": ""})
-        for m in suppressed_ls:
-            if m.get("mark_type") == "light_scar":
-                crop_targets["suppressed_light_scar"].append({"mark": m, "img": image_path, "pair_id": pair_id, "is_same": is_same, "variant": "light_scar_cluster_aware"})
+        raw_marks = p.get("raw_gallery_marks_summary", [])
+        
+        def distance(m1, m2):
+            c1 = m1.get("centroid", [0, 0])
+            c2 = m2.get("centroid", [0, 0])
+            return math.sqrt((c1[0] - c2[0])**2 + (c1[1] - c2[1])**2)
 
-        retained_ds = p.get("variant_marks_dark_spot_strict", [])
-        suppressed_ds = p.get("variant_suppressed_dark_spot_strict", [])
-        for m in retained_ds:
-            if m.get("mark_type") == "dark_spot":
+        # 1. Dark Spot Strict
+        for m in raw_marks:
+            if m.get("mark_type") != "dark_spot": continue
+            area = m.get("area") or 0
+            salience = m.get("salience") or 0
+            isolated = m.get("isolated", False)
+            keep = True
+            reason = ""
+            if area < 15: keep, reason = False, "dark_spot_strict_area"
+            elif salience > 0 and salience < 3.0: keep, reason = False, "dark_spot_strict_salience"
+            elif not isolated: keep, reason = False, "dark_spot_strict_cluster"
+            
+            if keep:
                 crop_targets["retained_dark_spot_strict"].append({"mark": m, "img": image_path, "pair_id": pair_id, "is_same": is_same, "variant": "dark_spot_strict", "suppression_reason": ""})
-        for m in suppressed_ds:
-            if m.get("mark_type") == "dark_spot":
-                crop_targets["suppressed_dark_spot_strict"].append({"mark": m, "img": image_path, "pair_id": pair_id, "is_same": is_same, "variant": "dark_spot_strict"})
+            else:
+                m_sup = dict(m)
+                m_sup["suppression_reason"] = reason
+                crop_targets["suppressed_dark_spot_strict"].append({"mark": m_sup, "img": image_path, "pair_id": pair_id, "is_same": is_same, "variant": "dark_spot_strict"})
+
+        # 2. Light Scar Cluster Aware
+        ls_retained_phase1 = []
+        for m in raw_marks:
+            if m.get("mark_type") != "light_scar": continue
+            area = m.get("area") or 0
+            salience = m.get("salience") or 0
+            confidence = m.get("confidence") or 0
+            keep = True
+            reason = ""
+            if area < 10: keep, reason = False, "area_too_small"
+            elif salience > 0 and salience < 0.05: keep, reason = False, "salience_too_low"
+            elif confidence > 0 and confidence < 0.5: keep, reason = False, "confidence_too_low"
+            
+            if keep:
+                ls_retained_phase1.append(m)
+            else:
+                m_sup = dict(m)
+                m_sup["suppression_reason"] = reason
+                crop_targets["suppressed_light_scar"].append({"mark": m_sup, "img": image_path, "pair_id": pair_id, "is_same": is_same, "variant": "light_scar_cluster_aware"})
+                
+        # Cluster logic for Light Scar
+        clusters = []
+        for m in ls_retained_phase1:
+            added = False
+            for c in clusters:
+                if any(distance(m, cm) < 0.02 for cm in c):
+                    c.append(m)
+                    added = True
+                    break
+            if not added:
+                clusters.append([m])
+                
+        for c in clusters:
+            c.sort(key=lambda x: (x.get("salience") or 0) * (x.get("confidence") or 0), reverse=True)
+            crop_targets["retained_light_scar"].append({"mark": c[0], "img": image_path, "pair_id": pair_id, "is_same": is_same, "variant": "light_scar_cluster_aware", "suppression_reason": ""})
+            for suppressed_m in c[1:]:
+                m_sup = dict(suppressed_m)
+                m_sup["suppression_reason"] = "cluster_duplicate"
+                crop_targets["suppressed_light_scar"].append({"mark": m_sup, "img": image_path, "pair_id": pair_id, "is_same": is_same, "variant": "light_scar_cluster_aware"})
 
         # Correspondences (gallery side only)
         corresps = p.get("accepted_correspondences_detail", [])
@@ -88,7 +139,7 @@ def create_contact_sheets(input_jsonl, output_dir):
                 item = {
                     "corresp": c, 
                     "img": image_path, 
-                    "centroid": c.get("regional_canonical_centroid_gallery"), 
+                    "centroid": c.get("gallery_centroid"), 
                     "pair_id": pair_id, 
                     "is_same": is_same, 
                     "variant": "baseline_current_detector"
@@ -183,6 +234,7 @@ def create_contact_sheets(input_jsonl, output_dir):
                 continue
                 
             if not centroid:
+                print(f"DEBUG {pair_id} MISSING CENTROID: centroid={centroid}, type={type(centroid)}")
                 failed_rows.append({"sheet": output_filename, "pair_id": pair_id, "error": "Missing centroid"})
                 failed_count += 1
                 continue
@@ -285,6 +337,14 @@ def create_contact_sheets(input_jsonl, output_dir):
             
         if is_blank:
             print(f"FATAL ERROR: Contact sheet {output_filename} is a blank canvas.")
+            return True
+            
+        if crop_targets_selected > 0 and successful_downloads == 0:
+            print(f"FATAL ERROR: Contact sheet {output_filename} had 0 successful downloads for {crop_targets_selected} targets.")
+            return True
+            
+        if crop_targets_selected > 0 and failed_count == crop_targets_selected:
+            print(f"FATAL ERROR: Contact sheet {output_filename} failed on all {crop_targets_selected} targets (missing centroid, path, etc.).")
             return True
             
         return False
