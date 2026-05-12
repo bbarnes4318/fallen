@@ -26,21 +26,20 @@ jobs:
           pip install Pillow
 
       - name: Download Phase 3A Validation Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: phase_3a_validation_results
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.inputs.source_run_id }}
-          path: downloaded_results/
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh run download ${{ github.event.inputs.source_run_id }} -p "validation-results-*" --dir downloaded_results/
 
       - name: Verify Extracted Output
-        run: ls -la downloaded_results/
+        run: ls -la downloaded_results/*/
 
       - name: Run Phase 2E Validation Experiment
         run: |
           mkdir hq_phase2e_validation_policy_results
+          JSONL_FILE=$(find downloaded_results -name "validation_results.jsonl" | head -n 1)
           python scripts/generate_hq_phase2e_validation.py \
-            --input-jsonl downloaded_results/validation_results.jsonl \
+            --input-jsonl "$JSONL_FILE" \
             --manifest validation/validation_pairs_hq_headshots.csv \
             --output-dir hq_phase2e_validation_policy_results
 
